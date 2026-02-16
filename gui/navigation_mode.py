@@ -200,13 +200,7 @@ class NavigationModeWidget(QWidget):
             self._apply_config_to_core()
             self._update_panel_from_config()
             
-            # --- BUGFIX: 强制再次从 self.nav_config 更新UI面板 ---
-            # 确保即使用户界面有默认值，也会被配置文件覆盖
-            nav_prefs = self.nav_config.get("nav_preferences", {})
-            self.nav_k_ratio_spin.setValue(nav_prefs.get("k_ratio", 1.0))
-            self.nav_y_bias_spin.setValue(nav_prefs.get("y_bias", 0.5))
-            self.nav_center_offset_spin.setValue(nav_prefs.get("center_offset_y", 0))
-            # --- END BUGFIX ---
+
 
             # 4. 渲染地图
             map_img = self.nav_core.get_map_image()
