@@ -123,6 +123,9 @@ class MapStitcher:
             self.weight_add = float(params['weight_add'])
         if 'weight_cap' in params:
             self.weight_cap = float(params['weight_cap'])
+        # 注意：canvas_size 和 draw_scale 通常不应该通过 set_params 修改
+        # 因为它们会影响画布的初始化，需要重新创建画布
+        # 如果确实需要修改，需要更复杂的逻辑来处理画布重建
 
     def get_params(self):
         """获取参数"""
@@ -130,7 +133,9 @@ class MapStitcher:
             'conf_thresh': self.conf_thresh,
             'keyframe_thresh': self.keyframe_thresh,
             'weight_add': self.weight_add,
-            'weight_cap': self.weight_cap
+            'weight_cap': self.weight_cap,
+            'canvas_size': self.canvas_size,
+            'draw_scale': self.draw_scale
         }
 
     def save_map_package(self, folder_path):

@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap, QMouseEvent, QPainter, QColor, QPen
 
 from core.recognizer_optimized import HSVRecognizer
-from .widgets import ClickableImageLabel
+from ..widgets.clickable_label import ClickableImageLabel
 
 
 class ColorPickerDialog(QDialog):

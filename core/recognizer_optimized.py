@@ -89,7 +89,7 @@ class HSVRecognizer:
             'fog_hsv_max': self.fog_hsv_max.tolist(),
             'player_hsv_min': self.player_hsv_min.tolist(),
             'player_hsv_max': self.player_hsv_max.tolist(),
-            
+
             # Switches
             'enable_wall': self.enable_wall,
             'enable_fog': self.enable_fog,
@@ -98,21 +98,30 @@ class HSVRecognizer:
             'gamma_enabled': self.gamma_enabled,
             'tophat_enabled': self.tophat_enabled,
             'sat_filter_enabled': self.sat_filter_enabled,
-            
+
             # Params
             'clahe_clip': self.clahe_clip,
+            'clahe_grid': self.clahe_grid,
             'deepen_factor': self.deepen_factor,
             'blue_boost': self.blue_boost,
             'gamma_value': self.gamma_value,
             'tophat_strength': self.tophat_strength,
+            'tophat_kernel_size': self.tophat_kernel_size,
             'trans_sat_penalty': self.trans_sat_penalty,
+            'trans_wall_thresh': self.trans_wall_thresh,
+            'transparent_mode': self.transparent_mode,
             'sat_filter_thresh': self.sat_filter_thresh,
-            
+            'sat_filter_radius': self.sat_filter_radius,
+
             # Weights
             'wall_weight': self.wall_weight,
             'edge_weight': self.edge_weight,
             'edge_low': self.edge_low,
-            'edge_high': self.edge_high
+            'edge_high': self.edge_high,
+            
+            # Morphological kernels
+            'kernel_small_size': self.kernel_small.shape[0],  # Assuming square kernel
+            'kernel_medium_size': self.kernel_medium.shape[0]  # Assuming square kernel
         }
 
     def set_params(self, params):
@@ -122,7 +131,9 @@ class HSVRecognizer:
         if 'wall_hsv_max' in params: self.wall_hsv_max = np.array(params['wall_hsv_max'])
         if 'fog_hsv_min' in params: self.fog_hsv_min = np.array(params['fog_hsv_min'])
         if 'fog_hsv_max' in params: self.fog_hsv_max = np.array(params['fog_hsv_max'])
-        
+        if 'player_hsv_min' in params: self.player_hsv_min = np.array(params['player_hsv_min'])
+        if 'player_hsv_max' in params: self.player_hsv_max = np.array(params['player_hsv_max'])
+
         # Switches
         if 'enable_wall' in params: self.enable_wall = params['enable_wall']
         if 'enable_fog' in params: self.enable_fog = params['enable_fog']
@@ -131,24 +142,42 @@ class HSVRecognizer:
         if 'gamma_enabled' in params: self.gamma_enabled = params['gamma_enabled']
         if 'tophat_enabled' in params: self.tophat_enabled = params['tophat_enabled']
         if 'sat_filter_enabled' in params: self.sat_filter_enabled = params['sat_filter_enabled']
-        
+
         # Params
-        if 'clahe_clip' in params: 
+        if 'clahe_clip' in params:
             self.clahe_clip = params['clahe_clip']
             self._clahe.setClipLimit(self.clahe_clip)
-            
+        if 'clahe_grid' in params:
+            self.clahe_grid = params['clahe_grid']
+            self._clahe = cv2.createCLAHE(
+                clipLimit=self.clahe_clip,
+                tileGridSize=(self.clahe_grid, self.clahe_grid)
+            )
+
         if 'deepen_factor' in params: self.deepen_factor = params['deepen_factor']
         if 'blue_boost' in params: self.blue_boost = params['blue_boost']
         if 'gamma_value' in params: self.gamma_value = params['gamma_value']
         if 'tophat_strength' in params: self.tophat_strength = params['tophat_strength']
+        if 'tophat_kernel_size' in params: self.tophat_kernel_size = params['tophat_kernel_size']
         if 'trans_sat_penalty' in params: self.trans_sat_penalty = params['trans_sat_penalty']
+        if 'trans_wall_thresh' in params: self.trans_wall_thresh = params['trans_wall_thresh']
+        if 'transparent_mode' in params: self.transparent_mode = params['transparent_mode']
         if 'sat_filter_thresh' in params: self.sat_filter_thresh = params['sat_filter_thresh']
-        
+        if 'sat_filter_radius' in params: self.sat_filter_radius = params['sat_filter_radius']
+
         # Weights
         if 'wall_weight' in params: self.wall_weight = params['wall_weight']
         if 'edge_weight' in params: self.edge_weight = params['edge_weight']
         if 'edge_low' in params: self.edge_low = params['edge_low']
         if 'edge_high' in params: self.edge_high = params['edge_high']
+        
+        # Morphological kernels
+        if 'kernel_small_size' in params: 
+            size = int(params['kernel_small_size'])
+            self.kernel_small = np.ones((size, size), np.uint8)
+        if 'kernel_medium_size' in params: 
+            size = int(params['kernel_medium_size'])
+            self.kernel_medium = np.ones((size, size), np.uint8)
 
     def _compute_transparency_score(self, img):
         """
@@ -283,80 +312,8 @@ class HSVRecognizer:
 
         return gray
 
-    def set_params(self, params):
-        """更新参数"""
-        if 'edge_low' in params:
-            self.edge_low = int(params['edge_low'])
-        if 'edge_high' in params:
-            self.edge_high = int(params['edge_high'])
-        if 'wall_weight' in params:
-            self.wall_weight = int(params['wall_weight'])
-        if 'edge_weight' in params:
-            self.edge_weight = int(params['edge_weight'])
-        if 'clahe_enabled' in params:
-            self.clahe_enabled = bool(params['clahe_enabled'])
-        if 'clahe_clip' in params:
-            self.clahe_clip = float(params['clahe_clip'])
-        if 'clahe_grid' in params:
-            self.clahe_grid = int(params['clahe_grid'])
-            self._clahe = cv2.createCLAHE(
-                clipLimit=self.clahe_clip,
-                tileGridSize=(self.clahe_grid, self.clahe_grid)
-            )
-        if 'deepen_enabled' in params:
-            self.deepen_enabled = bool(params['deepen_enabled'])
-        if 'deepen_factor' in params:
-            self.deepen_factor = float(params['deepen_factor'])
-        if 'blue_boost' in params:
-            self.blue_boost = float(params['blue_boost'])
-        if 'transparent_mode' in params:
-            self.transparent_mode = bool(params['transparent_mode'])
-        if 'trans_wall_thresh' in params:
-            self.trans_wall_thresh = int(params['trans_wall_thresh'])
-        if 'sat_filter_enabled' in params:
-            self.sat_filter_enabled = bool(params['sat_filter_enabled'])
-        if 'sat_filter_thresh' in params:
-            self.sat_filter_thresh = int(params['sat_filter_thresh'])
-        if 'sat_filter_radius' in params:
-            self.sat_filter_radius = int(params['sat_filter_radius'])
-        if 'gamma_enabled' in params:
-            self.gamma_enabled = bool(params['gamma_enabled'])
-        if 'gamma_value' in params:
-            self.gamma_value = float(params['gamma_value'])
-        if 'trans_sat_penalty' in params:
-            self.trans_sat_penalty = float(params['trans_sat_penalty'])
-        if 'tophat_enabled' in params:
-            self.tophat_enabled = bool(params['tophat_enabled'])
-        if 'tophat_kernel_size' in params:
-            self.tophat_kernel_size = int(params['tophat_kernel_size'])
-        if 'tophat_strength' in params:
-            self.tophat_strength = int(params['tophat_strength'])
-
-    def get_params(self):
-        """获取当前参数"""
-        return {
-            'edge_low': self.edge_low,
-            'edge_high': self.edge_high,
-            'wall_weight': self.wall_weight,
-            'edge_weight': self.edge_weight,
-            'clahe_enabled': self.clahe_enabled,
-            'clahe_clip': self.clahe_clip,
-            'clahe_grid': self.clahe_grid,
-            'deepen_enabled': self.deepen_enabled,
-            'deepen_factor': self.deepen_factor,
-            'blue_boost': self.blue_boost,
-            'gamma_enabled': self.gamma_enabled,
-            'gamma_value': self.gamma_value,
-            'transparent_mode': self.transparent_mode,
-            'trans_wall_thresh': self.trans_wall_thresh,
-            'trans_sat_penalty': self.trans_sat_penalty,
-            'tophat_enabled': self.tophat_enabled,
-            'tophat_kernel_size': self.tophat_kernel_size,
-            'tophat_strength': self.tophat_strength,
-            'sat_filter_enabled': self.sat_filter_enabled,
-            'sat_filter_thresh': self.sat_filter_thresh,
-            'sat_filter_radius': self.sat_filter_radius
-        }
+    # Note: The duplicate set_params and get_params methods have been removed.
+    # The original methods at the beginning of the class now contain all parameters.
 
     def extract_walls(self, img, is_processed=False):
         """

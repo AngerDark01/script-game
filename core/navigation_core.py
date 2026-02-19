@@ -26,14 +26,18 @@ class NavigationCore:
             
         # 加载地图数据
         self._load_map_data()
-        
+
         # 初始化图像识别器 (用于处理实时输入的小地图)
         self.recognizer = HSVRecognizer()
-        
+
         # 定位状态
         self.current_pos = None # (x, y) 全局坐标
-        self.last_pos = None
+        # self.last_pos 已经在 _load_map_data() 中加载，不需要重新初始化
+        # self.last_pos = None  # <-- 已移除，防止覆盖加载的数据
+        if not hasattr(self, 'last_pos'):
+            self.last_pos = None
         self.is_localized = False
+        self.is_first_frame_localized = False # 新增：用于控制首次定位日志的标志
         
         # 搜索参数
         self.search_radius = 200 # 局部搜索半径 (像素)
@@ -65,11 +69,15 @@ class NavigationCore:
             self.wall_layer = data['wall_layer']
             self.explored_map = data['explored_map'] if 'explored_map' in data else None
             self.canvas_size = int(data['canvas_size']) if 'canvas_size' in data else 10000
-            
+
             # 如果有保存的最后位置，可以作为初始猜测 (可选)
             if 'current_pos' in data:
-                self.last_pos = data['current_pos']
-                
+                pos_data = data['current_pos']
+                self.last_pos = (float(pos_data[0]), float(pos_data[1]))
+                print(f"=== 加载上次退出位置 (绘图模式保存): ({self.last_pos[0]:.2f}, {self.last_pos[1]:.2f}) ===")
+            else:
+                print("⚠️ npz 文件中没有 current_pos 数据")
+
             print(f"Map loaded. Size: {self.canvas_size}x{self.canvas_size}")
         except Exception as e:
             raise RuntimeError(f"Failed to load map data: {str(e)}")
@@ -180,7 +188,7 @@ class NavigationCore:
             cx, cy = int(self.current_pos[0]), int(self.current_pos[1])
             # 搜索半径：如果是 Hint 模式，可能偏差较大，给 300px
             # 注意：这是 Scaled 后的像素 (2x)，所以 300px 对应屏幕上 150px
-            r = 300 
+            r = 800 
             
             # 计算局部窗口边界 (注意不要越界)
             x1 = max(0, cx - r)
@@ -241,19 +249,33 @@ class NavigationCore:
                 # max_loc 是在 search_area 中的坐标 (x, y)
                 # 需要转换为全局坐标
                 # 模板匹配返回的是左上角坐标，我们需要中心坐标
-                # 另外，需要应用Y轴偏移量
-                offset_y_scaled = self.center_offset_y * self.draw_scale
-
                 center_x = top_left_offset[0] + max_loc[0] + w_t // 2
-                center_y = top_left_offset[1] + max_loc[1] + h_t // 2 + offset_y_scaled
-                
+                center_y = top_left_offset[1] + max_loc[1] + h_t // 2
+
+                # --- DEBUG: 对比第一帧定位 ---
+                # 只在首次定位成功且有上次保存位置时打印对比信息
+                if not self.is_first_frame_localized:
+                    if self.last_pos is not None:
+                        print("--- FIRST FRAME LOCALIZATION DEBUG ---")
+                        saved_pos = self.last_pos
+                        new_pos = (center_x, center_y)
+                        dx = new_pos[0] - saved_pos[0]
+                        dy = new_pos[1] - saved_pos[1]
+                        print(f"Saved Pos (from Drawing): ({saved_pos[0]:.2f}, {saved_pos[1]:.2f})")
+                        print(f"New Pos (from Navigating): ({new_pos[0]:.2f}, {new_pos[1]:.2f})")
+                        print(f"Difference (dx, dy): ({dx:.2f}, {dy:.2f})")
+                        print("------------------------------------")
+                    # 无论是否有 last_pos，都标记为已首次定位
+                    self.is_first_frame_localized = True
+                # --- END DEBUG ---
+
                 self.current_pos = (center_x, center_y)
                 self.is_localized = True
                 self.last_pos = self.current_pos
-                
+
                 # 初始化跟踪器 (使用原始 mask)
                 self.prev_mask = match_mask
-                
+
                 return center_x, center_y, max_val
             else:
                 # 匹配失败
@@ -273,14 +295,15 @@ class NavigationCore:
         """
         获取用于显示的完整地图图像
         基于 .npz 数据实时渲染，并自动裁剪到有效区域
+        （与绘图模式 StitcherCore.get_enhanced_map 使用相同的裁剪逻辑）
         """
         # 创建基础画布 (全黑背景)
         h, w = self.wall_layer.shape
         display_img = np.zeros((h, w, 3), dtype=np.uint8)
-        
+
         # 1. 渲染已探索区域 (深灰色)
         mask_combined = np.zeros((h, w), dtype=bool)
-        
+
         if self.explored_map is not None:
             mask_explored = self.explored_map > 0
             if np.any(mask_explored):
@@ -295,25 +318,23 @@ class NavigationCore:
                  mask_combined |= mask_wall
             else:
                  print("Warning: wall_layer is empty (all zeros).")
-        
-        # 3. 自动裁剪
-        # 找到所有非零区域的边界
-        if np.any(mask_combined):
-            rows = np.any(mask_combined, axis=1)
-            cols = np.any(mask_combined, axis=0)
-            y_min, y_max = np.where(rows)[0][[0, -1]]
-            x_min, x_max = np.where(cols)[0][[0, -1]]
-            
-            # 增加一点 padding (比如 50px)
-            pad = 50
-            y_min = max(0, y_min - pad)
-            y_max = min(h, y_max + pad)
-            x_min = max(0, x_min - pad)
-            x_max = min(w, x_max + pad)
-            
-            # 记录裁剪偏移量，以便后续将 UI 点击坐标映射回全局坐标
+
+        # 3. 自动裁剪（与绘图模式 StitcherCore.get_enhanced_map 保持一致）
+        # 使用 cv2.boundingRect 找到连通区域的边界
+        coords = cv2.findNonZero(mask_combined.astype(np.uint8))
+        if coords is not None:
+            x_min, y_min, w_box, h_box = cv2.boundingRect(coords)
+
+            # 应用 padding (与绘图模式一致的 margin=50)
+            margin = 50
+            x_min = max(0, x_min - margin)
+            y_min = max(0, y_min - margin)
+            x_max = min(w, x_min + w_box + 2 * margin)
+            y_max = min(h, y_min + h_box + 2 * margin)
+
+            # 记录裁剪偏移量
             self.crop_offset = (x_min, y_min)
-            
+
             print(f"Auto-cropping map to: x[{x_min}:{x_max}], y[{y_min}:{y_max}]")
             return display_img[y_min:y_max, x_min:x_max]
         else:
