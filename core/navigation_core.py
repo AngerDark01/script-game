@@ -153,7 +153,7 @@ class NavigationCore:
         # 如果已经定位且有上一帧，优先使用 F2F 跟踪 (响应最快)
         if self.is_localized and self.prev_mask is not None and self.current_pos is not None:
             shift, qual = self._estimate_displacement(self.prev_mask, match_mask)
-            if shift is not None and qual > 0.1: # 门槛很低，只要有相关性就行
+            if shift is not None and qual > 0.3: # 门槛很低，只要有相关性就行
                 dx, dy = shift
                 
                 # 坐标系转换：

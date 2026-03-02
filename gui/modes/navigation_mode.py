@@ -132,8 +132,7 @@ class NavigationModeWidget(QWidget):
         self.btn_start.setEnabled(False)  # 初始禁用，加载地图后启用
         top_bar.addWidget(self.btn_start)
 
-        self.chk_auto_move = QCheckBox("启用自动移动")  # 自动移动开关，启用后自动模拟键盘移动
-        top_bar.addWidget(self.chk_auto_move)
+
 
         self.calibrate_button = QPushButton("校准屏幕中心")  # 屏幕中心校准按钮，用于确定游戏窗口的中心点坐标
         top_bar.addWidget(self.calibrate_button)
@@ -186,7 +185,7 @@ class NavigationModeWidget(QWidget):
         self.btn_load.clicked.connect(self.load_map)  # 加载地图按钮 -> load_map 函数
         self.btn_hint.clicked.connect(self.toggle_hint_mode)  # 设置初始位置按钮 -> toggle_hint_mode 函数
         self.btn_start.clicked.connect(self.toggle_navigation)  # 开始/停止导航按钮 -> toggle_navigation 函数
-        self.chk_auto_move.stateChanged.connect(self.toggle_auto_move)  # 自动移动复选框 -> toggle_auto_move 函数
+
         self.params_button.clicked.connect(self.toggle_params_dialog)  # 参数面板按钮 -> toggle_params_dialog 函数
         self.calibrate_button.clicked.connect(self._calibrate_screen_center)  # 校准按钮 -> _calibrate_screen_center 函数
 
@@ -691,35 +690,9 @@ class NavigationModeWidget(QWidget):
         if not self.nav_core:
             return
 
-        # 获取地图裁剪偏移量（用于将显示坐标转换为地图全局坐标）
-        offset_x, offset_y = self.nav_core.crop_offset
-        # 将场景坐标转换为地图全局坐标
-        target_x = pos.x() + offset_x  # X 坐标加上偏移量
-        target_y = pos.y() + offset_y  # Y 坐标加上偏移量
-
         if self.btn_hint.isChecked():
             # --- 提示模式：设置初始位置 ---
-            # 将初始位置提示传递给导航核心
-            self.nav_core.set_initial_hint((target_x, target_y))
-
-            # 创建或获取提示标记项（蓝色圆点）
-            if not self.hint_item:
-                self.hint_item = self.scene.addEllipse(0, 0, 10, 10, QPen(Qt.blue), QBrush(Qt.blue))
-                self.hint_item.setZValue(2.5)  # 设置最高层级，确保在其他标记之上
-
-            # 设置提示标记位置并显示
-            self.hint_item.setPos(pos)  # 使用场景坐标（显示坐标）
-            self.hint_item.setVisible(True)
-
-            # 在设置初始提示时，也更新监控框的位置，提供即时反馈
-            self._update_monitor_rect((target_x, target_y))
-
-            print(f"=== 初始位置提示已设置 (用户点击): ({int(target_x)}, {int(target_y)}) ===")
-            self.status_label.setText(f"初始位置提示已设置：({int(target_x)}, {int(target_y)})。")
-
-            # 重置提示按钮状态
-            self.btn_hint.setChecked(False)
-            self.toggle_hint_mode()
+            self.set_initial_hint(pos)
         else:
             # --- 导航模式：点击地图目标位置进行移动 ---
             # 检查是否已定位成功
@@ -727,6 +700,12 @@ class NavigationModeWidget(QWidget):
                 # 未定位成功，提示用户
                 QMessageBox.warning(self, "警告", "请先开始导航并等待定位成功。")
                 return
+
+            # 获取地图裁剪偏移量（用于将显示坐标转换为地图全局坐标）
+            offset_x, offset_y = self.nav_core.crop_offset
+            # 将场景坐标转换为地图全局坐标
+            target_x = pos.x() + offset_x  # X 坐标加上偏移量
+            target_y = pos.y() + offset_y  # Y 坐标加上偏移量
 
             # 计算目标全局坐标和玩家当前全局坐标
             target_global_pos = (target_x, target_y)  # 目标位置（地图全局坐标）
@@ -740,6 +719,48 @@ class NavigationModeWidget(QWidget):
             self.target_item.setPos(pos)  # 使用场景坐标（显示坐标）
             self.target_item.setVisible(True)
             self.status_label.setText(f"目标已更新: ({pos.x():.1f}, {pos.y():.1f})")
+
+    def set_initial_hint(self, scene_pos):
+        """
+        处理用户在地图上点击设置初始位置的逻辑。
+
+        1. 在场景中创建一个蓝色圆点 (hint_item) 以标记用户点击的位置。
+        2. 调用导航核心 (nav_core) 的 set_initial_hint 方法，
+           将点击的场景坐标转换为全局坐标后传递给核心模块。
+        3. 更新状态栏信息，提示用户等待定位校准。
+        4. 取消"设置初始位置"按钮的选中状态并恢复UI。
+        """
+        # 1. 修正坐标：将显示坐标转换为全局坐标
+        offset_x, offset_y = self.nav_core.crop_offset
+        global_x = scene_pos.x() + offset_x
+        global_y = scene_pos.y() + offset_y
+
+        # 2. 将初始位置提示传递给导航核心
+        self.nav_core.set_initial_hint((global_x, global_y))
+
+        # 3. 在UI上标记用户点击的位置 (蓝色圆点)
+        if not self.hint_item:
+            blue_color = QColor("blue")
+            self.hint_item = self.scene.addEllipse(-5, -5, 10, 10, QPen(blue_color), QBrush(blue_color))
+            self.hint_item.setZValue(3)
+        self.hint_item.setPos(scene_pos)
+        self.hint_item.setVisible(True)
+
+        # 4. 在设置初始提示时，也更新监控框的位置，提供即时反馈
+        self._update_monitor_rect((global_x, global_y))
+
+        # 5. 打印调试信息
+        print(f"=== 设置初始位置提示 (用户点击) ===")
+        print(f"  - 点击的显示坐标: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
+        print(f"  - 地图裁剪偏移量: ({offset_x:.2f}, {offset_y:.2f})")
+        print(f"  - 转换后的全局坐标: ({global_x:.2f}, {global_y:.2f})")
+
+        # 6. 更新状态栏
+        self.status_label.setText(f"初始位置提示已设置：({int(global_x)}, {int(global_y)})。")
+
+        # 7. 重置提示按钮状态并恢复UI
+        self.btn_hint.setChecked(False)
+        self.toggle_hint_mode()
 
     def toggle_hint_mode(self):
         """
@@ -842,39 +863,6 @@ class NavigationModeWidget(QWidget):
         # 关闭校准选择器
         self.center_selector.close()
 
-    def toggle_auto_move(self, state):
-        """
-        切换自动移动功能的启用状态
-
-        此方法响应自动移动复选框的状态变化。
-        仅当导航正在进行时，才真正启用/禁用运动控制器。
-
-        参数:
-            state (Qt.CheckState): 复选框的新状态
-                - Qt.Checked (2): 已选中，启用自动移动
-                - Qt.Unchecked (0): 未选中，禁用自动移动
-                - Qt.PartiallyChecked (1): 部分选中（三方框状态，此处不使用）
-
-        返回:
-            无
-
-        异常:
-            无直接异常
-        """
-        # 判断是否启用（状态为选中）
-        enabled = (state == Qt.Checked)
-        # 打印调试信息
-        print(f"DEBUG: '自动移动' checkbox toggled. New state: {enabled}. Navigation active: {self.nav_timer.isActive()}")
-
-        # 仅当导航正在进行时，才真正启用/禁用运动控制器
-        if self.nav_timer.isActive():
-            # 导航正在进行，设置运动控制器的启用状态
-            print(f"DEBUG: Navigation is active. Setting motion_controller enabled to {enabled}")
-            self.motion_controller.set_control_enabled(enabled)
-
-            if enabled:
-                # 启用时显示提示信息
-                QMessageBox.information(self, "提示", "自动移动已启用！")
 
     def toggle_navigation(self):
         """
@@ -920,13 +908,9 @@ class NavigationModeWidget(QWidget):
             # fps 表示每秒定位次数，interval = 1000 / fps
             interval = 1000 // self.nav_config.fps
 
-            # 获取自动移动开关状态
-            is_auto_move_checked = self.chk_auto_move.isChecked()
-            print(f"DEBUG: '自动移动' checkbox is checked: {is_auto_move_checked}")
-            print(f"DEBUG: Setting motion_controller enabled to {is_auto_move_checked}")
-
-            # 设置运动控制器的启用状态
-            self.motion_controller.set_control_enabled(is_auto_move_checked)
+            # 默认启用自动移动
+            print("DEBUG: Auto-move enabled by default on navigation start.")
+            self.motion_controller.set_control_enabled(True)
 
             # 启动导航循环定时器
             self.nav_timer.start(interval)  # 使用配置的 FPS
