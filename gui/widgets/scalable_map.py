@@ -112,7 +112,7 @@ class ScalableMapWidget(QWidget):
             scaled_pixmap = self.original_pixmap.scaled(
                 new_width, new_height,
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.FastTransformation
             )
 
             self.current_pixmap = scaled_pixmap

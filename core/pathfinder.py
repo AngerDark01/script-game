@@ -9,7 +9,7 @@ class PathFinder:
     针对大地图进行优化：使用降采样网格进行寻路
     """
     
-    def __init__(self, downsample_factor=10):
+    def __init__(self, downsample_factor=10, safety_margin=0, wall_shrink_iterations=1):
         """
         初始化
         
@@ -20,14 +20,16 @@ class PathFinder:
         self.downsample_factor = downsample_factor
         
         # 寻路参数
-        self.safety_margin = 5  # 安全边距（像素，原始尺度）
+        self.safety_margin = max(0, int(safety_margin))  # 安全边距（像素，原始尺度）
+        self.wall_shrink_iterations = max(0, int(wall_shrink_iterations))
     
-    def find_path(self, wall_map, start_pos, end_pos):
+    def find_path(self, wall_map, start_pos, end_pos, explored_map=None):
         """
         寻找路径
         
         Args:
             wall_map: 墙壁二值图 (0=空地, 255=墙)
+            explored_map: 已探索区域图。传入时，0 会被视为不可走区域。
             start_pos: 起点 (x, y) 全局坐标
             end_pos: 终点 (x, y) 全局坐标
             
@@ -50,18 +52,8 @@ class PathFinder:
             print(f"[PathFinder] 终点超出边界: {end_grid}")
             return None
             
-        # 2. 地图预处理（降采样 + 膨胀）
-        # 降采样
-        small_map = cv2.resize(wall_map, (grid_w, grid_h), interpolation=cv2.INTER_AREA)
-        
-        # 二值化（确保墙壁清晰）
-        _, binary_map = cv2.threshold(small_map, 50, 255, cv2.THRESH_BINARY)
-        
-        # 膨胀（增加安全距离）
-        # 原始安全距离5px -> 网格安全距离 5/f (至少1)
-        kernel_size = max(1, int(self.safety_margin / f)) * 2 + 1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        obstacle_map = cv2.dilate(binary_map, kernel)
+        # 2. 地图预处理（先让墙体变薄，再降采样）
+        obstacle_map = self._build_obstacle_map(wall_map, grid_w, grid_h, explored_map=explored_map)
         
         # 检查起点和终点是否在障碍物内
         # 如果起点在墙内（可能是误差），尝试找最近的空地
@@ -96,6 +88,46 @@ class PathFinder:
             path_global.append(end_pos)
             
         return path_global
+
+    def _build_obstacle_map(self, wall_map, grid_w, grid_h, explored_map=None):
+        """Build the downsampled obstacle grid used by A*."""
+        source = wall_map
+        if source.dtype != np.uint8:
+            source = source.astype(np.uint8)
+
+        _, binary_source = cv2.threshold(source, 50, 255, cv2.THRESH_BINARY)
+        if self.wall_shrink_iterations > 0:
+            # The stitched wall layer is often thicker than the game's true blocker.
+            # Eroding wall pixels before planning keeps narrow routes open.
+            thin_kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+            binary_source = cv2.erode(
+                binary_source,
+                thin_kernel,
+                iterations=self.wall_shrink_iterations,
+            )
+
+        small_map = cv2.resize(binary_source, (grid_w, grid_h), interpolation=cv2.INTER_AREA)
+        _, binary_map = cv2.threshold(small_map, 50, 255, cv2.THRESH_BINARY)
+        if explored_map is not None:
+            known_source = explored_map
+            if known_source.dtype != np.uint8:
+                known_source = known_source.astype(np.uint8)
+            _, known_source = cv2.threshold(known_source, 1, 255, cv2.THRESH_BINARY)
+            known_small = cv2.resize(known_source, (grid_w, grid_h), interpolation=cv2.INTER_AREA)
+            _, known_map = cv2.threshold(known_small, 1, 255, cv2.THRESH_BINARY)
+            unknown_obstacle = np.where(known_map > 0, 0, 255).astype(np.uint8)
+            binary_map = np.maximum(binary_map, unknown_obstacle)
+
+        if self.safety_margin <= 0:
+            return binary_map
+
+        grid_margin = int(round(self.safety_margin / max(1, self.downsample_factor)))
+        if grid_margin <= 0:
+            return binary_map
+
+        kernel_size = grid_margin * 2 + 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        return cv2.dilate(binary_map, kernel)
         
     def _astar(self, grid, start, end):
         """A* 算法实现"""
@@ -130,6 +162,17 @@ class PathFinder:
                 # 障碍物检查 (0是空地, 255是墙)
                 if grid[neighbor[1], neighbor[0]] > 0:
                     continue
+
+                # 禁止斜向穿角：如果左右/上下相邻格有任一障碍，
+                # 就不能从角点之间斜着挤过去。
+                if dx != 0 and dy != 0:
+                    side_a = (current[0] + dx, current[1])
+                    side_b = (current[0], current[1] + dy)
+                    if (
+                        grid[side_a[1], side_a[0]] > 0
+                        or grid[side_b[1], side_b[0]] > 0
+                    ):
+                        continue
                 
                 # 移动代价 (斜向移动代价更高)
                 move_cost = 1.414 if dx != 0 and dy != 0 else 1.0

@@ -21,7 +21,7 @@ class AppContext(QObject):
         # 共享状态
         self.monitor_region = None
         self.monitor_logical_center = None
-        self.monitor_size = 200
+        self.monitor_size = 320
         self.monitoring = False
         
         # 加载全局配置 (例如 HSV 参数)

@@ -60,11 +60,18 @@ class RecognizerParams:
 @dataclass
 class NavConfig:
     draw_scale: float = 2.0
-    monitor_logical_center: Tuple[int, int] = (0, 0)
-    monitor_size: int = 200
+    monitor_logical_center: Tuple[int, int] | None = None
+    monitor_region: dict | None = None
+    monitor_size: int = 320
     fps: int = 10
     game_screen_center: Tuple[int, int] | None = None
     movement_scale_factor: float = 1.0
+    game_view_map_size: int = 520
+    movement_min_click_radius: int = 180
+    movement_max_click_radius: int = 360
+    auto_click_cooldown_ms: int = 260
+    auto_min_click_target_delta: float = 8.0
+    bottom_click_guard_pixels: int = 300
     nav_preferences: NavPreferences = field(default_factory=NavPreferences)
     recognizer_params: RecognizerParams = field(default_factory=RecognizerParams)
 
@@ -72,14 +79,24 @@ class NavConfig:
     def from_dict(cls, data: dict):
         nav_prefs_data = data.get("nav_preferences", {})
         rec_params_data = data.get("recognizer_params", {})
+        monitor_center = data.get("monitor_logical_center", data.get("monitor_center"))
+        if monitor_center is not None and tuple(monitor_center) == (0, 0):
+            monitor_center = None
 
         return cls(
-            draw_scale=data.get("draw_scale", 2.0),
-            monitor_logical_center=tuple(data.get("monitor_logical_center", data.get("monitor_center", (0, 0)))),
-            monitor_size=data.get("monitor_size", 200),
+            draw_scale=data.get("draw_scale", data.get("stitcher_params", {}).get("draw_scale", 2.0)),
+            monitor_logical_center=tuple(monitor_center) if monitor_center is not None else None,
+            monitor_region=data.get("monitor_region"),
+            monitor_size=data.get("monitor_size", 320),
             fps=data.get("fps", 10),
             game_screen_center=data.get("game_screen_center", None),
             movement_scale_factor=data.get("movement_scale_factor", 1.0),
+            game_view_map_size=data.get("game_view_map_size", 520),
+            movement_min_click_radius=data.get("movement_min_click_radius", 180),
+            movement_max_click_radius=data.get("movement_max_click_radius", 360),
+            auto_click_cooldown_ms=data.get("auto_click_cooldown_ms", 260),
+            auto_min_click_target_delta=data.get("auto_min_click_target_delta", 8.0),
+            bottom_click_guard_pixels=data.get("bottom_click_guard_pixels", 300),
             nav_preferences=NavPreferences(**nav_prefs_data),
             recognizer_params=RecognizerParams(**rec_params_data)
         )
@@ -88,10 +105,17 @@ class NavConfig:
         return {
             "draw_scale": self.draw_scale,
             "monitor_logical_center": self.monitor_logical_center,
+            "monitor_region": self.monitor_region,
             "monitor_size": self.monitor_size,
             "fps": self.fps,
             "game_screen_center": self.game_screen_center,
             "movement_scale_factor": self.movement_scale_factor,
+            "game_view_map_size": self.game_view_map_size,
+            "movement_min_click_radius": self.movement_min_click_radius,
+            "movement_max_click_radius": self.movement_max_click_radius,
+            "auto_click_cooldown_ms": self.auto_click_cooldown_ms,
+            "auto_min_click_target_delta": self.auto_min_click_target_delta,
+            "bottom_click_guard_pixels": self.bottom_click_guard_pixels,
             "nav_preferences": self.__dict__['nav_preferences'].__dict__,
             "recognizer_params": self.__dict__['recognizer_params'].__dict__,
         }

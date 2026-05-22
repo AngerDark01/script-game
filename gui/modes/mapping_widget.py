@@ -37,6 +37,8 @@ class MappingWidget(QWidget):
         self.nav_path = None
         self.map_crop_offset = (0, 0)
         self.monitor_center = None # 物理中心点
+        self.last_capture_size = None
+        self.last_player_local_pos = None
 
         # 定时器
         self.capture_timer = QTimer()
@@ -74,7 +76,7 @@ class MappingWidget(QWidget):
         region_layout.addWidget(self.size_label)
         self.size_spin = QSpinBox()
         self.size_spin.setRange(100, 1000)
-        self.size_spin.setValue(200)
+        self.size_spin.setValue(320)
         self.size_spin.valueChanged.connect(self.update_capture_size)
         region_layout.addWidget(self.size_spin)
         self.color_picker_btn = QPushButton("🎨 选择颜色")
@@ -329,16 +331,32 @@ class MappingWidget(QWidget):
             img = self.app_context.screen_capture.capture(region['left'], region['top'], region['width'], region['height'])
             player_mask = self.app_context.recognizer.extract_player(img)
             player_pos = self.app_context.tracker.detect_player(player_mask)
+            if player_pos is None:
+                if self.last_player_local_pos is not None:
+                    player_pos = self.last_player_local_pos
+                else:
+                    h_img, w_img = img.shape[:2]
+                    player_pos = (w_img // 2, h_img // 2)
 
         combined, wall_mask, fog_mask = self.app_context.recognizer.extract_combined(img, player_pos=player_pos)
         raw_gray = self.app_context.recognizer.get_raw_gray(img)
         self.app_context.stitcher.add_frame(img, combined, wall_mask, fog_mask, raw_gray=raw_gray, player_pos=player_pos)
-        
-        self.update_displays(self.app_context.recognizer.get_preprocessed_image(img), combined)
+
+        h_img, w_img = img.shape[:2]
+        self.last_capture_size = (w_img, h_img)
+        self.last_player_local_pos = player_pos
+
+        self.update_displays(
+            self.app_context.recognizer.get_preprocessed_image(img),
+            combined,
+            player_pos=player_pos,
+            capture_size=(w_img, h_img)
+        )
         self.update_statistics()
 
-    def update_displays(self, current_img, combined_mask):
-        self._show_image(self.capture_label, current_img)
+    def update_displays(self, current_img, combined_mask, player_pos=None, capture_size=None):
+        if current_img is not None:
+            self._show_image(self.capture_label, current_img)
 
         result = self.app_context.stitcher.get_enhanced_map(margin=500)
         if isinstance(result, tuple):
@@ -347,7 +365,10 @@ class MappingWidget(QWidget):
             global_map, crop_x1, crop_y1 = result, 0, 0
 
         if global_map.size > 0:
-            global_colored = cv2.cvtColor(global_map, cv2.COLOR_GRAY2BGR)
+            if len(global_map.shape) == 2:
+                global_colored = cv2.cvtColor(global_map, cv2.COLOR_GRAY2BGR)
+            else:
+                global_colored = global_map.copy()
             self.map_crop_offset = (crop_x1, crop_y1)
 
             # Draw navigation path
@@ -366,12 +387,19 @@ class MappingWidget(QWidget):
             fov_y = int(current_y - crop_y1)
 
             # Draw viewport rectangle
-            if current_img is not None:
-                fov_h, fov_w = current_img.shape[:2]
+            capture_size = capture_size or self.last_capture_size
+            player_pos = player_pos or self.last_player_local_pos
+            if capture_size is not None and player_pos is not None:
+                draw_scale = self.app_context.stitcher.draw_scale
+                fov_w = int(capture_size[0] * draw_scale)
+                fov_h = int(capture_size[1] * draw_scale)
+                player_x = int(player_pos[0] * draw_scale)
+                player_y = int(player_pos[1] * draw_scale)
+
                 cv2.rectangle(
                     global_colored,
-                    (fov_x - fov_w // 2, fov_y - fov_h // 2),
-                    (fov_x + fov_w // 2, fov_y + fov_h // 2),
+                    (fov_x - player_x, fov_y - player_y),
+                    (fov_x - player_x + fov_w, fov_y - player_y + fov_h),
                     (0, 255, 0), 3  # Green rectangle
                 )
 
@@ -390,9 +418,13 @@ class MappingWidget(QWidget):
         crop_x1, crop_y1 = self.map_crop_offset
         start_pos = (self.app_context.stitcher.current_x, self.app_context.stitcher.current_y)
         end_pos = (x + crop_x1, y + crop_y1)
-        self.nav_path = self.app_context.path_finder.find_path(self.app_context.stitcher.wall_layer, start_pos, end_pos)
-        # Force a redraw by calling update_displays with dummy values for the first two arguments
-        self.update_displays(np.zeros((100,100,3), dtype=np.uint8), np.zeros((100,100), dtype=np.uint8))
+        self.nav_path = self.app_context.path_finder.find_path(
+            self.app_context.stitcher.wall_layer,
+            start_pos,
+            end_pos,
+            explored_map=self.app_context.stitcher.explored_map,
+        )
+        self.update_displays(None, None)
 
 
     def _show_image(self, label, img):
@@ -456,7 +488,9 @@ class MappingWidget(QWidget):
         self.app_context.stitcher.save_map_package(map_folder)
         
         config_data = {
+            "draw_scale": self.app_context.stitcher.draw_scale,
             "monitor_logical_center": self.app_context.monitor_logical_center,
+            "monitor_region": self.app_context.monitor_region,
             "monitor_size": self.app_context.monitor_size,
             "fps": self.fps_spin.value(),
             "recognizer_params": self.app_context.recognizer.get_params(),
@@ -492,7 +526,7 @@ class MappingWidget(QWidget):
                 config = json.load(f)
 
             self.app_context.monitor_logical_center = config.get('monitor_logical_center')
-            self.app_context.monitor_size = config.get('monitor_size', 200)
+            self.app_context.monitor_size = config.get('monitor_size', 320)
             self.app_context.monitor_region = config.get('monitor_region')
             
             if self.app_context.monitor_logical_center:

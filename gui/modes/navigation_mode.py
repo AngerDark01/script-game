@@ -7,6 +7,7 @@
 
 import os
 import json
+import time
 import cv2
 import numpy as np
 from PySide6.QtWidgets import (
@@ -17,8 +18,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPointF, QEvent, QPoint
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QPainterPath
 
+from core.auto_navigator import AutoNavigator
 from core.navigation_core import NavigationCore
 from core.motion_controller import MotionController
+from core.route_manager import RouteManager
 from ..selection.indicator_overlay import OverlayWindow
 from ..selection.center_selector import CenterPointSelector
 from ..dialogs.nav_params_dialog import NavParametersDialog
@@ -79,6 +82,18 @@ class NavigationModeWidget(QWidget):
         # 缓存物理坐标，避免每次循环重复计算
         # 存储格式：(center_x, center_y)，单位为物理像素
         self._capture_center_physical = None
+        self._current_capture_rect = None
+        self._current_player_local_pos = None
+        self.route_manager = RouteManager()
+        self.route_data = None
+        self.auto_navigator = AutoNavigator()
+        self.auto_navigation_enabled = False
+        self.map_click_mode = "NONE"
+        self.route_overlay_items = []
+        self.route_path_item = None
+        self.game_view_rect_item = None
+        self._game_input_window_mode = False
+        self._main_window_was_topmost = False
 
     def init_ui(self):
         """
@@ -131,9 +146,43 @@ class NavigationModeWidget(QWidget):
         self.btn_start.setCheckable(True)  # 设置为可切换状态
         self.btn_start.setEnabled(False)  # 初始禁用，加载地图后启用
         top_bar.addWidget(self.btn_start)
+        self.btn_set_exit = QPushButton("设置出口")
+        self.btn_set_exit.setCheckable(True)
+        self.btn_set_exit.setEnabled(False)
+        top_bar.addWidget(self.btn_set_exit)
 
-        self.chk_auto_move = QCheckBox("启用自动移动")  # 自动移动开关，启用后自动模拟键盘移动
-        top_bar.addWidget(self.chk_auto_move)
+        self.btn_add_required = QPushButton("添加必经点")
+        self.btn_add_required.setCheckable(True)
+        self.btn_add_required.setEnabled(False)
+        top_bar.addWidget(self.btn_add_required)
+
+        self.btn_undo_required = QPushButton("撤销必经点")
+        self.btn_undo_required.setEnabled(False)
+        top_bar.addWidget(self.btn_undo_required)
+
+        self.btn_add_guide = QPushButton("添加途经点")
+        self.btn_add_guide.setCheckable(True)
+        self.btn_add_guide.setEnabled(False)
+        top_bar.addWidget(self.btn_add_guide)
+
+        self.btn_undo_guide = QPushButton("撤销途经点")
+        self.btn_undo_guide.setEnabled(False)
+        top_bar.addWidget(self.btn_undo_guide)
+
+        self.btn_clear_route = QPushButton("清空路线")
+        self.btn_clear_route.setEnabled(False)
+        top_bar.addWidget(self.btn_clear_route)
+
+        self.btn_save_route = QPushButton("保存路线")
+        self.btn_save_route.setEnabled(False)
+        top_bar.addWidget(self.btn_save_route)
+
+        self.btn_auto_nav = QPushButton("开始自动到出口")
+        self.btn_auto_nav.setCheckable(True)
+        self.btn_auto_nav.setEnabled(False)
+        top_bar.addWidget(self.btn_auto_nav)
+
+
 
         self.calibrate_button = QPushButton("校准屏幕中心")  # 屏幕中心校准按钮，用于确定游戏窗口的中心点坐标
         top_bar.addWidget(self.calibrate_button)
@@ -157,6 +206,7 @@ class NavigationModeWidget(QWidget):
         self.player_item = None  # 玩家位置标记项，用红色圆点表示当前实时定位的玩家位置
         self.target_item = None  # 目标位置标记项，用绿色方块表示点击的目标位置
         self.monitor_rect_item = None  # 监控区域矩形框项，用绿色半透明框表示屏幕截图区域
+        self.game_view_rect_item = None  # 真实主画面可见/可交互范围框，独立于小地图截图范围
         self.path_item = None  # 路径显示项（暂未使用），用于显示导航路径
 
         # --- 状态栏 ---
@@ -186,7 +236,15 @@ class NavigationModeWidget(QWidget):
         self.btn_load.clicked.connect(self.load_map)  # 加载地图按钮 -> load_map 函数
         self.btn_hint.clicked.connect(self.toggle_hint_mode)  # 设置初始位置按钮 -> toggle_hint_mode 函数
         self.btn_start.clicked.connect(self.toggle_navigation)  # 开始/停止导航按钮 -> toggle_navigation 函数
-        self.chk_auto_move.stateChanged.connect(self.toggle_auto_move)  # 自动移动复选框 -> toggle_auto_move 函数
+        self.btn_set_exit.clicked.connect(self.toggle_exit_mode)
+        self.btn_add_required.clicked.connect(self.toggle_required_mode)
+        self.btn_undo_required.clicked.connect(self.undo_required_point)
+        self.btn_add_guide.clicked.connect(self.toggle_guide_mode)
+        self.btn_undo_guide.clicked.connect(self.undo_guide_point)
+        self.btn_clear_route.clicked.connect(self.clear_route)
+        self.btn_save_route.clicked.connect(self.save_route)
+        self.btn_auto_nav.clicked.connect(self.toggle_auto_navigation)
+
         self.params_button.clicked.connect(self.toggle_params_dialog)  # 参数面板按钮 -> toggle_params_dialog 函数
         self.calibrate_button.clicked.connect(self._calibrate_screen_center)  # 校准按钮 -> _calibrate_screen_center 函数
 
@@ -214,6 +272,303 @@ class NavigationModeWidget(QWidget):
         else:
             # 对话框当前隐藏，显示它
             self.params_dialog.show()
+
+    def _set_map_click_mode(self, mode: str):
+        self.map_click_mode = mode
+        if mode != "SET_EXIT":
+            self.btn_set_exit.setChecked(False)
+        if mode != "ADD_REQUIRED_POINT":
+            self.btn_add_required.setChecked(False)
+        if mode != "ADD_GUIDE_POINT":
+            self.btn_add_guide.setChecked(False)
+
+    def toggle_exit_mode(self):
+        if not self.map_folder_path:
+            self.btn_set_exit.setChecked(False)
+            return
+        mode = "SET_EXIT" if self.btn_set_exit.isChecked() else "NONE"
+        self._set_map_click_mode(mode)
+        if mode == "SET_EXIT":
+            self.status_label.setText("请在地图上点击出口位置")
+
+    def toggle_guide_mode(self):
+        if not self.map_folder_path:
+            self.btn_add_guide.setChecked(False)
+            return
+        mode = "ADD_GUIDE_POINT" if self.btn_add_guide.isChecked() else "NONE"
+        self._set_map_click_mode(mode)
+        if mode == "ADD_GUIDE_POINT":
+            self.status_label.setText("请在地图上依次点击途经点")
+
+    def toggle_required_mode(self):
+        if not self.map_folder_path:
+            self.btn_add_required.setChecked(False)
+            return
+        mode = "ADD_REQUIRED_POINT" if self.btn_add_required.isChecked() else "NONE"
+        self._set_map_click_mode(mode)
+        if mode == "ADD_REQUIRED_POINT":
+            self.status_label.setText("请在地图上依次点击必经点")
+
+    def _set_route_buttons_enabled(self, enabled: bool):
+        self.btn_set_exit.setEnabled(enabled)
+        self.btn_add_required.setEnabled(enabled)
+        self.btn_undo_required.setEnabled(enabled)
+        self.btn_add_guide.setEnabled(enabled)
+        self.btn_undo_guide.setEnabled(enabled)
+        self.btn_clear_route.setEnabled(enabled)
+        self.btn_save_route.setEnabled(enabled)
+        self.btn_auto_nav.setEnabled(enabled)
+
+    def load_route_data(self):
+        if not self.map_folder_path:
+            self.route_data = None
+            return None
+        self.route_data = self.route_manager.load_route(self.map_folder_path, force_reload=True)
+        return self.route_data
+
+    def save_route(self):
+        if not self.map_folder_path:
+            return
+        if self.route_manager.save_route(self.map_folder_path):
+            self.load_route_data()
+            self._render_route_overlay()
+            self.status_label.setText("路线已保存")
+        else:
+            QMessageBox.warning(self, "警告", "保存路线失败")
+
+    def undo_guide_point(self):
+        if not self.map_folder_path:
+            return
+        self.route_manager.undo_guide_point(self.map_folder_path)
+        self.route_data = self.route_manager.load_route(self.map_folder_path)
+        self._render_route_overlay()
+        self.status_label.setText("已撤销最后一个途经点")
+
+    def undo_required_point(self):
+        if not self.map_folder_path:
+            return
+        self.route_manager.undo_required_point(self.map_folder_path)
+        self.route_data = self.route_manager.load_route(self.map_folder_path)
+        self._render_route_overlay()
+        self.status_label.setText("已撤销最后一个必经点")
+
+    def clear_route(self):
+        if not self.map_folder_path:
+            return
+        self.route_manager.clear_route(self.map_folder_path)
+        self.route_data = self.route_manager.load_route(self.map_folder_path)
+        self._render_route_overlay()
+        self.status_label.setText("路线已清空")
+
+    def _clear_route_overlay(self):
+        for item in self.route_overlay_items:
+            try:
+                self.scene.removeItem(item)
+            except RuntimeError:
+                pass
+        self.route_overlay_items = []
+        self.route_path_item = None
+
+    def _global_to_scene(self, point):
+        if point is None or not self.nav_core:
+            return None
+        offset_x, offset_y = self.nav_core.crop_offset
+        return point[0] - offset_x, point[1] - offset_y
+
+    def _render_route_overlay(
+        self,
+        current_path=None,
+        current_subgoal=None,
+        current_required_index=None,
+        current_guide_index=None,
+        current_target_kind=None,
+    ):
+        if not self.scene or not self.nav_core:
+            return
+
+        self._clear_route_overlay()
+        main = (self.route_data or {}).get("routes", {}).get("main", {})
+        exit_region = main.get("exit_region")
+        required_points = main.get("required_points", [])
+        guide_points = main.get("guide_points", [])
+
+        if exit_region:
+            center = self._global_to_scene(exit_region["center"])
+            if center:
+                radius = exit_region["radius"]
+                item = self.scene.addEllipse(
+                    center[0] - radius,
+                    center[1] - radius,
+                    radius * 2,
+                    radius * 2,
+                    QPen(QColor(255, 170, 0), 2),
+                )
+                item.setZValue(3)
+                self.route_overlay_items.append(item)
+
+        required_pending = (
+            current_required_index is not None
+            and current_required_index < len(required_points)
+        )
+        for index, point in enumerate(required_points, start=1):
+            mapped = self._global_to_scene(point)
+            if mapped is None:
+                continue
+            is_completed = current_required_index is not None and (index - 1) < current_required_index
+            is_current = (
+                current_target_kind == "required"
+                and required_pending
+                and (index - 1) == current_required_index
+            )
+            color = QColor(176, 84, 255) if not is_completed else QColor(130, 130, 130)
+            pen_width = 3 if is_current else 2
+            radius = 6 if is_current else 5
+            ellipse = self.scene.addEllipse(
+                mapped[0] - radius,
+                mapped[1] - radius,
+                radius * 2,
+                radius * 2,
+                QPen(color, pen_width),
+                QBrush(color),
+            )
+            ellipse.setZValue(4)
+            self.route_overlay_items.append(ellipse)
+            text = self.scene.addText(f"R{index}")
+            text.setDefaultTextColor(color)
+            text.setPos(mapped[0] + 8, mapped[1] - 12)
+            text.setZValue(4)
+            self.route_overlay_items.append(text)
+
+        for index, point in enumerate(guide_points, start=1):
+            mapped = self._global_to_scene(point)
+            if mapped is None:
+                continue
+            is_completed = (
+                current_guide_index is not None
+                and (index - 1) < current_guide_index
+            )
+            is_current = (
+                current_target_kind == "guide"
+                and current_guide_index is not None
+                and (index - 1) == current_guide_index
+            )
+            color = QColor(0, 200, 255) if not is_completed else QColor(120, 120, 120)
+            pen_width = 3 if is_current else 2
+            radius = 5 if is_current else 4
+            ellipse = self.scene.addEllipse(
+                mapped[0] - radius,
+                mapped[1] - radius,
+                radius * 2,
+                radius * 2,
+                QPen(color, pen_width),
+                QBrush(color),
+            )
+            ellipse.setZValue(4)
+            self.route_overlay_items.append(ellipse)
+            text = self.scene.addText(str(index))
+            text.setDefaultTextColor(color)
+            text.setPos(mapped[0] + 6, mapped[1] - 10)
+            text.setZValue(4)
+            self.route_overlay_items.append(text)
+
+        if current_path:
+            path = QPainterPath()
+            first = self._global_to_scene(current_path[0])
+            if first:
+                path.moveTo(first[0], first[1])
+                for point in current_path[1:]:
+                    mapped = self._global_to_scene(point)
+                    if mapped:
+                        path.lineTo(mapped[0], mapped[1])
+                self.route_path_item = self.scene.addPath(
+                    path,
+                    QPen(QColor(255, 255, 0, 180), 2),
+                )
+                self.route_path_item.setZValue(3)
+                self.route_overlay_items.append(self.route_path_item)
+
+        if current_subgoal:
+            mapped = self._global_to_scene(current_subgoal)
+            if mapped:
+                subgoal = self.scene.addEllipse(
+                    mapped[0] - 5,
+                    mapped[1] - 5,
+                    10,
+                    10,
+                    QPen(QColor(255, 0, 255), 2),
+                    QBrush(QColor(255, 0, 255)),
+                )
+                subgoal.setZValue(5)
+                self.route_overlay_items.append(subgoal)
+
+    def _can_start_auto_navigation(self):
+        if not self.map_folder_path or not self.nav_core:
+            return False, "请先加载地图"
+        main = (self.route_data or {}).get("routes", {}).get("main", {})
+        if not main.get("exit_region"):
+            return False, "请先设置出口"
+        if not self.nav_config.game_screen_center:
+            return False, "请先校准屏幕中心"
+        if (not self.nav_config.monitor_logical_center and not self.nav_config.monitor_region) or not self.nav_config.monitor_size:
+            return False, "缺少监视窗口配置"
+        return True, ""
+
+    def _set_game_input_window_mode(self, enabled: bool):
+        """Keep the tool window from covering the game while auto navigation clicks."""
+        if not self.main_window:
+            return
+
+        if enabled:
+            if not self._game_input_window_mode:
+                self._main_window_was_topmost = bool(
+                    self.main_window.windowFlags() & Qt.WindowStaysOnTopHint
+                )
+                if self._main_window_was_topmost:
+                    self.main_window.setWindowFlag(Qt.WindowStaysOnTopHint, False)
+                    self.main_window.show()
+                self._game_input_window_mode = True
+                print("DEBUG: Game input mode enabled; main window is no longer topmost.")
+            self.main_window.lower()
+            return
+
+        if not self._game_input_window_mode:
+            return
+        if self._main_window_was_topmost:
+            self.main_window.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            self.main_window.show()
+        self._game_input_window_mode = False
+        print("DEBUG: Game input mode disabled; main window topmost state restored.")
+
+    def toggle_auto_navigation(self):
+        if self.btn_auto_nav.isChecked():
+            ok, message = self._can_start_auto_navigation()
+            if not ok:
+                self.btn_auto_nav.setChecked(False)
+                QMessageBox.warning(self, "警告", message)
+                return
+            main_route = (self.route_data or {}).get("routes", {}).get("main", {})
+            self.auto_navigator.load_route(main_route)
+            if not self.auto_navigator.start():
+                self.btn_auto_nav.setChecked(False)
+                QMessageBox.warning(self, "警告", "路线数据无效，无法启动自动导航")
+                return
+            if not self.nav_timer.isActive():
+                self.btn_start.setChecked(True)
+                self.toggle_navigation()
+                if not self.nav_timer.isActive():
+                    self.auto_navigator.stop()
+                    self.auto_navigation_enabled = False
+                    self.btn_auto_nav.setChecked(False)
+                    return
+            self.auto_navigation_enabled = True
+            self._set_game_input_window_mode(True)
+            self.status_label.setText("自动导航已启动，等待稳定定位")
+        else:
+            self.auto_navigation_enabled = False
+            self.auto_navigator.stop()
+            self._set_game_input_window_mode(False)
+            self._render_route_overlay()
+            self.status_label.setText("自动导航已停止")
 
     def refresh_map_list(self):
         """
@@ -299,23 +654,29 @@ class NavigationModeWidget(QWidget):
             self._apply_config_to_core()  # 将配置参数应用到核心模块
 
             # 计算物理坐标并缓存（避免 navigation_loop 重复计算）
-            sx, sy = self._compute_scale()
-            logical_x, logical_y = self.nav_config.monitor_logical_center
-            self._capture_center_physical = (int(logical_x * sx), int(logical_y * sy))
-            print(f"地图 '{map_name}' 加载完成，物理坐标：{self._capture_center_physical}")
+            self._capture_center_physical = None
+            physical_center = (0, 0)
+            if self.nav_config.monitor_logical_center:
+                sx, sy = self._compute_scale()
+                logical_x, logical_y = self.nav_config.monitor_logical_center
+                self._capture_center_physical = (int(logical_x * sx), int(logical_y * sy))
+                physical_center = self._capture_center_physical
+                print(f"地图 '{map_name}' 加载完成，物理坐标：{self._capture_center_physical}")
 
             # 实时计算物理坐标以更新 UI
-            px, py = self._capture_center_physical
-            self.params_dialog.set_config_to_ui(self.nav_config, (px, py))
+            self.params_dialog.set_config_to_ui(self.nav_config, physical_center)
+            self.load_route_data()
 
             self._render_map()  # 渲染地图到图形视图
 
             # 显示上次退出的位置（从 npz 文件的 current_pos 加载）
             self._show_last_exit_position()
+            self._render_route_overlay()
 
             # 启用功能按钮
             self.btn_start.setEnabled(True)  # 启用开始导航按钮
             self.btn_hint.setEnabled(True)  # 启用设置初始位置按钮
+            self._set_route_buttons_enabled(True)
             self.status_label.setText(f"地图 '{map_name}' 加载成功。请设置初始位置或直接开始导航。")
 
         except Exception as e:
@@ -379,10 +740,76 @@ class NavigationModeWidget(QWidget):
         self.monitor_rect_item.setZValue(2)
         self.monitor_rect_item.setVisible(False) # 初始隐藏，待更新位置后显示
 
+        orange_pen = QPen(QColor(255, 140, 0, 190), 2, Qt.DashLine)
+        self.game_view_rect_item = self.scene.addRect(0, 0, 0, 0, orange_pen)
+        self.game_view_rect_item.setZValue(2)
+        self.game_view_rect_item.setVisible(False)
+
         # 调整视图
         self.view.fitInView(self.map_item, Qt.KeepAspectRatio)
 
-    def _update_monitor_rect(self, player_pos):
+    def _build_capture_geometry(self):
+        """根据当前配置返回真实截图矩形和玩家在截图中的相对位置。"""
+        if not self.nav_config:
+            return None, None
+
+        size = self.nav_config.monitor_size
+        region = self.nav_config.monitor_region
+
+        if region:
+            rect = {
+                'left': int(region['left']),
+                'top': int(region['top']),
+                'width': int(region['width']),
+                'height': int(region['height']),
+            }
+            return rect, None
+
+        if not self.nav_config.monitor_logical_center:
+            return None, None
+
+        if self._capture_center_physical is None:
+            sx, sy = self._compute_scale()
+            logical_x, logical_y = self.nav_config.monitor_logical_center
+            self._capture_center_physical = (int(logical_x * sx), int(logical_y * sy))
+
+        center_x, center_y = self._capture_center_physical
+        half_size = size // 2
+        rect = {
+            'left': int(center_x - half_size),
+            'top': int(center_y - half_size),
+            'width': int(size),
+            'height': int(size),
+        }
+        player_pos = (rect['width'] // 2, rect['height'] // 2)
+        return rect, player_pos
+
+    def _update_overlay_display(self):
+        """根据当前配置实时更新屏幕幕布显示。"""
+        if not self.params_dialog.nav_toggle_overlay_btn.isChecked():
+            return
+
+        capture_rect, _ = self._build_capture_geometry()
+        if not capture_rect:
+            self.overlay.hide_overlay()
+            return
+
+        sx, sy = self._compute_scale()
+        left = int(capture_rect['left'] / sx)
+        top = int(capture_rect['top'] / sy)
+        width = max(1, int(capture_rect['width'] / sx))
+        height = max(1, int(capture_rect['height'] / sy))
+
+        anchor = None
+        if self.nav_config.monitor_logical_center:
+            anchor = (
+                int(self.nav_config.monitor_logical_center[0]),
+                int(self.nav_config.monitor_logical_center[1]),
+            )
+
+        self.overlay.set_rect_and_show(left, top, width, height, anchor=anchor)
+
+    def _update_monitor_rect(self, player_pos, capture_rect=None, player_local_pos=None):
         """
         根据传入的玩家位置和配置更新监控区域矩形框（绿框）。
 
@@ -392,24 +819,54 @@ class NavigationModeWidget(QWidget):
         if not all([self.monitor_rect_item, player_pos, self.nav_core, self.nav_config]):
             return
 
-        # 1. 获取必要参数
-        draw_scale = self.nav_core.draw_scale
-        monitor_width = self.nav_config.monitor_size
-        monitor_height = self.nav_config.monitor_size
         offset_x, offset_y = self.nav_core.crop_offset
+        capture_rect = capture_rect or self._current_capture_rect
+        player_local_pos = player_local_pos or self._current_player_local_pos
+        if not capture_rect or not player_local_pos:
+            return
 
-        # 2. 计算绿框的尺寸
-        rect_w = monitor_width / draw_scale
-        rect_h = monitor_height / draw_scale
+        rect_w = float(capture_rect['width']) * self.nav_core.draw_scale
+        rect_h = float(capture_rect['height']) * self.nav_core.draw_scale
+        player_local_x = float(player_local_pos[0]) * self.nav_core.draw_scale
+        player_local_y = float(player_local_pos[1]) * self.nav_core.draw_scale
 
-        # 3. 计算绿框的左上角坐标 (将玩家位置从中心点转换过来)
-        rect_x = (player_pos[0] - offset_x) - rect_w / 2
-        rect_y = (player_pos[1] - offset_y) - rect_h / 2
+        rect_x = (float(player_pos[0]) - offset_x) - player_local_x
+        rect_y = (float(player_pos[1]) - offset_y) - player_local_y
 
-        # 4. 更新矩形框并设为可见
         self.monitor_rect_item.setRect(rect_x, rect_y, rect_w, rect_h)
         if not self.monitor_rect_item.isVisible():
             self.monitor_rect_item.setVisible(True)
+
+    def _update_game_view_rect(self, player_pos):
+        """Update the orange real-game-view rectangle in map coordinates."""
+        if not all([self.game_view_rect_item, player_pos, self.nav_core, self.nav_config]):
+            return
+
+        size = float(getattr(self.nav_config, "game_view_map_size", 0) or 0)
+        if size <= 0:
+            self.game_view_rect_item.setVisible(False)
+            return
+
+        offset_x, offset_y = self.nav_core.crop_offset
+        half = size / 2.0
+        rect_x = float(player_pos[0]) - offset_x - half
+        rect_y = float(player_pos[1]) - offset_y - half
+        self.game_view_rect_item.setRect(rect_x, rect_y, size, size)
+        if not self.game_view_rect_item.isVisible():
+            self.game_view_rect_item.setVisible(True)
+
+    def _refresh_game_view_rect_from_known_position(self):
+        """Refresh the orange rectangle immediately after display-related params change."""
+        if not self.nav_core:
+            return
+
+        player_pos = (
+            self.nav_core.current_pos
+            or self.nav_core.last_good_pos
+            or self.nav_core.drawing_saved_pos
+        )
+        if player_pos:
+            self._update_game_view_rect(player_pos)
 
     def _show_last_exit_position(self):
         """
@@ -424,12 +881,12 @@ class NavigationModeWidget(QWidget):
         异常:
             无直接异常
         """
-        if not self.nav_core or not self.nav_core.last_pos:
+        if not self.nav_core or not self.nav_core.drawing_saved_pos:
             print("没有上次退出的位置信息")
             return
 
         # 获取上次退出的全局坐标
-        last_pos_global = self.nav_core.last_pos
+        last_pos_global = self.nav_core.drawing_saved_pos
         print(f"=== 加载地图：显示上次退出位置 (绘图模式保存) ===")
         print(f"  1. 上次退出位置 (绘图模式): ({last_pos_global[0]:.2f}, {last_pos_global[1]:.2f})")
 
@@ -476,6 +933,8 @@ class NavigationModeWidget(QWidget):
         rec_params_dict = self.nav_config.recognizer_params.__dict__
         self.nav_core.recognizer.set_params(rec_params_dict)  # 设置识别器参数
         self.nav_core.draw_scale = self.nav_config.draw_scale  # 设置绘制缩放系数
+        self.nav_core.last_player_local_pos = None
+        self._capture_center_physical = None
 
         # 2. 更新地图裁剪偏移量
         # 调用 get_map_image() 会重新计算 crop_offset
@@ -487,8 +946,16 @@ class NavigationModeWidget(QWidget):
         if self.nav_config.game_screen_center:
             self.motion_controller.set_params(
                 game_screen_center=self.nav_config.game_screen_center,  # 游戏屏幕中心坐标（物理像素）
-                movement_scale_factor=self.nav_config.movement_scale_factor  # 移动缩放系数，用于调整移动距离
+                movement_scale_factor=self.nav_config.movement_scale_factor,  # 移动缩放系数，用于调整移动距离
+                movement_min_click_radius=self.nav_config.movement_min_click_radius,
+                movement_max_click_radius=self.nav_config.movement_max_click_radius,
+                bottom_click_guard_pixels=self.nav_config.bottom_click_guard_pixels,
             )
+        self.auto_navigator.configure(
+            click_cooldown_ms=self.nav_config.auto_click_cooldown_ms,
+            min_click_target_delta=self.nav_config.auto_min_click_target_delta,
+            prefer_direct_guidance=False,
+        )
 
     def _on_parameter_changed(self, new_config: NavConfig):
         """
@@ -511,16 +978,24 @@ class NavigationModeWidget(QWidget):
         if not self.nav_core:
             return
 
-        # 保存当前配置中不应被 UI 修改的关键部分
-        # nav_preferences 包含导航偏好设置，不应被参数对话框覆盖
-        original_nav_prefs = self.nav_config.nav_preferences
-
         # 更新为从 UI 传来的新配置
         self.nav_config = new_config
-
-        # 恢复被覆盖的关键部分
-        # 确保导航偏好设置不被 UI 修改
-        self.nav_config.nav_preferences = original_nav_prefs
+        self._capture_center_physical = None
+        self._update_overlay_display()
+        if self.nav_config.game_screen_center:
+            self.motion_controller.set_params(
+                game_screen_center=self.nav_config.game_screen_center,
+                movement_scale_factor=self.nav_config.movement_scale_factor,
+                movement_min_click_radius=self.nav_config.movement_min_click_radius,
+                movement_max_click_radius=self.nav_config.movement_max_click_radius,
+                bottom_click_guard_pixels=self.nav_config.bottom_click_guard_pixels,
+            )
+        self.auto_navigator.configure(
+            click_cooldown_ms=self.nav_config.auto_click_cooldown_ms,
+            min_click_target_delta=self.nav_config.auto_min_click_target_delta,
+            prefer_direct_guidance=False,
+        )
+        self._refresh_game_view_rect_from_known_position()
 
         # 更新参数对话框的状态标签，提示用户有未保存的修改
         self.params_dialog.nav_status_label.setText("有未保存的修改")
@@ -556,6 +1031,8 @@ class NavigationModeWidget(QWidget):
 
             # 2. 将这套完整的配置应用到核心模块
             self._apply_config_to_core()
+            self._update_overlay_display()
+            self._refresh_game_view_rect_from_known_position()
 
             # 3. 更新 UI 状态
             self.params_dialog.nav_status_label.setText("参数已保存并应用")
@@ -616,7 +1093,7 @@ class NavigationModeWidget(QWidget):
             无直接异常，配置无效时弹出警告对话框
         """
         # 检查配置是否有效
-        if not self.nav_config or not self.nav_config.monitor_logical_center:
+        if not self.nav_config or (not self.nav_config.monitor_logical_center and not self.nav_config.monitor_region):
             # 配置无效，重置按钮状态并提示用户
             self.params_dialog.nav_toggle_overlay_btn.setChecked(False)
             QMessageBox.warning(self, "警告", "地图配置不完整，无法显示幕布。")
@@ -624,22 +1101,7 @@ class NavigationModeWidget(QWidget):
 
         # 切换显示状态
         if self.params_dialog.nav_toggle_overlay_btn.isChecked():
-            # 按钮被选中，显示幕布
-            # 直接使用逻辑坐标进行绘制
-            if self.nav_config.monitor_logical_center:
-                center_logical_x, center_logical_y = self.nav_config.monitor_logical_center  # 获取逻辑中心坐标
-                size_px = self.nav_config.monitor_size  # 获取监控区域大小（物理像素）
-
-                # 尺寸仍然需要从物理像素转换为逻辑像素
-                sx, _ = self._compute_scale()  # 获取缩放系数
-                size_logical = int(size_px / sx)  # 转换为逻辑尺寸
-
-                # 显示幕布，使用逻辑坐标
-                self.overlay.set_geometry_and_show(center_logical_x, center_logical_y, size_logical)
-            else:
-                # 配置中缺少逻辑中心点，提示用户
-                QMessageBox.warning(self, "警告", "配置中缺少逻辑中心点 (monitor_logical_center)，无法显示幕布。")
-                self.params_dialog.nav_toggle_overlay_btn.setChecked(False)
+            self._update_overlay_display()
         else:
             # 按钮未选中，隐藏幕布
             self.overlay.hide_overlay()
@@ -671,75 +1133,93 @@ class NavigationModeWidget(QWidget):
         return super().eventFilter(watched, event)  # 其他事件交给父类处理
 
     def handle_map_click(self, pos):
-        """
-        处理地图上的鼠标点击事件
-
-        根据当前模式执行不同操作:
-        1. 提示模式 (btn_hint 选中): 设置初始位置提示
-        2. 导航模式 (btn_hint 未选中): 点击地图目标位置进行移动
-
-        参数:
-            pos (QPointF): 点击位置的场景坐标（逻辑坐标，已考虑 DPR）
-
-        返回:
-            无
-
-        异常:
-            无直接异常，导航核心未初始化或定位失败时弹出警告对话框
-        """
-        # 检查导航核心是否已初始化
+        """Handle map clicks for hint placement, route editing, or manual movement."""
         if not self.nav_core:
             return
 
-        # 获取地图裁剪偏移量（用于将显示坐标转换为地图全局坐标）
         offset_x, offset_y = self.nav_core.crop_offset
-        # 将场景坐标转换为地图全局坐标
-        target_x = pos.x() + offset_x  # X 坐标加上偏移量
-        target_y = pos.y() + offset_y  # Y 坐标加上偏移量
+        global_point = (int(pos.x() + offset_x), int(pos.y() + offset_y))
 
         if self.btn_hint.isChecked():
-            # --- 提示模式：设置初始位置 ---
-            # 将初始位置提示传递给导航核心
-            self.nav_core.set_initial_hint((target_x, target_y))
+            self.set_initial_hint(pos)
+            return
 
-            # 创建或获取提示标记项（蓝色圆点）
-            if not self.hint_item:
-                self.hint_item = self.scene.addEllipse(0, 0, 10, 10, QPen(Qt.blue), QBrush(Qt.blue))
-                self.hint_item.setZValue(2.5)  # 设置最高层级，确保在其他标记之上
+        if self.map_click_mode == "SET_EXIT":
+            self.route_manager.set_exit_region(self.map_folder_path, global_point, radius=28)
+            self.route_data = self.route_manager.load_route(self.map_folder_path)
+            self._render_route_overlay()
+            self._set_map_click_mode("NONE")
+            self.status_label.setText(f"?????: ({global_point[0]}, {global_point[1]})")
+            return
 
-            # 设置提示标记位置并显示
-            self.hint_item.setPos(pos)  # 使用场景坐标（显示坐标）
-            self.hint_item.setVisible(True)
+        if self.map_click_mode == "ADD_REQUIRED_POINT":
+            self.route_manager.add_required_point(self.map_folder_path, global_point)
+            self.route_data = self.route_manager.load_route(self.map_folder_path)
+            self._render_route_overlay()
+            self.status_label.setText(f"已添加必经点: ({global_point[0]}, {global_point[1]})")
+            return
 
-            # 在设置初始提示时，也更新监控框的位置，提供即时反馈
-            self._update_monitor_rect((target_x, target_y))
+        if self.map_click_mode == "ADD_GUIDE_POINT":
+            self.route_manager.add_guide_point(self.map_folder_path, global_point)
+            self.route_data = self.route_manager.load_route(self.map_folder_path)
+            self._render_route_overlay()
+            self.status_label.setText(f"??????: ({global_point[0]}, {global_point[1]})")
+            return
 
-            print(f"=== 初始位置提示已设置 (用户点击): ({int(target_x)}, {int(target_y)}) ===")
-            self.status_label.setText(f"初始位置提示已设置：({int(target_x)}, {int(target_y)})。")
+        if not self.nav_core.is_localized or not self.nav_core.current_pos:
+            QMessageBox.warning(self, "??", "??????????????")
+            return
 
-            # 重置提示按钮状态
-            self.btn_hint.setChecked(False)
-            self.toggle_hint_mode()
-        else:
-            # --- 导航模式：点击地图目标位置进行移动 ---
-            # 检查是否已定位成功
-            if not self.nav_core.is_localized or not self.nav_core.current_pos:
-                # 未定位成功，提示用户
-                QMessageBox.warning(self, "警告", "请先开始导航并等待定位成功。")
-                return
+        target_global_pos = (float(global_point[0]), float(global_point[1]))
+        player_global_pos = self.nav_core.current_pos
+        self.motion_controller.move_to_map_target(player_global_pos, target_global_pos)
 
-            # 计算目标全局坐标和玩家当前全局坐标
-            target_global_pos = (target_x, target_y)  # 目标位置（地图全局坐标）
-            player_global_pos = self.nav_core.current_pos  # 玩家当前位置（地图全局坐标）
+        self.target_item.setPos(pos)
+        self.target_item.setVisible(True)
+        self.status_label.setText(f"?????: ({pos.x():.1f}, {pos.y():.1f})")
 
-            # 调用运动控制器执行移动
-            # 运动控制器会根据两个坐标计算移动方向和距离
-            self.motion_controller.move_to_map_target(player_global_pos, target_global_pos)
+    def set_initial_hint(self, scene_pos):
+        """
+        处理用户在地图上点击设置初始位置的逻辑。
 
-            # 显示目标标记
-            self.target_item.setPos(pos)  # 使用场景坐标（显示坐标）
-            self.target_item.setVisible(True)
-            self.status_label.setText(f"目标已更新: ({pos.x():.1f}, {pos.y():.1f})")
+        1. 在场景中创建一个蓝色圆点 (hint_item) 以标记用户点击的位置。
+        2. 调用导航核心 (nav_core) 的 set_initial_hint 方法，
+           将点击的场景坐标转换为全局坐标后传递给核心模块。
+        3. 更新状态栏信息，提示用户等待定位校准。
+        4. 取消"设置初始位置"按钮的选中状态并恢复UI。
+        """
+        # 1. 修正坐标：将显示坐标转换为全局坐标
+        offset_x, offset_y = self.nav_core.crop_offset
+        global_x = scene_pos.x() + offset_x
+        global_y = scene_pos.y() + offset_y
+
+        # 2. 将初始位置提示传递给导航核心
+        self.nav_core.set_initial_hint((global_x, global_y))
+
+        # 3. 在UI上标记用户点击的位置 (蓝色圆点)
+        if not self.hint_item:
+            blue_color = QColor("blue")
+            self.hint_item = self.scene.addEllipse(-5, -5, 10, 10, QPen(blue_color), QBrush(blue_color))
+            self.hint_item.setZValue(3)
+        self.hint_item.setPos(scene_pos)
+        self.hint_item.setVisible(True)
+
+        # 4. 在设置初始提示时，也更新监控框的位置，提供即时反馈
+        self._update_monitor_rect((global_x, global_y))
+        self._update_game_view_rect((global_x, global_y))
+
+        # 5. 打印调试信息
+        print(f"=== 设置初始位置提示 (用户点击) ===")
+        print(f"  - 点击的显示坐标: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
+        print(f"  - 地图裁剪偏移量: ({offset_x:.2f}, {offset_y:.2f})")
+        print(f"  - 转换后的全局坐标: ({global_x:.2f}, {global_y:.2f})")
+
+        # 6. 更新状态栏
+        self.status_label.setText(f"初始位置提示已设置：({int(global_x)}, {int(global_y)})。")
+
+        # 7. 重置提示按钮状态并恢复UI
+        self.btn_hint.setChecked(False)
+        self.toggle_hint_mode()
 
     def toggle_hint_mode(self):
         """
@@ -832,6 +1312,7 @@ class NavigationModeWidget(QWidget):
         # 更新参数对话框的 UI 显示
         # 传入 (0, 0) 作为虚拟物理中心，因为 UI 只需要显示逻辑坐标
         self.params_dialog.set_config_to_ui(self.nav_config, (0, 0))
+        self._update_overlay_display()
 
         # 自动保存配置到文件
         self._save_nav_config()
@@ -842,39 +1323,6 @@ class NavigationModeWidget(QWidget):
         # 关闭校准选择器
         self.center_selector.close()
 
-    def toggle_auto_move(self, state):
-        """
-        切换自动移动功能的启用状态
-
-        此方法响应自动移动复选框的状态变化。
-        仅当导航正在进行时，才真正启用/禁用运动控制器。
-
-        参数:
-            state (Qt.CheckState): 复选框的新状态
-                - Qt.Checked (2): 已选中，启用自动移动
-                - Qt.Unchecked (0): 未选中，禁用自动移动
-                - Qt.PartiallyChecked (1): 部分选中（三方框状态，此处不使用）
-
-        返回:
-            无
-
-        异常:
-            无直接异常
-        """
-        # 判断是否启用（状态为选中）
-        enabled = (state == Qt.Checked)
-        # 打印调试信息
-        print(f"DEBUG: '自动移动' checkbox toggled. New state: {enabled}. Navigation active: {self.nav_timer.isActive()}")
-
-        # 仅当导航正在进行时，才真正启用/禁用运动控制器
-        if self.nav_timer.isActive():
-            # 导航正在进行，设置运动控制器的启用状态
-            print(f"DEBUG: Navigation is active. Setting motion_controller enabled to {enabled}")
-            self.motion_controller.set_control_enabled(enabled)
-
-            if enabled:
-                # 启用时显示提示信息
-                QMessageBox.information(self, "提示", "自动移动已启用！")
 
     def toggle_navigation(self):
         """
@@ -907,7 +1355,7 @@ class NavigationModeWidget(QWidget):
                 self.btn_start.setChecked(False)  # 重置按钮状态
                 return
 
-            if not self.nav_config or not self.nav_config.monitor_logical_center or not self.nav_config.monitor_size:
+            if not self.nav_config or (not self.nav_config.monitor_logical_center and not self.nav_config.monitor_region) or not self.nav_config.monitor_size:
                 # 地图配置不完整，提示用户
                 QMessageBox.warning(self, "警告", "地图配置不完整，缺少监控中心或大小！")
                 self.btn_start.setChecked(False)  # 重置按钮状态
@@ -915,18 +1363,17 @@ class NavigationModeWidget(QWidget):
 
             # 应用最新参数到核心模块
             self._apply_config_to_core()
+            self._current_player_local_pos = None
+            if hasattr(self.app_context, 'tracker') and self.app_context.tracker:
+                self.app_context.tracker.reset()
 
             # 计算定时器间隔（毫秒）
             # fps 表示每秒定位次数，interval = 1000 / fps
             interval = 1000 // self.nav_config.fps
 
-            # 获取自动移动开关状态
-            is_auto_move_checked = self.chk_auto_move.isChecked()
-            print(f"DEBUG: '自动移动' checkbox is checked: {is_auto_move_checked}")
-            print(f"DEBUG: Setting motion_controller enabled to {is_auto_move_checked}")
-
-            # 设置运动控制器的启用状态
-            self.motion_controller.set_control_enabled(is_auto_move_checked)
+            # 默认启用自动移动
+            print("DEBUG: Auto-move enabled by default on navigation start.")
+            self.motion_controller.set_control_enabled(True)
 
             # 启动导航循环定时器
             self.nav_timer.start(interval)  # 使用配置的 FPS
@@ -949,6 +1396,11 @@ class NavigationModeWidget(QWidget):
             # 重置首次定位标志，以便下次启动时重新触发
             if self.nav_core:
                 self.nav_core.is_first_frame_localized = False
+            self.auto_navigation_enabled = False
+            self.auto_navigator.stop()
+            self._set_game_input_window_mode(False)
+            self.btn_auto_nav.setChecked(False)
+            self._render_route_overlay()
 
             # 更新 UI
             self.btn_start.setText("开始导航")  # 按钮文本改回"开始导航"
@@ -956,104 +1408,138 @@ class NavigationModeWidget(QWidget):
             print("DEBUG: Navigation stopped.")
 
     def navigation_loop(self):
-        """
-        导航循环函数，定时执行定位和移动
-
-        此方法由导航定时器 (nav_timer) 按固定频率调用，执行以下操作:
-        1. 检查配置是否有效
-        2. 使用缓存的物理坐标进行屏幕截图（避免重复计算）
-        3. 调用导航核心进行位置定位
-        4. 更新玩家位置标记的显示
-        5. 更新监控区域矩形框的位置
-        6. 更新状态栏显示定位结果
-        7. 调整视图中心到玩家位置
-
-        调用频率:
-            由 nav_config.fps 决定，默认 1000 // fps 毫秒调用一次
-
-        返回:
-            无
-
-        异常:
-            无直接异常，截图失败时静默返回
-        """
-        # 检查配置是否有效
-        if not self.nav_config or not self.nav_config.monitor_logical_center:
+        """Navigation loop: localize, update overlays, and optionally run auto navigation."""
+        if not self.nav_config or (not self.nav_config.monitor_logical_center and not self.nav_config.monitor_region):
             return
 
-        # 使用缓存的物理坐标进行截图（避免每次循环重复计算）
-        if self._capture_center_physical is None:
-            # 如果缓存为空，重新计算物理坐标
-            sx, sy = self._compute_scale()  # 获取屏幕缩放系数
-            logical_x, logical_y = self.nav_config.monitor_logical_center  # 获取逻辑中心坐标
-            self._capture_center_physical = (int(logical_x * sx), int(logical_y * sy))  # 转换为物理坐标并缓存
+        capture_rect, default_player_pos = self._build_capture_geometry()
+        if not capture_rect:
+            return
 
-        # 获取缓存的物理中心坐标
-        center_x, center_y = self._capture_center_physical
-        # 获取监控区域大小
-        size = self.nav_config.monitor_size
+        self._current_capture_rect = capture_rect
 
-        # 执行屏幕截图
-        # 从应用程序上下文获取屏幕截图服务，截取指定中心点和大小的正方形区域
-        frame = self.app_context.screen_capture.capture_square(center_x, center_y, size)
+        frame = self.app_context.screen_capture.capture(
+            capture_rect['left'],
+            capture_rect['top'],
+            capture_rect['width'],
+            capture_rect['height']
+        )
         if frame is None:
-            # 截图失败，直接返回
             return
 
-        # 调用导航核心进行位置定位
-        # 输入：当前屏幕截图帧
-        # 输出：全局地图坐标 (global_x, global_y) 和置信度 conf
-        global_x, global_y, conf = self.nav_core.localize(frame)
+        if self.nav_config.monitor_region:
+            player_mask = self.nav_core.recognizer.extract_player(frame)
+            player_pos = self.app_context.tracker.detect_player(player_mask)
+            if player_pos is None:
+                if self._current_player_local_pos is not None:
+                    player_pos = self._current_player_local_pos
+                else:
+                    player_pos = (capture_rect['width'] // 2, capture_rect['height'] // 2)
+        else:
+            player_pos = default_player_pos
 
-        if global_x is not None:
-            # --- 定位成功 ---
-            # 获取地图裁剪偏移量
+        self._current_player_local_pos = player_pos
+
+        global_x, global_y, conf = self.nav_core.localize(frame, player_pos=player_pos)
+        now_ms = int(time.time() * 1000)
+        localized_pos = None if global_x is None or global_y is None else (global_x, global_y)
+        auto_action = None
+
+        if self.auto_navigation_enabled:
+            lookahead = max(36.0, min(float(capture_rect['width']) * self.nav_core.draw_scale * 0.18, 120.0))
+            auto_action = self.auto_navigator.update(
+                localized_pos=localized_pos,
+                confidence=conf,
+                wall_map=self.nav_core.wall_layer,
+                pathfinder=self.app_context.path_finder,
+                now_ms=now_ms,
+                lookahead_distance=lookahead,
+                explored_map=self.nav_core.explored_map,
+            )
+
+        if global_x is not None and global_y is not None:
             offset_x, offset_y = self.nav_core.crop_offset
-
-            # 将全局坐标转换为显示坐标（减去裁剪偏移量）
             display_x = global_x - offset_x
             display_y = global_y - offset_y
 
-            # 更新玩家位置标记
             if not self.player_item:
                 self.player_item = self.scene.addEllipse(-5, -5, 10, 10, QPen(Qt.red), QBrush(Qt.red))
                 self.player_item.setZValue(2)
 
-            # 检查是否是首次定位成功
-            # 使用 nav_core 的 is_first_frame_localized 标志来确保只打印一次
             if hasattr(self.nav_core, 'is_first_frame_localized') and self.nav_core.is_first_frame_localized:
-                print(f"=== 第一帧定位成功 (实时人物位置): ({int(global_x)}, {int(global_y)}) | 置信度：{conf:.2f} ===")
-                print(f"=== 三个位置标记对比 ===")
-                if self.nav_core.last_pos:
-                    print(f"  1. 上次退出位置 (绘图模式): ({self.nav_core.last_pos[0]:.2f}, {self.nav_core.last_pos[1]:.2f})")
-                if self.nav_core.current_pos and self.nav_core.current_pos != self.nav_core.last_pos:
-                    print(f"  2. 初始位置提示 (用户点击): ({self.nav_core.current_pos[0]:.2f}, {self.nav_core.current_pos[1]:.2f})")
-                print(f"  3. 实时人物位置 (第一帧定位): ({int(global_x)}, {int(global_y)})")
+                print(f"=== ??????? (??????): ({int(global_x)}, {int(global_y)}) | ????{conf:.2f} ===")
+                print(f"=== ???????? ===")
+                if self.nav_core.drawing_saved_pos:
+                    print(f"  1. ?????? (????): ({self.nav_core.drawing_saved_pos[0]:.2f}, {self.nav_core.drawing_saved_pos[1]:.2f})")
+                if self.nav_core.current_pos and self.nav_core.drawing_saved_pos and self.nav_core.current_pos != self.nav_core.drawing_saved_pos:
+                    print(f"  2. ?????? (????): ({self.nav_core.current_pos[0]:.2f}, {self.nav_core.current_pos[1]:.2f})")
+                print(f"  3. ?????? (?????): ({int(global_x)}, {int(global_y)})")
                 print(f"=========================")
 
             self.player_item.setPos(display_x, display_y)
             self.player_item.setVisible(True)
+            self._update_monitor_rect((global_x, global_y), capture_rect=capture_rect, player_local_pos=player_pos)
+            self._update_game_view_rect((global_x, global_y))
 
-            # 使用当前位置更新监控区域
-            self._update_monitor_rect((global_x, global_y))
-
-            # 更新状态栏显示定位结果
-            status_text = f"位置：({int(global_x)}, {int(global_y)}) | 置信度：{conf:.2f}"
+            status_text = (
+                f"???({int(global_x)}, {int(global_y)}) | ????{conf:.2f} | "
+                f"???{capture_rect['width']}x{capture_rect['height']}"
+            )
+            if auto_action:
+                message = auto_action.get('message') or auto_action.get('state')
+                if message:
+                    status_text += f" | ?????{message}"
             self.status_label.setText(status_text)
-
-            # 调整视图中心到玩家位置
             self.view.centerOn(display_x, display_y)
         else:
-            # --- 定位失败 ---
-            # 即使定位失败，也尝试使用上一个有效位置更新绿框，让用户知道正在监控哪个区域
-            if self.nav_core.last_known_pos:
-                self._update_monitor_rect(self.nav_core.last_known_pos)
-
-            # 更新状态栏提示
-            self.status_label.setText("定位丢失...")
-
-            # 隐藏玩家位置标记
+            fallback_pos = self.nav_core.last_good_pos or self.nav_core.drawing_saved_pos
+            if fallback_pos:
+                self._update_monitor_rect(
+                    fallback_pos,
+                    capture_rect=capture_rect,
+                    player_local_pos=player_pos,
+                )
+                self._update_game_view_rect(fallback_pos)
             if self.player_item:
                 self.player_item.setVisible(False)
+            status_text = f"????... ?????{capture_rect['width']}x{capture_rect['height']}"
+            if auto_action:
+                message = auto_action.get('message') or auto_action.get('state')
+                if message:
+                    status_text += f" | ?????{message}"
+            self.status_label.setText(status_text)
 
-            # 定位失败时不再隐藏监控绿框
+        if auto_action:
+            self._render_route_overlay(
+                current_path=auto_action.get('path'),
+                current_subgoal=auto_action.get('subgoal'),
+                current_required_index=auto_action.get('required_index'),
+                current_guide_index=auto_action.get('guide_index'),
+                current_target_kind=auto_action.get('target_kind'),
+            )
+            if (
+                auto_action.get('type') == 'move'
+                and auto_action.get('issued_click')
+                and auto_action.get('player_pos')
+                and auto_action.get('target_pos')
+            ):
+                click_info = self.motion_controller.move_to_map_target(
+                    auto_action['player_pos'],
+                    auto_action['target_pos'],
+                )
+                if click_info:
+                    self.status_label.setText(
+                        f"{self.status_label.text()} | "
+                        f"click r:{click_info['screen_radius']:.0f}/"
+                        f"raw:{click_info.get('raw_screen_radius', 0):.0f}"
+                    )
+            elif auto_action.get('type') in {'arrived', 'failed'}:
+                self.auto_navigation_enabled = False
+                self._set_game_input_window_mode(False)
+                self.btn_auto_nav.setChecked(False)
+                if auto_action.get('type') == 'arrived':
+                    self.status_label.setText('?????????')
+                else:
+                    self.status_label.setText(auto_action.get('message', '??????'))
+        elif self.route_data:
+            self._render_route_overlay()

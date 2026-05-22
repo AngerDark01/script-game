@@ -6,12 +6,72 @@
 
 功能:
     1. 画框选择游戏小地图区域
+    1. 画框选择游戏小地图区域
     2. 实时监控并拼接地图
     3. HSV颜色识别 + 相位相关算法
     4. 高性能实时处理
 """
 
+import ctypes
+import os
+import subprocess
 import sys
+
+
+def set_process_dpi_awareness():
+    """Enable physical-pixel coordinates before Qt initializes."""
+    if os.name != "nt":
+        return "non-windows"
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return "shcore.SetProcessDpiAwareness(2)"
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+            return "user32.SetProcessDPIAware()"
+        except Exception as exc:
+            return f"failed: {type(exc).__name__}: {exc}"
+
+
+def is_running_as_admin():
+    if os.name != "nt":
+        return True
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def relaunch_as_admin():
+    """Relaunch the current Python process through UAC and return True on launch."""
+    if os.name != "nt":
+        return False
+    if getattr(sys, "frozen", False):
+        params = subprocess.list2cmdline(sys.argv[1:])
+    else:
+        params = subprocess.list2cmdline(sys.argv)
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",
+        sys.executable,
+        params,
+        os.getcwd(),
+        1,
+    )
+    return result > 32
+
+
+DPI_AWARENESS_RESULT = set_process_dpi_awareness()
+
+
+if os.name == "nt" and not is_running_as_admin():
+    print("需要管理员权限来向游戏窗口发送鼠标输入，正在请求 UAC 提权...")
+    if relaunch_as_admin():
+        sys.exit(0)
+    print("管理员提权失败或被取消，程序退出。")
+    sys.exit(1)
+
+
 from PySide6.QtWidgets import QApplication
 from gui import MainWindow
 
@@ -21,6 +81,8 @@ def main():
     print("=" * 60)
     print("实时小地图拼接系统")
     print("=" * 60)
+    print(f"DPI awareness: {DPI_AWARENESS_RESULT}")
+    print(f"Admin: {is_running_as_admin()}")
     print()
     print("算法: 相位相关法 (cv2.phaseCorrelate)")
     print("特征: HSV颜色分割 + 二值化处理")

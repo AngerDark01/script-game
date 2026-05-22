@@ -107,6 +107,9 @@ class MapStitcher:
         self.keyframe_thresh = 0.25   # Anchor 维持门槛，降低要求，尽量不切换 Anchor
         self.weight_add = 0.3         # 单帧权重增量 (越小越平滑，抗噪越强)
         self.weight_cap = 5.0         # 最大权重
+        self.draw_quality_gate = 0.35 # 低于此质量的帧不落图，避免污染全局地图
+        self.use_precise_visibility_mask = True
+        self.precise_visibility_min_pixels = 16
 
         # ⭐ 新增：历史记录（只加这3行）
         from collections import deque
@@ -123,6 +126,12 @@ class MapStitcher:
             self.weight_add = float(params['weight_add'])
         if 'weight_cap' in params:
             self.weight_cap = float(params['weight_cap'])
+        if 'draw_quality_gate' in params:
+            self.draw_quality_gate = float(params['draw_quality_gate'])
+        if 'use_precise_visibility_mask' in params:
+            self.use_precise_visibility_mask = bool(params['use_precise_visibility_mask'])
+        if 'precise_visibility_min_pixels' in params:
+            self.precise_visibility_min_pixels = max(0, int(params['precise_visibility_min_pixels']))
         # 注意：canvas_size 和 draw_scale 通常不应该通过 set_params 修改
         # 因为它们会影响画布的初始化，需要重新创建画布
         # 如果确实需要修改，需要更复杂的逻辑来处理画布重建
@@ -134,6 +143,9 @@ class MapStitcher:
             'keyframe_thresh': self.keyframe_thresh,
             'weight_add': self.weight_add,
             'weight_cap': self.weight_cap,
+            'draw_quality_gate': self.draw_quality_gate,
+            'use_precise_visibility_mask': self.use_precise_visibility_mask,
+            'precise_visibility_min_pixels': self.precise_visibility_min_pixels,
             'canvas_size': self.canvas_size,
             'draw_scale': self.draw_scale
         }
@@ -346,7 +358,20 @@ class MapStitcher:
         # --- 2. 绘制 (Drawing) ---
         if match_success:
             self.stats['successful_matches'] += 1
-            
+
+            if current_quality < self.draw_quality_gate:
+                self.prev_mask = match_mask.copy()
+                self.prev_pos = (self.current_x, self.current_y)
+                self.stats['low_quality_skipped'] = self.stats.get('low_quality_skipped', 0) + 1
+                if frame_num % 10 == 0 or match_type == "F2F-Reset":
+                    print(
+                        f"[帧 {frame_num}] 跳过落图 | {match_type} | "
+                        f"Q:{current_quality:.2f} < Gate:{self.draw_quality_gate:.2f}"
+                    )
+                if self.stats['total_frames'] > 0:
+                    self.stats['match_rate'] = (self.stats['successful_matches'] / self.stats['total_frames']) * 100.0
+                return True
+
             # 准备绘制数据
             h_scaled = int(h * self.draw_scale)
             w_scaled = int(w * self.draw_scale)
@@ -369,6 +394,7 @@ class MapStitcher:
             
             # 更新上一帧
             self.prev_mask = match_mask.copy()
+            self.prev_pos = (self.current_x, self.current_y)
             
             # 日志
             if frame_num % 10 == 0 or match_type == "F2F-Reset":
@@ -470,6 +496,7 @@ class MapStitcher:
         # ROI Views (使用裁剪后的坐标)
         roi_weight = self.weight_layer[c_y1:c_y2, c_x1:c_x2]
         roi_wall = self.wall_layer[c_y1:c_y2, c_x1:c_x2]
+        roi_fog = self.fog_layer[c_y1:c_y2, c_x1:c_x2]
         roi_explored = self.explored_map[c_y1:c_y2, c_x1:c_x2]
 
         # ⭐ 新增：相似度检测（只加这4行）
@@ -507,19 +534,26 @@ class MapStitcher:
         # 注意: 我们不清除旧墙，只添加新确信的墙。
         # 如果要清除错误的墙(擦除)，需要引入减分机制，目前暂不引入以保持简单。
         
-        # 4. 更新探索状态 (强制更新视野范围)
-        # 无论有没有迷雾，只要是当前帧覆盖的区域，都视为"已探索"
-        # 创建一个默认的全白Mask (代表视野)
-        view_mask = np.full_like(roi_explored, 255)
-        
-        # 如果有fog_mask，取并集 (或者直接覆盖，视情况而定)
-        # 实际上，直接把当前视野全部标记为已探索是最稳妥的
-        # 为了美观，可以对 view_mask 做一个圆角或渐变，但这里为了性能直接用矩形
-        
-        # 使用 max 运算来合并 (255覆盖0)
+        # 4. 更新真实地面/禁区候选层。
+        # 旧逻辑完全忽略 fog_mask，导致全局图只能显示“整块矩形 explored”。
+        fog_visible_mask = fog_mask_clipped > 127
+        fog_pixels = int(np.count_nonzero(fog_visible_mask))
+        if fog_pixels >= self.precise_visibility_min_pixels:
+            roi_fog[fog_visible_mask] = 255
+
+        # 5. 更新 explored。
+        # 优先使用精确的可见区域 mask；如果当前帧地面提取几乎为空，再回退到旧的矩形 explored。
+        if self.use_precise_visibility_mask and fog_pixels >= self.precise_visibility_min_pixels:
+            view_mask = np.zeros_like(roi_explored, dtype=np.uint8)
+            view_mask[fog_visible_mask] = 255
+        else:
+            view_mask = np.full_like(roi_explored, 255)
+
+        # 墙体本身必须算作有效地图区域，否则裁剪和导航会丢掉边界。
+        view_mask[new_wall_mask] = 255
         np.maximum(roi_explored, view_mask, out=roi_explored)
         
-        # 5. 更新 Canvas (用于显示)
+        # 6. 更新 Canvas (用于显示)
         self.canvas[c_y1:c_y2, c_x1:c_x2] = roi_wall
 
     def _is_too_similar(self, roi_wall, save_mask):
@@ -568,7 +602,8 @@ class MapStitcher:
     def get_statistics(self):
         return {
             **self.stats,
-            'redundant_prevented': self.stats.get('redundant_prevented', 0)
+            'redundant_prevented': self.stats.get('redundant_prevented', 0),
+            'low_quality_skipped': self.stats.get('low_quality_skipped', 0)
         }
 
     def reset(self):
@@ -644,13 +679,13 @@ class MapStitcher:
         
         # 3. 合成显示图
         # 背景全黑 (0)
-        display = np.zeros_like(roi_wall)
+        display = np.zeros((h, w, 3), dtype=np.uint8)
         
-        # 探索过的区域 (迷雾) 显示为深灰色
-        display[roi_explored > 0] = 60 
+        # 精确 explored 区域仍显示为深灰；不再额外渲染蓝色地面层。
+        display[roi_explored > 0] = (60, 60, 60)
         
         # 墙壁显示为亮白色
-        display[roi_wall > 0] = 255
+        display[roi_wall > 0] = (235, 235, 235)
         
         # 返回 (image, offset)
         return display, (x, y)

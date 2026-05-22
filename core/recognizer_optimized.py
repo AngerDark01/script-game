@@ -344,7 +344,8 @@ class HSVRecognizer:
             _, mask = cv2.threshold(score, self.trans_wall_thresh, 255, cv2.THRESH_BINARY)
 
             # 后处理（去噪）
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel_medium)
+            # 透明地图模式下用更保守的小核，避免细墙和窄路被粘成一整块。
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel_small)
             mask = self._filter_small_components(mask, min_area=20)
 
             return mask
@@ -505,8 +506,27 @@ class HSVRecognizer:
                 cv2.circle(mask_radius, (cx_p, cy_p), self.sat_filter_radius, 255, -1)
                 color_mask = color_mask & (mask_radius > 0)
             
-            # 从墙体 Mask 中剔除彩色区域
-            wall_mask[color_mask] = 0
+            # 对高饱和度动态目标做一次轻微膨胀，连同它们的边缘一起抹掉。
+            dynamic_mask = (color_mask.astype(np.uint8) * 255)
+            dynamic_mask = cv2.dilate(dynamic_mask, self.kernel_small, iterations=1) > 0
+
+            # 从静态特征层里剔除彩色区域。
+            wall_mask[dynamic_mask] = 0
+            fog_mask[dynamic_mask] = 0
+            edges[dynamic_mask] = 0
+
+        # 在融合前先把人物中心附近的动态区域挖掉。
+        # 战斗/事件时，人物脚下和周边特效是最不稳定的一圈。
+        h, w = wall_mask.shape
+        if player_pos:
+            cx, cy = player_pos
+        else:
+            cx, cy = w // 2, h // 2
+
+        radius = 22
+        cv2.circle(wall_mask, (cx, cy), radius, 0, -1)
+        cv2.circle(fog_mask, (cx, cy), radius, 0, -1)
+        cv2.circle(edges, (cx, cy), radius, 0, -1)
         
         # 4. ⭐ 关键优化：配准mask = 墙体 + 边缘，不混入灰度图
         ww = max(0, self.wall_weight)
@@ -518,22 +538,7 @@ class HSVRecognizer:
 
         # 只融合墙体和边缘（用于配准）
         match_mask = cv2.addWeighted(wall_mask, a, edges, b, 0)
-
-        # 掩盖人物中心区域
-        h, w = match_mask.shape
-        if player_pos:
-            cx, cy = player_pos
-        else:
-            cx, cy = w // 2, h // 2
-            
-        # 增大掩盖半径 (30 -> 45)，确保完全遮住玩家特效
-        # 如果玩家有复杂的技能特效，这个半径可能还需要更大
-        radius = 15
         cv2.circle(match_mask, (cx, cy), radius, 0, -1)
-        
-        # ⭐ 关键修复：同时掩盖 wall_mask 中的玩家区域！
-        # 之前只掩盖了 match_mask，导致箭头被作为墙体保存到了地图上
-        cv2.circle(wall_mask, (cx, cy), radius, 0, -1)
 
         # 确保输出是uint8
         match_mask = match_mask.astype(np.uint8)

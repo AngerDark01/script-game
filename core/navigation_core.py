@@ -32,8 +32,10 @@ class NavigationCore:
 
         # 定位状态
         self.current_pos = None # (x, y) 全局坐标
-        # self.last_pos 已经在 _load_map_data() 中加载，不需要重新初始化
-        # self.last_pos = None  # <-- 已移除，防止覆盖加载的数据
+        # drawing_saved_pos: 绘图模式保存的退出位置
+        # last_good_pos: 导航过程中最后一次可靠定位结果
+        self.drawing_saved_pos = None
+        self.last_good_pos = None
         if not hasattr(self, 'last_pos'):
             self.last_pos = None
         self.is_localized = False
@@ -49,6 +51,17 @@ class NavigationCore:
         
         # 实时跟踪状态
         self.prev_mask = None # 上一帧的特征 mask
+        self.prev_wall_mask = None
+        self.last_player_local_pos = None
+
+        # 质量与恢复约束
+        self.min_match_features = 80
+        self.min_wall_features = 50
+        self.f2f_confidence_threshold = 0.35
+        self.f2f_max_shift = 70.0
+        self.relocalize_confidence_threshold = 0.72
+        self.relocalize_max_jump = 220.0
+        self.local_search_radius = 800
         
         # 手动偏移校准
         self.manual_offset = (0, 0)
@@ -68,13 +81,15 @@ class NavigationCore:
             # 我们主要使用 wall_layer 进行特征匹配，因为它包含了最清晰的静态特征
             self.wall_layer = data['wall_layer']
             self.explored_map = data['explored_map'] if 'explored_map' in data else None
+            self.fog_layer = data['fog_layer'] if 'fog_layer' in data else np.zeros_like(self.wall_layer)
             self.canvas_size = int(data['canvas_size']) if 'canvas_size' in data else 10000
 
             # 如果有保存的最后位置，可以作为初始猜测 (可选)
             if 'current_pos' in data:
                 pos_data = data['current_pos']
-                self.last_pos = (float(pos_data[0]), float(pos_data[1]))
-                print(f"=== 加载上次退出位置 (绘图模式保存): ({self.last_pos[0]:.2f}, {self.last_pos[1]:.2f}) ===")
+                self.drawing_saved_pos = (float(pos_data[0]), float(pos_data[1]))
+                self.last_pos = self.drawing_saved_pos
+                print(f"=== 加载上次退出位置 (绘图模式保存): ({self.drawing_saved_pos[0]:.2f}, {self.drawing_saved_pos[1]:.2f}) ===")
             else:
                 print("⚠️ npz 文件中没有 current_pos 数据")
 
@@ -85,12 +100,14 @@ class NavigationCore:
     def set_initial_hint(self, pos):
         """设置初始位置提示"""
         self.current_pos = pos
+        self.last_good_pos = pos
         self.is_localized = True 
         
         # 重置跟踪器，强制下一帧进行局部搜索校准
         # 我们不从 map 提取 prev_mask，因为 map 是 2x 缩放的，而 prev_mask 需要是 1x 的
         # 相反，我们依靠下一帧的 localize 中的局部搜索逻辑来"吸附"到正确位置
         self.prev_mask = None
+        self.prev_wall_mask = None
         
         print(f"Initial hint set to: {pos}. Waiting for next frame to snap.")
 
@@ -114,7 +131,7 @@ class NavigationCore:
         except:
             return None, 0.0
 
-    def localize(self, minimap_img):
+    def localize(self, minimap_img, player_pos=None):
         """
         定位当前位置
         
@@ -130,7 +147,13 @@ class NavigationCore:
         # 1. 预处理：提取特征 (Mask)
         # 使用与建图时相同的逻辑提取特征，保证匹配的一致性
         # extract_combined 返回的是 tuple: (match_mask, wall_mask, fog_mask)
-        masks = self.recognizer.extract_combined(minimap_img)
+        if player_pos is None:
+            player_pos = self.last_player_local_pos
+        if player_pos is None:
+            h_img, w_img = minimap_img.shape[:2]
+            player_pos = (w_img // 2, h_img // 2)
+
+        masks = self.recognizer.extract_combined(minimap_img, player_pos=player_pos)
         
         if masks is None:
             return None, None, 0.0
@@ -146,15 +169,33 @@ class NavigationCore:
             match_mask = masks[0]
             
         # 检查特征是否足够 (如果全是黑的，匹配也没意义)
-        if cv2.countNonZero(match_mask) < 10:
+        self.last_player_local_pos = player_pos
+
+        match_feature_count = cv2.countNonZero(match_mask)
+        wall_feature_count = cv2.countNonZero(wall_mask)
+        if match_feature_count < self.min_match_features or wall_feature_count < self.min_wall_features:
+            self.prev_mask = None
+            self.prev_wall_mask = None
             return None, None, 0.0
 
         # === 策略分支 ===
         # 如果已经定位且有上一帧，优先使用 F2F 跟踪 (响应最快)
-        if self.is_localized and self.prev_mask is not None and self.current_pos is not None:
-            shift, qual = self._estimate_displacement(self.prev_mask, match_mask)
-            if shift is not None and qual > 0.1: # 门槛很低，只要有相关性就行
+        if self.is_localized and self.prev_wall_mask is not None and self.current_pos is not None:
+            shift, qual = self._estimate_displacement(self.prev_wall_mask, wall_mask)
+            if shift is not None:
                 dx, dy = shift
+                shift_dist = np.hypot(dx, dy)
+
+                if qual <= self.f2f_confidence_threshold:
+                    shift = None
+                elif shift_dist > self.f2f_max_shift and qual < 0.75:
+                    print(
+                        f"F2F rejected: shift={shift_dist:.1f}px, conf={qual:.2f}, "
+                        "fallback to template match"
+                    )
+                    shift = None
+            
+            if shift is not None:
                 
                 # 坐标系转换：
                 # 1. Phase Correlation 计算的是 img2(curr) 相对于 img1(prev) 的位移
@@ -172,8 +213,10 @@ class NavigationCore:
                 dy_global = dy * self.draw_scale
                 
                 self.current_pos = (self.current_pos[0] - dx_global, self.current_pos[1] - dy_global)
+                self.last_good_pos = self.current_pos
                 self.prev_mask = match_mask
-                
+                self.prev_wall_mask = wall_mask
+
                 return self.current_pos[0], self.current_pos[1], qual
 
         # 如果没有上一帧 (刚初始化)，或者 F2F 失败，尝试全局/局部搜索校准
@@ -186,9 +229,7 @@ class NavigationCore:
         if self.is_localized and self.current_pos is not None:
             # 局部搜索模式 (Hint Mode 或 F2F 丢失后的恢复)
             cx, cy = int(self.current_pos[0]), int(self.current_pos[1])
-            # 搜索半径：如果是 Hint 模式，可能偏差较大，给 300px
-            # 注意：这是 Scaled 后的像素 (2x)，所以 300px 对应屏幕上 150px
-            r = 800 
+            r = self.local_search_radius
             
             # 计算局部窗口边界 (注意不要越界)
             x1 = max(0, cx - r)
@@ -245,19 +286,37 @@ class NavigationCore:
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             # 4. 解析结果
-            if max_val >= self.confidence_threshold:
+            required_conf = self.confidence_threshold
+            if self.last_good_pos is not None:
+                required_conf = max(required_conf, self.relocalize_confidence_threshold)
+
+            if max_val >= required_conf:
                 # max_loc 是在 search_area 中的坐标 (x, y)
                 # 需要转换为全局坐标
                 # 模板匹配返回的是左上角坐标，我们需要中心坐标
-                center_x = top_left_offset[0] + max_loc[0] + w_t // 2
-                center_y = top_left_offset[1] + max_loc[1] + h_t // 2
+                player_x_scaled = int(player_pos[0] * self.draw_scale)
+                player_y_scaled = int(player_pos[1] * self.draw_scale)
+                center_x = top_left_offset[0] + max_loc[0] + player_x_scaled
+                center_y = top_left_offset[1] + max_loc[1] + player_y_scaled
+
+                if self.last_good_pos is not None:
+                    jump = np.hypot(center_x - self.last_good_pos[0], center_y - self.last_good_pos[1])
+                    if jump > self.relocalize_max_jump and max_val < 0.9:
+                        print(
+                            f"Relocalization rejected: jump={jump:.1f}px, conf={max_val:.2f}, "
+                            f"last_good=({self.last_good_pos[0]:.1f}, {self.last_good_pos[1]:.1f})"
+                        )
+                        self.is_localized = False
+                        self.prev_mask = None
+                        self.prev_wall_mask = None
+                        return None, None, max_val
 
                 # --- DEBUG: 对比第一帧定位 ---
                 # 只在首次定位成功且有上次保存位置时打印对比信息
                 if not self.is_first_frame_localized:
-                    if self.last_pos is not None:
+                    if self.drawing_saved_pos is not None:
                         print("--- FIRST FRAME LOCALIZATION DEBUG ---")
-                        saved_pos = self.last_pos
+                        saved_pos = self.drawing_saved_pos
                         new_pos = (center_x, center_y)
                         dx = new_pos[0] - saved_pos[0]
                         dy = new_pos[1] - saved_pos[1]
@@ -270,11 +329,12 @@ class NavigationCore:
                 # --- END DEBUG ---
 
                 self.current_pos = (center_x, center_y)
+                self.last_good_pos = self.current_pos
                 self.is_localized = True
-                self.last_pos = self.current_pos
 
                 # 初始化跟踪器 (使用原始 mask)
                 self.prev_mask = match_mask
+                self.prev_wall_mask = wall_mask
 
                 return center_x, center_y, max_val
             else:
@@ -284,7 +344,8 @@ class NavigationCore:
                     print(f"Local search failed (conf={max_val:.2f}). Switching to global search next time.")
                     self.is_localized = False 
                     self.prev_mask = None # 丢失跟踪
-                
+                    self.prev_wall_mask = None
+
                 return None, None, max_val
                 
         except Exception as e:

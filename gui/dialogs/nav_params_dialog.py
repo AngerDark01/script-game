@@ -20,9 +20,10 @@ import functools
 import dataclasses
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QFormLayout, QGridLayout, QHBoxLayout,
-    QPushButton, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox, QLineEdit, QWidget
+    QApplication, QPushButton, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox,
+    QLineEdit, QWidget
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSignalBlocker
 
 from gui.navigation_params import NavConfig, NavPreferences, RecognizerParams, _parse_hsv_list
 
@@ -71,6 +72,8 @@ class NavParametersDialog(QDialog):
         
         # 用于存储当前对话框所代表的完整 `NavConfig` 对象
         self.config: NavConfig | None = None
+        self._action_buttons_connected = False
+        self._signals_connected = False
 
         # 初始化用户界面
         self._init_ui()
@@ -285,16 +288,45 @@ class NavParametersDialog(QDialog):
         self.nav_movement_scale_factor_spin.setSingleStep(0.1)
         self.nav_movement_scale_factor_spin.setDecimals(2)
 
+        self.nav_game_view_map_size_spin = QSpinBox()
+        self.nav_game_view_map_size_spin.setRange(100, 3000)
+        self.nav_game_view_map_size_spin.setSingleStep(20)
+
+        self.nav_movement_min_click_radius_spin = QSpinBox()
+        self.nav_movement_min_click_radius_spin.setRange(0, 2000)
+        self.nav_movement_min_click_radius_spin.setSingleStep(10)
+
+        self.nav_movement_max_click_radius_spin = QSpinBox()
+        self.nav_movement_max_click_radius_spin.setRange(10, 3000)
+        self.nav_movement_max_click_radius_spin.setSingleStep(10)
+
+        self.nav_auto_click_cooldown_spin = QSpinBox()
+        self.nav_auto_click_cooldown_spin.setRange(120, 2000)
+        self.nav_auto_click_cooldown_spin.setSingleStep(20)
+        self.nav_auto_min_target_delta_spin = QDoubleSpinBox()
+        self.nav_auto_min_target_delta_spin.setRange(0.0, 100.0)
+        self.nav_auto_min_target_delta_spin.setSingleStep(1.0)
+        self.nav_auto_min_target_delta_spin.setDecimals(1)
+
+        self.nav_bottom_click_guard_spin = QSpinBox()
+        self.nav_bottom_click_guard_spin.setRange(0, 1200)
+        self.nav_bottom_click_guard_spin.setSingleStep(20)
+
+        self.nav_auto_click_radius_btn = QPushButton("自动估算点击半径")
+
         # 地图精度显示（只读）
         self.nav_info_draw_scale = QLabel("N/A")
 
-        # 逻辑中心编辑框（可编辑）
+        # 逻辑中心展示（只读）
         self.nav_info_logical_center = QLineEdit("N/A")
+        self.nav_info_logical_center.setReadOnly(True)
 
-        # 截图大小调节
+        # 截图大小展示（只读，必须与建图环境一致）
         self.nav_monitor_size_spin = QSpinBox()
         self.nav_monitor_size_spin.setRange(100, 2000)
         self.nav_monitor_size_spin.setSingleStep(10)
+        self.nav_monitor_size_spin.setReadOnly(True)
+        self.nav_monitor_size_spin.setButtonSymbols(QSpinBox.NoButtons)
 
         # FPS 调节
         self.nav_fps_spin = QSpinBox()
@@ -308,9 +340,16 @@ class NavParametersDialog(QDialog):
         # 将控件添加到布局中
         info_layout.addRow("角色屏幕坐标 (X/Y):", screen_center_layout)
         info_layout.addRow("运动映射比例:", self.nav_movement_scale_factor_spin)
+        info_layout.addRow("真实可见范围(地图像素):", self.nav_game_view_map_size_spin)
+        info_layout.addRow("最小点击半径(屏幕像素):", self.nav_movement_min_click_radius_spin)
+        info_layout.addRow("最大点击半径(屏幕像素):", self.nav_movement_max_click_radius_spin)
+        info_layout.addRow("自动点击冷却(ms):", self.nav_auto_click_cooldown_spin)
+        info_layout.addRow("自动点击目标变化阈值:", self.nav_auto_min_target_delta_spin)
+        info_layout.addRow("底部禁点区域(px):", self.nav_bottom_click_guard_spin)
+        info_layout.addRow(self.nav_auto_click_radius_btn)
         info_layout.addRow("地图精度 (Draw Scale):", self.nav_info_draw_scale)
-        info_layout.addRow("逻辑中心 (可编辑):", self.nav_info_logical_center)
-        info_layout.addRow("截图大小 (Size):", self.nav_monitor_size_spin)
+        info_layout.addRow("逻辑中心 (建图继承):", self.nav_info_logical_center)
+        info_layout.addRow("截图大小 (建图继承):", self.nav_monitor_size_spin)
         info_layout.addRow("导航刷新率 (FPS):", self.nav_fps_spin)
         info_layout.addRow(self.nav_toggle_overlay_btn)
 
@@ -338,6 +377,9 @@ class NavParametersDialog(QDialog):
         该函数知道要更新配置对象中的哪个具体属性。
         这种方法避免了从 UI 完全重建配置的需要，确保了参数的精确更新。
         """
+        if self._signals_connected:
+            return
+
         # 定义 UI 控件与 NavConfig 属性之间的映射
         # 格式: {widget: (sub_config_name, attribute_name)}
         widget_map = {
@@ -373,7 +415,12 @@ class NavParametersDialog(QDialog):
             self.nav_y_bias_spin: ("nav_preferences", "y_bias"),
             # NavConfig root
             self.nav_movement_scale_factor_spin: (None, "movement_scale_factor"),
-            self.nav_monitor_size_spin: (None, "monitor_size"),
+            self.nav_game_view_map_size_spin: (None, "game_view_map_size"),
+            self.nav_movement_min_click_radius_spin: (None, "movement_min_click_radius"),
+            self.nav_movement_max_click_radius_spin: (None, "movement_max_click_radius"),
+            self.nav_auto_click_cooldown_spin: (None, "auto_click_cooldown_ms"),
+            self.nav_auto_min_target_delta_spin: (None, "auto_min_click_target_delta"),
+            self.nav_bottom_click_guard_spin: (None, "bottom_click_guard_pixels"),
             self.nav_fps_spin: (None, "fps"),
         }
 
@@ -395,14 +442,17 @@ class NavParametersDialog(QDialog):
             self.nav_fog_hsv_max_edit: ("recognizer_params", "fog_hsv_max"),
             self.nav_player_hsv_min_edit: ("recognizer_params", "player_hsv_min"),
             self.nav_player_hsv_max_edit: ("recognizer_params", "player_hsv_max"),
-            self.nav_info_logical_center: (None, "monitor_logical_center"),
         }
         for widget, (sub_config, attr) in text_widget_map.items():
             handler = functools.partial(self._update_config_text_value, sub_config, attr)
             widget.textChanged.connect(handler)
 
-        # 连接保存按钮的点击信号
-        self.nav_save_btn.clicked.connect(self.save_requested)
+        # Action buttons are not disconnected by set_config_to_ui(), so connect them once.
+        if not self._action_buttons_connected:
+            self.nav_save_btn.clicked.connect(self.save_requested)
+            self.nav_auto_click_radius_btn.clicked.connect(self._auto_estimate_click_radius)
+            self._action_buttons_connected = True
+        self._signals_connected = True
 
     def _update_config_value(self, sub_config_name: str | None, attr_name: str, value, to_bool: bool = False):
         """通用配置更新槽，用于处理数值和布尔类型的参数更新"""
@@ -441,6 +491,58 @@ class NavParametersDialog(QDialog):
 
         self._update_config_value(sub_config_name, attr_name, value)
 
+    def _screen_physical_bounds_for_center(self, center):
+        """Find physical screen bounds containing a calibrated physical center."""
+        if not center:
+            return None
+
+        cx, cy = int(center[0]), int(center[1])
+        screens = QApplication.screens() or [QApplication.primaryScreen()]
+        fallback = None
+        for screen in screens:
+            if screen is None:
+                continue
+            dpr = screen.devicePixelRatio() or 1.0
+            geometry = screen.geometry()
+            left = int(round(geometry.x() * dpr))
+            top = int(round(geometry.y() * dpr))
+            right = left + int(round(geometry.width() * dpr))
+            bottom = top + int(round(geometry.height() * dpr))
+            bounds = (left, top, right, bottom)
+            fallback = fallback or bounds
+            if left <= cx <= right and top <= cy <= bottom:
+                return bounds
+        return fallback
+
+    def _auto_estimate_click_radius(self):
+        """Estimate click radii from calibrated center and physical screen size."""
+        if self.config is None:
+            return
+        if not self.config.game_screen_center:
+            self.nav_status_label.setText("请先校准屏幕中心")
+            return
+
+        bounds = self._screen_physical_bounds_for_center(self.config.game_screen_center)
+        if not bounds:
+            self.nav_status_label.setText("无法读取屏幕尺寸")
+            return
+
+        cx, cy = self.config.game_screen_center
+        left, top, right, bottom = bounds
+        safe_radius = min(cx - left, right - cx, cy - top, bottom - cy)
+        if safe_radius <= 0:
+            self.nav_status_label.setText("屏幕中心不在当前屏幕范围内")
+            return
+
+        max_radius = max(180, min(900, int(safe_radius * 0.70)))
+        min_radius = max(120, int(max_radius * 0.55))
+
+        self.nav_movement_min_click_radius_spin.setValue(min_radius)
+        self.nav_movement_max_click_radius_spin.setValue(max_radius)
+        self.nav_status_label.setText(
+            f"已估算点击半径: {min_radius}-{max_radius}px"
+        )
+
 
     def set_config_to_ui(self, config: NavConfig, physical_center: tuple):
         """
@@ -462,24 +564,8 @@ class NavParametersDialog(QDialog):
         # 核心步骤：保存传入的配置对象，使对话框有状态
         self.config = config
 
-        # ==================== 断开信号连接 ====================
-        # 防止在更新 UI 时触发 _on_ui_changed 方法
-        for w in self.findChildren(QWidget):
-            if hasattr(w, 'valueChanged'):
-                try:
-                    w.valueChanged.disconnect()
-                except (TypeError, RuntimeError):
-                    pass  # 没有连接的信号时忽略
-            if hasattr(w, 'stateChanged'):
-                try:
-                    w.stateChanged.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
-            if hasattr(w, 'textChanged'):
-                try:
-                    w.textChanged.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
+        # Block control signals while programmatically writing values into the panel.
+        signal_blockers = [QSignalBlocker(w) for w in self.findChildren(QWidget)]
 
         # ==================== 从配置对象更新 UI ====================
         prefs = config.nav_preferences
@@ -524,9 +610,21 @@ class NavParametersDialog(QDialog):
 
         # 更新地图与运动控制
         self.nav_info_draw_scale.setText(str(config.draw_scale))
-        self.nav_info_logical_center.setText(str(config.monitor_logical_center))
+        if config.monitor_region:
+            region = config.monitor_region
+            self.nav_info_logical_center.setText(
+                f"拉框区域: ({region['left']}, {region['top']}) {region['width']}x{region['height']}"
+            )
+        else:
+            self.nav_info_logical_center.setText(str(config.monitor_logical_center))
         self.nav_monitor_size_spin.setValue(config.monitor_size)
         self.nav_movement_scale_factor_spin.setValue(config.movement_scale_factor)
+        self.nav_game_view_map_size_spin.setValue(config.game_view_map_size)
+        self.nav_movement_min_click_radius_spin.setValue(config.movement_min_click_radius)
+        self.nav_movement_max_click_radius_spin.setValue(config.movement_max_click_radius)
+        self.nav_auto_click_cooldown_spin.setValue(config.auto_click_cooldown_ms)
+        self.nav_auto_min_target_delta_spin.setValue(config.auto_min_click_target_delta)
+        self.nav_bottom_click_guard_spin.setValue(config.bottom_click_guard_pixels)
 
         # 更新角色屏幕坐标显示
         if config.game_screen_center:
@@ -546,5 +644,3 @@ class NavParametersDialog(QDialog):
 
         # ==================== 重新连接信号 ====================
         self._connect_signals()
-
-
