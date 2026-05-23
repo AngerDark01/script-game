@@ -21,9 +21,26 @@ from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QPain
 from core.auto_navigator import AutoNavigator
 from core.navigation_core import NavigationCore
 from core.motion_controller import MotionController
+from core.path_utils import (
+    build_cumulative_lengths,
+    interpolate_by_distance,
+    point_distance,
+    project_point_onto_path,
+    remove_collinear_points,
+)
 from core.route_manager import RouteManager
+from core.events.debug import event_log
+from core.events.action_executor import EventActionExecutor
+from core.events.capture_provider import GameWindowCaptureProvider
+from core.events.config import load_event_config, save_event_config
+from core.events.coordinator import EventCoordinator
+from core.events.models import EventActionType, EventTick
+from core.events.registry import EventRegistry
+from core.events.types.portal import PortalEventDefinition
+from core.events.window_finder import find_game_window
 from ..selection.indicator_overlay import OverlayWindow
 from ..selection.center_selector import CenterPointSelector
+from ..dialogs.event_manager_dialog import EventManagerDialog
 from ..dialogs.nav_params_dialog import NavParametersDialog
 from ..navigation_params import NavConfig
 
@@ -72,6 +89,7 @@ class NavigationModeWidget(QWidget):
         self.nav_config = NavConfig()  # 使用数据类管理导航配置参数，包含所有导航相关设置
         self.map_folder_path = None  # 当前加载地图的文件夹路径，用于保存配置文件
         self.params_dialog = NavParametersDialog(self)  # 导航参数配置对话框，允许用户调整参数
+        self.event_dialog = EventManagerDialog(self)
 
         self.init_ui()  # 初始化用户界面，创建所有 UI 控件
         self._connect_signals()  # 连接 UI 控件的信号到对应的槽函数
@@ -94,6 +112,27 @@ class NavigationModeWidget(QWidget):
         self.game_view_rect_item = None
         self._game_input_window_mode = False
         self._main_window_was_topmost = False
+        self.event_registry = EventRegistry()
+        self.event_registry.register(PortalEventDefinition())
+        self.event_config = None
+        self.event_coordinator = None
+        self.event_action_executor = EventActionExecutor(
+            move_to_callback=self._execute_event_move_to,
+            click_screen_callback=self._execute_event_screen_click,
+            press_key_callback=self._execute_event_key_press,
+        )
+        self.event_capture_provider = None
+        self.event_overlay_items = []
+        self._event_move_path = []
+        self._event_move_path_lengths = []
+        self._event_move_target = None
+        self._event_move_subgoal = None
+        self._event_move_path_kind = "none"
+        self._event_move_last_plan_ms = 0
+        self._event_move_last_click_ms = 0
+        self._event_move_last_click_target = None
+        self._event_move_probe_index = 0
+        self._portal_manual_test_active = False
 
     def init_ui(self):
         """
@@ -189,6 +228,8 @@ class NavigationModeWidget(QWidget):
 
         self.params_button = QPushButton("⚙️ 参数面板")  # 打开参数配置面板按钮
         top_bar.addWidget(self.params_button)
+        self.event_button = QPushButton("事件管理")
+        top_bar.addWidget(self.event_button)
         layout.addLayout(top_bar)  # 将顶部控制栏添加到主布局
 
         # --- 图形视图 ---
@@ -246,12 +287,16 @@ class NavigationModeWidget(QWidget):
         self.btn_auto_nav.clicked.connect(self.toggle_auto_navigation)
 
         self.params_button.clicked.connect(self.toggle_params_dialog)  # 参数面板按钮 -> toggle_params_dialog 函数
+        self.event_button.clicked.connect(self.toggle_event_dialog)
         self.calibrate_button.clicked.connect(self._calibrate_screen_center)  # 校准按钮 -> _calibrate_screen_center 函数
 
         # 连接参数对话框的信号
         self.params_dialog.parameters_changed.connect(self._on_parameter_changed)  # 参数变化信号 -> _on_parameter_changed 函数
         self.params_dialog.save_requested.connect(self._save_nav_config)  # 保存请求信号 -> _save_nav_config 函数
         self.params_dialog.nav_toggle_overlay_btn.clicked.connect(self._toggle_overlay_display)  # 幕布切换按钮 -> _toggle_overlay_display 函数
+        self.event_dialog.config_changed.connect(self._on_event_config_changed)
+        self.event_dialog.save_requested.connect(self._save_event_config)
+        self.event_dialog.test_portal_requested.connect(self._run_portal_manual_test)
 
     def toggle_params_dialog(self):
         """
@@ -272,6 +317,13 @@ class NavigationModeWidget(QWidget):
         else:
             # 对话框当前隐藏，显示它
             self.params_dialog.show()
+
+    def toggle_event_dialog(self):
+        self._refresh_event_dialog()
+        if self.event_dialog.isVisible():
+            self.event_dialog.hide()
+        else:
+            self.event_dialog.show()
 
     def _set_map_click_mode(self, mode: str):
         self.map_click_mode = mode
@@ -369,11 +421,48 @@ class NavigationModeWidget(QWidget):
         self.route_overlay_items = []
         self.route_path_item = None
 
+    def _clear_event_overlay(self):
+        for item in self.event_overlay_items:
+            try:
+                self.scene.removeItem(item)
+            except RuntimeError:
+                pass
+        self.event_overlay_items = []
+
     def _global_to_scene(self, point):
         if point is None or not self.nav_core:
             return None
         offset_x, offset_y = self.nav_core.crop_offset
         return point[0] - offset_x, point[1] - offset_y
+
+    def _render_event_overlay(self):
+        if not self.scene or not self.nav_core or not self.event_coordinator:
+            self._clear_event_overlay()
+            return
+
+        self._clear_event_overlay()
+        for overlay in self.event_coordinator.overlays():
+            mapped = self._global_to_scene(overlay.global_pos)
+            if mapped is None:
+                continue
+            color = QColor(overlay.color)
+            radius = 8 if overlay.state == "running" else 6
+            marker = self.scene.addEllipse(
+                mapped[0] - radius,
+                mapped[1] - radius,
+                radius * 2,
+                radius * 2,
+                QPen(color, 3),
+                QBrush(QColor(color.red(), color.green(), color.blue(), 80)),
+            )
+            marker.setZValue(6)
+            self.event_overlay_items.append(marker)
+
+            label = self.scene.addText(f"{overlay.label} {overlay.state}")
+            label.setDefaultTextColor(color)
+            label.setPos(mapped[0] + radius + 4, mapped[1] - radius - 8)
+            label.setZValue(6)
+            self.event_overlay_items.append(label)
 
     def _render_route_overlay(
         self,
@@ -500,6 +589,7 @@ class NavigationModeWidget(QWidget):
                 )
                 subgoal.setZValue(5)
                 self.route_overlay_items.append(subgoal)
+        self._render_event_overlay()
 
     def _can_start_auto_navigation(self):
         if not self.map_folder_path or not self.nav_core:
@@ -666,6 +756,7 @@ class NavigationModeWidget(QWidget):
             # 实时计算物理坐标以更新 UI
             self.params_dialog.set_config_to_ui(self.nav_config, physical_center)
             self.load_route_data()
+            self._initialize_event_system()
 
             self._render_map()  # 渲染地图到图形视图
 
@@ -682,6 +773,356 @@ class NavigationModeWidget(QWidget):
         except Exception as e:
             # 捕获任何异常并显示错误对话框
             QMessageBox.critical(self, "错误", f"加载地图失败：{str(e)}")
+
+    def _initialize_event_system(self):
+        if not self.map_folder_path:
+            self.event_config = None
+            self.event_coordinator = None
+            return
+        self.event_config = load_event_config(self.map_folder_path)
+        self.event_coordinator = EventCoordinator(self.event_registry, self.event_config)
+        self.event_capture_provider = GameWindowCaptureProvider(
+            self.app_context.screen_capture,
+            window_finder=self._find_game_window_rect,
+        )
+        self._refresh_event_dialog()
+        event_log(
+            "event system initialized",
+            map=self.map_combo.currentText() if self.map_combo else "",
+            enabled=bool(getattr(self.event_config, "enabled", True)),
+            events=",".join(
+                f"{event_type}:{'on' if values.get('enabled', True) else 'off'}"
+                for event_type, values in getattr(self.event_config, "events", {}).items()
+            ),
+        )
+
+    def _refresh_event_dialog(self):
+        if not self.event_dialog:
+            return
+        self.event_dialog.set_context(
+            self.event_registry,
+            self.event_config,
+            self.event_coordinator,
+            self.map_combo.currentText() if self.map_combo else "",
+        )
+
+    def _on_event_config_changed(self, event_config):
+        self.event_config = event_config
+        if self.event_coordinator:
+            self.event_coordinator.config = event_config
+        self._clear_event_overlay()
+        event_log(
+            "event config changed",
+            enabled=bool(getattr(event_config, "enabled", True)),
+            events=",".join(
+                f"{event_type}:{'on' if values.get('enabled', True) else 'off'}"
+                for event_type, values in getattr(event_config, "events", {}).items()
+            ),
+        )
+
+    def _save_event_config(self):
+        if not self.map_folder_path or not self.event_config:
+            QMessageBox.warning(self, "事件管理", "未加载地图或事件配置。")
+            return
+        if save_event_config(self.map_folder_path, self.event_config):
+            self._refresh_event_dialog()
+            QMessageBox.information(self, "事件管理", "事件配置已保存。")
+        else:
+            QMessageBox.critical(self, "事件管理", "保存 event_config.json 失败。")
+
+    def _find_game_window_rect(self):
+        try:
+            window = find_game_window("Torchlight", "UnrealWindow")
+            return window.rect if window else None
+        except Exception:
+            return None
+
+    def _build_event_tick(self, now_ms, frame, player_pos, localized_pos, conf):
+        return EventTick(
+            now_ms=now_ms,
+            raw_minimap_frame=frame,
+            player_global_pos=localized_pos,
+            player_local_minimap_pos=player_pos,
+            localization_confidence=float(conf or 0.0),
+            draw_scale=float(self.nav_core.draw_scale if self.nav_core else self.nav_config.draw_scale),
+            map_name=self.map_combo.currentText() if self.map_combo else "",
+            capture_provider=self.event_capture_provider,
+            frame_registration=getattr(self.nav_core, "last_frame_registration", None) if self.nav_core else None,
+        )
+
+    def _reset_event_move_runtime(self):
+        self._event_move_path = []
+        self._event_move_path_lengths = []
+        self._event_move_target = None
+        self._event_move_subgoal = None
+        self._event_move_path_kind = "none"
+        self._event_move_last_plan_ms = 0
+        self._event_move_last_click_ms = 0
+        self._event_move_last_click_target = None
+        self._event_move_probe_index = 0
+
+    def _event_move_lookahead_distance(self) -> float:
+        capture_width = 0
+        if self._current_capture_rect:
+            capture_width = int(self._current_capture_rect.get("width", 0))
+        draw_scale = float(self.nav_core.draw_scale if self.nav_core else self.nav_config.draw_scale)
+        if capture_width <= 0:
+            return 72.0
+        return max(36.0, min(float(capture_width) * draw_scale * 0.18, 120.0))
+
+    def _event_move_local_probe(self, current_pos, target_global_pos):
+        distance = point_distance(current_pos, target_global_pos)
+        if distance <= 1e-6:
+            return (float(target_global_pos[0]), float(target_global_pos[1]))
+
+        dx = float(target_global_pos[0]) - float(current_pos[0])
+        dy = float(target_global_pos[1]) - float(current_pos[1])
+        ux = dx / distance
+        uy = dy / distance
+        px = -uy
+        py = ux
+        side_pattern = (0.0, -1.0, 1.0)
+        side = side_pattern[self._event_move_probe_index % len(side_pattern)]
+        self._event_move_probe_index += 1
+        forward = min(distance, 84.0)
+        lateral = 44.0 if side else 0.0
+        return (
+            float(current_pos[0]) + ux * forward + px * side * lateral,
+            float(current_pos[1]) + uy * forward + py * side * lateral,
+        )
+
+    def _plan_event_move_path(self, current_pos, target_global_pos):
+        current = (int(round(current_pos[0])), int(round(current_pos[1])))
+        target = (int(round(target_global_pos[0])), int(round(target_global_pos[1])))
+        raw_path = None
+        wall_map = self.nav_core.wall_layer if self.nav_core else None
+        pathfinder = getattr(self.app_context, "path_finder", None)
+        explored_map = getattr(self.nav_core, "explored_map", None) if self.nav_core else None
+        if wall_map is not None and pathfinder is not None:
+            raw_path = pathfinder.find_path(
+                wall_map,
+                current,
+                target,
+                explored_map=explored_map,
+            )
+
+        if raw_path:
+            path = [tuple(map(float, point)) for point in remove_collinear_points(raw_path)]
+            if len(path) == 1:
+                path.append((float(target_global_pos[0]), float(target_global_pos[1])))
+            return path, build_cumulative_lengths(path), "planned"
+
+        probe = self._event_move_local_probe(current_pos, target_global_pos)
+        path = [
+            (float(current_pos[0]), float(current_pos[1])),
+            (float(probe[0]), float(probe[1])),
+        ]
+        return path, build_cumulative_lengths(path), "fallback"
+
+    def _ensure_event_move_path(self, current_pos, target_global_pos, now_ms: int):
+        target = (float(target_global_pos[0]), float(target_global_pos[1]))
+        needs_plan = False
+        target_changed = (
+            self._event_move_target is None
+            or point_distance(self._event_move_target, target) > 12.0
+        )
+        if target_changed or not self._event_move_path or len(self._event_move_path) < 2:
+            needs_plan = True
+        else:
+            projection = project_point_onto_path(
+                current_pos,
+                self._event_move_path,
+                self._event_move_path_lengths,
+            )
+            if projection is None or float(projection["distance_to_path"]) > 96.0:
+                needs_plan = True
+            elif self._event_move_path_kind == "fallback" and now_ms - self._event_move_last_plan_ms >= 650:
+                needs_plan = True
+
+        if not needs_plan:
+            return
+
+        if not target_changed and self._event_move_last_plan_ms and now_ms - self._event_move_last_plan_ms < 280:
+            return
+
+        path, lengths, path_kind = self._plan_event_move_path(current_pos, target)
+        self._event_move_path = path
+        self._event_move_path_lengths = lengths
+        self._event_move_target = target
+        self._event_move_path_kind = path_kind
+        self._event_move_last_plan_ms = int(now_ms)
+        self._event_move_subgoal = None
+        event_log(
+            "event path planned",
+            target=(int(round(target[0])), int(round(target[1]))),
+            path_kind=path_kind,
+            path_points=len(path),
+            player=(int(round(current_pos[0])), int(round(current_pos[1]))),
+        )
+
+    def _execute_event_move_to(self, target_global_pos):
+        if not self.nav_core or not self.nav_core.current_pos or not target_global_pos:
+            self._reset_event_move_runtime()
+            event_log(
+                "event move skipped",
+                has_nav_core=self.nav_core is not None,
+                current_pos=getattr(self.nav_core, "current_pos", None) if self.nav_core else None,
+                target=target_global_pos,
+            )
+            return None
+
+        current_pos = (
+            float(self.nav_core.current_pos[0]),
+            float(self.nav_core.current_pos[1]),
+        )
+        target = (
+            float(target_global_pos[0]),
+            float(target_global_pos[1]),
+        )
+        now_ms = int(time.monotonic() * 1000.0)
+        self._set_game_input_window_mode(True)
+        self.motion_controller.set_control_enabled(True)
+        self._ensure_event_move_path(current_pos, target, now_ms)
+        if not self._event_move_path or len(self._event_move_path) < 2:
+            event_log(
+                "event move path unavailable",
+                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
+                target=(int(round(target[0])), int(round(target[1]))),
+            )
+            return None
+
+        projection = project_point_onto_path(
+            current_pos,
+            self._event_move_path,
+            self._event_move_path_lengths,
+        )
+        if projection is None:
+            self._event_move_last_plan_ms = 0
+            event_log(
+                "event move projection failed",
+                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
+                target=(int(round(target[0])), int(round(target[1]))),
+            )
+            return None
+
+        subgoal = interpolate_by_distance(
+            self._event_move_path,
+            self._event_move_path_lengths,
+            float(projection["distance"]) + self._event_move_lookahead_distance(),
+        )
+        if subgoal is None:
+            subgoal = self._event_move_path[-1]
+        self._event_move_subgoal = (float(subgoal[0]), float(subgoal[1]))
+
+        deviation = float(projection["distance_to_path"])
+        target_delta = (
+            float("inf")
+            if self._event_move_last_click_target is None
+            else point_distance(self._event_move_last_click_target, self._event_move_subgoal)
+        )
+        should_click = (
+            self._event_move_last_click_ms == 0
+            or now_ms - self._event_move_last_click_ms >= 260
+        ) and (
+            self._event_move_last_click_target is None
+            or target_delta >= 8.0
+            or deviation >= 48.0
+        )
+        if not should_click:
+            return None
+
+        click_info = self.motion_controller.move_to_map_target(current_pos, self._event_move_subgoal)
+        if click_info:
+            self._event_move_last_click_ms = int(now_ms)
+            self._event_move_last_click_target = self._event_move_subgoal
+            event_log(
+                "event move click",
+                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
+                target=(int(round(target[0])), int(round(target[1]))),
+                subgoal=(int(round(self._event_move_subgoal[0])), int(round(self._event_move_subgoal[1]))),
+                path_kind=self._event_move_path_kind,
+                deviation=round(deviation, 2),
+                path_points=len(self._event_move_path),
+            )
+        return click_info
+
+    def _execute_event_screen_click(self, screen_pos):
+        self._reset_event_move_runtime()
+        if not screen_pos:
+            event_log("event screen click skipped", screen=screen_pos)
+            return
+        event_log("event screen click", screen=screen_pos)
+        self.motion_controller.click_screen_position(screen_pos, reason="event_click")
+
+    def _execute_event_key_press(self, key):
+        self._reset_event_move_runtime()
+        if not key:
+            event_log("event key press skipped", key=key)
+            return
+        event_log("event key press", key=key)
+        self.motion_controller.press_key(key, reason="event_key")
+
+    def _run_portal_manual_test(self):
+        if self._portal_manual_test_active:
+            self._set_portal_manual_test_active(False, reason="button stop")
+            return
+
+        if not self.event_coordinator or not self.nav_core:
+            self._set_event_test_button_checked(False)
+            QMessageBox.warning(self, "事件管理", "请先加载地图并初始化事件系统。")
+            return
+        if not self.nav_config.game_screen_center:
+            self._set_event_test_button_checked(False)
+            QMessageBox.warning(self, "事件管理", "请先校准屏幕中心。")
+            return
+        if not self.nav_timer.isActive():
+            self.btn_start.setChecked(True)
+            self.toggle_navigation()
+            if not self.nav_timer.isActive():
+                self._set_event_test_button_checked(False)
+                return
+
+        self._set_portal_manual_test_active(True, reason="button start")
+
+    def _set_event_test_button_checked(self, checked: bool) -> None:
+        button = getattr(self.event_dialog, "test_portal_button", None)
+        if button is not None and button.isChecked() != checked:
+            button.setChecked(checked)
+
+    def _set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
+        self._portal_manual_test_active = bool(active)
+        self._set_event_test_button_checked(bool(active))
+        button = getattr(self.event_dialog, "test_portal_button", None)
+        if button is not None:
+            button.setText("停止传送门测试" if active else "测试传送门")
+        if active:
+            self._set_game_input_window_mode(True)
+            self.motion_controller.set_control_enabled(True)
+            event_log("portal manual event test started", reason=reason)
+            self.status_label.setText("传送门测试已启动：使用正式事件流程执行")
+            return
+
+        self._reset_event_move_runtime()
+        if not self.auto_navigation_enabled:
+            self._set_game_input_window_mode(False)
+        event_log("portal manual event test stopped", reason=reason)
+        self.status_label.setText("传送门测试已停止")
+
+    def _nearest_portal_task(self):
+        if not self.event_coordinator or not self.nav_core or not self.nav_core.current_pos:
+            return None
+        player_pos = self.nav_core.current_pos
+        portal_tasks = [
+            task
+            for task in self.event_coordinator.tasks()
+            if task.event_type == "portal" and getattr(task.state, "value", str(task.state)) in {"observed", "pending", "running"}
+        ]
+        if not portal_tasks:
+            return None
+        return min(
+            portal_tasks,
+            key=lambda task: float(np.hypot(task.global_pos[0] - player_pos[0], task.global_pos[1] - player_pos[1])),
+        )
 
     def _render_map(self):
         """
@@ -708,6 +1149,9 @@ class NavigationModeWidget(QWidget):
 
         # --- 场景重建 ---
         self.scene.clear()
+        self.route_overlay_items = []
+        self.event_overlay_items = []
+        self.route_path_item = None
 
         # 1. 添加地图背景
         self.map_item = self.scene.addPixmap(pixmap)
@@ -1149,7 +1593,7 @@ class NavigationModeWidget(QWidget):
             self.route_data = self.route_manager.load_route(self.map_folder_path)
             self._render_route_overlay()
             self._set_map_click_mode("NONE")
-            self.status_label.setText(f"?????: ({global_point[0]}, {global_point[1]})")
+            self.status_label.setText(f"出口已设置: ({global_point[0]}, {global_point[1]})")
             return
 
         if self.map_click_mode == "ADD_REQUIRED_POINT":
@@ -1163,11 +1607,11 @@ class NavigationModeWidget(QWidget):
             self.route_manager.add_guide_point(self.map_folder_path, global_point)
             self.route_data = self.route_manager.load_route(self.map_folder_path)
             self._render_route_overlay()
-            self.status_label.setText(f"??????: ({global_point[0]}, {global_point[1]})")
+            self.status_label.setText(f"已添加途经点: ({global_point[0]}, {global_point[1]})")
             return
 
         if not self.nav_core.is_localized or not self.nav_core.current_pos:
-            QMessageBox.warning(self, "??", "??????????????")
+            QMessageBox.warning(self, "警告", "请先完成定位后再点击移动目标。")
             return
 
         target_global_pos = (float(global_point[0]), float(global_point[1]))
@@ -1176,7 +1620,7 @@ class NavigationModeWidget(QWidget):
 
         self.target_item.setPos(pos)
         self.target_item.setVisible(True)
-        self.status_label.setText(f"?????: ({pos.x():.1f}, {pos.y():.1f})")
+        self.status_label.setText(f"移动目标: ({pos.x():.1f}, {pos.y():.1f})")
 
     def set_initial_hint(self, scene_pos):
         """
@@ -1397,6 +1841,8 @@ class NavigationModeWidget(QWidget):
             if self.nav_core:
                 self.nav_core.is_first_frame_localized = False
             self.auto_navigation_enabled = False
+            if self._portal_manual_test_active:
+                self._set_portal_manual_test_active(False, reason="navigation stopped")
             self.auto_navigator.stop()
             self._set_game_input_window_mode(False)
             self.btn_auto_nav.setChecked(False)
@@ -1444,8 +1890,26 @@ class NavigationModeWidget(QWidget):
         now_ms = int(time.time() * 1000)
         localized_pos = None if global_x is None or global_y is None else (global_x, global_y)
         auto_action = None
+        event_action = None
+        event_run_enabled = bool(self.auto_navigation_enabled or self._portal_manual_test_active)
 
-        if self.auto_navigation_enabled:
+        if self.event_coordinator and localized_pos is not None:
+            event_tick = self._build_event_tick(now_ms, frame, player_pos, localized_pos, conf)
+            event_action = self.event_coordinator.update(
+                event_tick,
+                run_handlers=event_run_enabled,
+            )
+            self._render_event_overlay()
+            if self.event_dialog.isVisible():
+                self.event_dialog.refresh()
+        elif self.event_coordinator and event_run_enabled:
+            event_tick = self._build_event_tick(now_ms, frame, player_pos, None, conf)
+            event_action = self.event_coordinator.update(event_tick, run_handlers=True)
+            self._render_event_overlay()
+            if self.event_dialog.isVisible():
+                self.event_dialog.refresh()
+
+        if self.auto_navigation_enabled and not self._should_event_action_take_control(event_action):
             lookahead = max(36.0, min(float(capture_rect['width']) * self.nav_core.draw_scale * 0.18, 120.0))
             auto_action = self.auto_navigator.update(
                 localized_pos=localized_pos,
@@ -1466,29 +1930,22 @@ class NavigationModeWidget(QWidget):
                 self.player_item = self.scene.addEllipse(-5, -5, 10, 10, QPen(Qt.red), QBrush(Qt.red))
                 self.player_item.setZValue(2)
 
-            if hasattr(self.nav_core, 'is_first_frame_localized') and self.nav_core.is_first_frame_localized:
-                print(f"=== ??????? (??????): ({int(global_x)}, {int(global_y)}) | ????{conf:.2f} ===")
-                print(f"=== ???????? ===")
-                if self.nav_core.drawing_saved_pos:
-                    print(f"  1. ?????? (????): ({self.nav_core.drawing_saved_pos[0]:.2f}, {self.nav_core.drawing_saved_pos[1]:.2f})")
-                if self.nav_core.current_pos and self.nav_core.drawing_saved_pos and self.nav_core.current_pos != self.nav_core.drawing_saved_pos:
-                    print(f"  2. ?????? (????): ({self.nav_core.current_pos[0]:.2f}, {self.nav_core.current_pos[1]:.2f})")
-                print(f"  3. ?????? (?????): ({int(global_x)}, {int(global_y)})")
-                print(f"=========================")
-
             self.player_item.setPos(display_x, display_y)
             self.player_item.setVisible(True)
             self._update_monitor_rect((global_x, global_y), capture_rect=capture_rect, player_local_pos=player_pos)
             self._update_game_view_rect((global_x, global_y))
 
             status_text = (
-                f"???({int(global_x)}, {int(global_y)}) | ????{conf:.2f} | "
-                f"???{capture_rect['width']}x{capture_rect['height']}"
+                f"位置: ({int(global_x)}, {int(global_y)}) | 置信度: {conf:.2f} | "
+                f"监视: {capture_rect['width']}x{capture_rect['height']}"
             )
             if auto_action:
                 message = auto_action.get('message') or auto_action.get('state')
                 if message:
-                    status_text += f" | ?????{message}"
+                    status_text += f" | 导航: {message}"
+            event_status = self._event_status_text()
+            if event_status:
+                status_text += f" | {event_status}"
             self.status_label.setText(status_text)
             self.view.centerOn(display_x, display_y)
         else:
@@ -1502,14 +1959,26 @@ class NavigationModeWidget(QWidget):
                 self._update_game_view_rect(fallback_pos)
             if self.player_item:
                 self.player_item.setVisible(False)
-            status_text = f"????... ?????{capture_rect['width']}x{capture_rect['height']}"
+            status_text = f"定位中... 监视: {capture_rect['width']}x{capture_rect['height']}"
             if auto_action:
                 message = auto_action.get('message') or auto_action.get('state')
                 if message:
-                    status_text += f" | ?????{message}"
+                    status_text += f" | 导航: {message}"
+            event_status = self._event_status_text()
+            if event_status:
+                status_text += f" | {event_status}"
             self.status_label.setText(status_text)
 
-        if auto_action:
+        if event_run_enabled and self._should_event_action_take_control(event_action):
+            self.event_action_executor.execute(event_action)
+            self._render_route_overlay(
+                current_path=self._event_move_path,
+                current_subgoal=self._event_move_subgoal,
+                current_target_kind="event",
+            )
+            if event_action.type in {EventActionType.COMPLETE, EventActionType.FAIL} and self._portal_manual_test_active:
+                self._set_portal_manual_test_active(False, reason=f"event {event_action.type.value}")
+        elif auto_action:
             self._render_route_overlay(
                 current_path=auto_action.get('path'),
                 current_subgoal=auto_action.get('subgoal'),
@@ -1538,8 +2007,23 @@ class NavigationModeWidget(QWidget):
                 self._set_game_input_window_mode(False)
                 self.btn_auto_nav.setChecked(False)
                 if auto_action.get('type') == 'arrived':
-                    self.status_label.setText('?????????')
+                    self.status_label.setText("已到达出口区域")
                 else:
-                    self.status_label.setText(auto_action.get('message', '??????'))
+                    self.status_label.setText(auto_action.get('message', "自动导航失败"))
         elif self.route_data:
             self._render_route_overlay()
+
+    def _should_event_action_take_control(self, event_action) -> bool:
+        if event_action is None:
+            return False
+        return event_action.type in {
+            EventActionType.MOVE_TO,
+            EventActionType.CLICK_SCREEN,
+            EventActionType.PRESS_KEY,
+            EventActionType.WAIT,
+        }
+
+    def _event_status_text(self) -> str:
+        if not self.event_coordinator:
+            return ""
+        return self.event_coordinator.status_summary()

@@ -620,3 +620,275 @@
 **覆盖进度更新：** `AutoNavigator` 新增 `current_target_kind`、`current_segment_target_kind()`、`_select_segment_target()`、`_route_progress_for_point()`、`_guide_index_limit_for_current_required()`；`_advance_segment()` 改为按当前目标类型推进，普通点到达不会误推进 `required_index`；`_align_route_to_current_position()` 允许在必经点前接入普通路线，但会截断到当前必经点之前；`NavigationModeWidget._render_route_overlay()` 使用 `target_kind` 高亮当前目标。
 **验证：** `python -m py_compile core\auto_navigator.py gui\modes\navigation_mode.py tests\test_auto_navigator.py` 通过；`python -m unittest tests.test_recognizer_optimized tests.test_navigation_core tests.test_stitcher_core tests.test_pathfinder tests.test_auto_navigator tests.test_path_utils tests.test_route_manager tests.test_motion_controller` 通过，42 个测试成功。
 **修订的旧结论：** “存在未完成必经点时应直接追当前必经点”会破坏路线骨架；正确语义是 `guide_points` 决定可行走路线形状，`required_points` 决定必须按顺序经过的阶段门。
+
+## [SYNC] 2026-05-22 - 事件系统设计和传送门图标探针
+
+### A. SYNC 范围声明
+**触发任务：** 用户要求事件功能先做可行性验证，重点确认能否从游戏小地图中识别传送门事件图标，并保持后续事件类型模块化扩展。
+**直接变更文件：**
+- `docs/plans/2026-05-22-event-system-design.md`
+- `utils/event_icon_probe.py`
+- `assets/event_templates/portal/minimap/portal_minimap_01.png`
+- `assets/event_templates/portal/minimap/portal_minimap_02.png`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：** 事件识别暂不接入导航主循环；当前只新增设计文档和独立探针。后续正式接入时应从 raw minimap frame 分层识别事件，而不是复用已做动态抑制的定位特征图。
+
+### C. SYNC 结果
+**连带重读文件：** `docs/plans/2026-05-22-event-system-design.md`、`utils/event_icon_probe.py`、`core/capture.py`。
+**CODEBASE.md 更新内容：** 新增事件图标探针的目录职责、模块说明、`match_template()` / `merge_hits()` / `main()` 算法说明、事件探针数据流和外部集成注意事项。
+**覆盖进度更新：** 事件系统设计确认 `EventMonitor` / `EventDetector` / `EventMemory` / `EventScheduler` / `EventHandler` / `EventConfig` 模块边界；传送门 v1 使用 raw minimap 多模板匹配作为第一阶段识别方式；`event_icon_probe.py` 支持可重复 `--template`，跨模板候选按中心距离去重，并在无 accepted hit 时输出每个模板的最佳候选用于诊断；已把可复用传送门模板移入 `assets/event_templates/portal/minimap/`。
+**验证：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile utils\event_icon_probe.py` 通过；管理员权限运行资产模板探针通过，`portal_minimap_01` 得分 `0.9652`、中心 `(45,61)`，`portal_minimap_02` 得分 `0.9172`、中心 `(68,87)`。
+**修订的旧结论：** “识别传送门需要先训练 YOLO”不是第一阶段必要条件；当前小地图图标是固定 UI 小图标，多模板匹配已经足够支撑第一版事件发现探针。
+
+## [SYNC] 2026-05-22 - 大画面传送门实体识别探针
+
+### A. SYNC 范围声明
+**触发任务：** 用户明确要求大地图/游戏屏幕也做一次探针，先验证能否识别整个游戏界面中的传送门实体，验证可行后只保存为技术资产，暂不接入事件架构。
+**直接变更文件：**
+- `utils/portal_screen_probe.py`
+- `assets/event_detectors/portal/main_view/blue_glow_detector_v1.json`
+- `assets/event_detectors/portal/main_view/README.md`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：** 当前不修改导航、事件主循环或点击逻辑；新增大画面二阶段确认探针。后续事件系统可在小地图传送门图标确认后，再用该主画面探针确认真实传送门实体是否在可点击视野内。
+
+### C. SYNC 结果
+**连带重读文件：** `utils/portal_screen_probe.py`、`core/capture.py`、`assets/event_detectors/portal/main_view/README.md`。
+**CODEBASE.md 更新内容：** 新增大画面探针的目录职责、模块说明、`build_blue_glow_mask()` / `detect_portal_candidates()` / `is_strict_portal_candidate()` 算法说明、主画面探针数据流和风险登记。
+**覆盖进度更新：** `portal_screen_probe.py` 支持枚举 `UnrealWindow` / `Torchlight` 游戏窗口、`--rect`、`--full-screen`、`--params` 参数资产；检测策略为 HSV 蓝/青/紫发光 mask + 轮廓面积/发光占比/圆度/宽高比评分 + 严格 accepted 过滤。`blue_glow_detector_v1.json` 固化当前阈值，README 记录复现命令和预期行为。
+**验证：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile utils\portal_screen_probe.py` 通过；管理员权限 `run_02` 中真实大传送门被唯一 accepted，得分 `0.9962`，screen center `(774,501)`，bbox `202x207`；后续 `--params` 复现时传送门已离开/被遮挡，输出 0 accepted，符合“实体不可见时不确认”的预期。
+**修订的旧结论：** 大画面传送门不需要先训练 YOLO 才能验证可行性；在当前画面中，颜色+几何二阶段确认足以稳定识别可见的大传送门，但正式接入时必须受小地图事件发现约束，不能全图无条件触发。
+
+## [SYNC] 2026-05-22 - 事件系统架构设计和实现计划
+
+### A. SYNC 范围声明
+**触发任务：** 用户审核确认采用完整事件包架构，TUI 只展示完整事件；需要先输出代码结构架构设计和可执行实现计划。
+**直接变更文件：**
+- `docs/plans/2026-05-22-event-system-architecture-design.md`
+- `docs/plans/2026-05-22-event-system-implementation-plan.md`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：** 当前仅新增设计和计划文档，不修改运行代码。后续实现应按计划从 core event contracts 开始，逐步接入 portal 事件，不直接把 portal 逻辑写入 `NavigationModeWidget`。
+
+### C. SYNC 结果
+**连带重读文件：** `docs/plans/2026-05-22-event-system-design.md`、`docs/plans/2026-05-22-event-system-architecture-design.md`、`docs/plans/2026-05-22-event-system-implementation-plan.md`。
+**CODEBASE.md 更新内容：** 补充两个事件系统文档的目录职责说明。
+**覆盖进度更新：** 架构设计明确 `EventDefinition` 是事件包唯一外部入口，TUI 只展示 `portal` 等完整事件；实现计划拆成 7 个阶段 22 个 TDD 任务，覆盖核心模型、配置、memory、portal 检测/确认/handler、coordinator、导航接入、overlay 和 TUI options。
+**验证：** 已确认两个计划文件存在并可读取；本次未修改运行代码，无需执行业务测试。
+**修订的旧结论：** 事件系统不能只停留在“功能方案”；需要先固定代码结构和协议边界，避免后续把 detector/confirmer/handler 暴露给 TUI 或耦合进导航循环。
+
+## [SYNC] 2026-05-22 - 实现事件系统核心和 portal 事件包
+
+### A. SYNC 范围声明
+**触发任务：** 用户要求不要继续规划，直接按 codebase skill 执行开发；同时不要浪费时间跑逻辑测试，只做启动/编译级检查，实际游戏行为由用户测试。
+**直接变更文件：**
+- `core/events/**`
+- `core/motion_controller.py`
+- `gui/modes/navigation_mode.py`
+- `utils/event_icon_probe.py`
+- `utils/portal_screen_probe.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：** 导航模式加载地图时初始化事件系统，导航循环在自动导航开启时允许事件动作优先于普通 auto move。`portal` 事件可从小地图 raw frame 识别传送门图标，靠近后用主画面 confirmer 二阶段确认并返回点击动作。
+
+### C. SYNC 结果
+**连带重读文件：** `gui/modes/navigation_mode.py`、`core/motion_controller.py`、`utils/event_icon_probe.py`、`utils/portal_screen_probe.py`。
+**CODEBASE.md 更新内容：** 新增 `core/events` 核心模块、`portal` 事件包、探针复用核心算法、导航接入点和 `MotionController.click_screen_position()` 说明。
+**覆盖进度更新：** 新增事件模型、配置、注册表、memory、monitor、scheduler、runner、coordinator、capture provider、action executor、overlay model、window finder；新增 `PortalEventDefinition`、小地图模板 detector、主画面蓝紫发光 confirmer、portal handler；探针脚本改为复用核心 matcher/confirmer；`NavigationModeWidget` 每帧构造 `EventTick` 并在自动导航开启时执行事件动作。
+**验证：** 按用户要求未运行逻辑单测；执行 `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events gui\modes\navigation_mode.py core\motion_controller.py utils\event_icon_probe.py utils\portal_screen_probe.py main.py` 通过。清理了 `core/events` 下编译产生的 `__pycache__`。
+**当前限制：** 第一版事件动作只在自动导航开启时接管；portal handler 点击/按键后用保守等待完成，不做真实场景切换确认；未新增 GUI/TUI 配置页，只提供 `event_config.json` 和 TUI options 数据模型。
+**修订的旧结论：** 探针不应长期保留独立算法实现；现在运行时 detector/confirmer 与探针共用核心代码，后续调参不会出现两套逻辑漂移。
+
+## [SYNC] 2026-05-23 - Add event runtime logs
+### A. SYNC scope
+**Trigger:** User needs visible logs to test event detection and execution.
+**Direct files expected:** core/events/debug.py, core/events/memory.py, core/events/runner.py, core/events/coordinator.py, core/events/types/portal/handler.py, core/events/types/portal/minimap_detector.py, core/events/types/portal/main_view_confirmer.py, core/events/action_executor.py, gui/modes/navigation_mode.py, CODEBASE.md, ITERATION_LOG.md.
+**Impact:** Event detection, task lifecycle, scheduler/runner actions, portal confirmation, event action execution, and navigation status text become observable without running logic tests.
+
+### C. SYNC result
+**Files changed:** `core/events/debug.py`, `core/events/memory.py`, `core/events/runner.py`, `core/events/coordinator.py`, `core/events/monitor.py`, `core/events/action_executor.py`, `core/events/types/portal/handler.py`, `core/events/types/portal/minimap_detector.py`, `core/events/types/portal/main_view_confirmer.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+
+**Runtime visibility added:** Event logs now cover detector initialization, minimap observations, task creation/confirmation, scheduler selection, runner action output, executor callbacks, portal move/confirm/click/wait/complete/timeout phases, and navigation status-bar event summary.
+
+**Behavior guard:** Event detection/memory still runs during normal navigation, but event handlers only advance when `auto_navigation_enabled` is true via `EventCoordinator.update(..., run_handlers=...)`. This prevents logs from reporting handler completion when actual event movement/click execution is disabled.
+
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events gui\modes\navigation_mode.py core\motion_controller.py utils\event_icon_probe.py utils\portal_screen_probe.py main.py` passed. No logic/unit tests were run per user instruction.
+
+**CODEBASE.md updated:** Added Event Runtime Diagnostics section documenting the shared event logger and live-game testing output chain.
+
+
+## [SYNC] 2026-05-23 - Event manager UI and map markers
+### A. SYNC scope
+**Trigger:** User approved independent event-management UI plus visible map markers for event detection/trigger status.
+**Direct files expected:** gui/dialogs/event_manager_dialog.py, gui/modes/navigation_mode.py, core/events/config.py if needed, CODEBASE.md, ITERATION_LOG.md.
+**Impact:** Event enablement and runtime task state become visible in UI; detected event tasks are drawn on the navigation map.
+
+## [SYNC] 2026-05-23 事件管理 UI 与地图标记收口
+
+### A. SYNC 范围声明
+**触发任务：** 为事件系统补齐独立 UI 管理窗口、可见事件触发状态、地图事件标记与事件配置保存。
+**直接变更文件：**
+- `gui/dialogs/event_manager_dialog.py`
+- `gui/modes/navigation_mode.py`
+- `core/events/coordinator.py`
+
+**预计连带影响：**
+- `core/events/config.py`：事件选配模型与保存格式。
+- `core/events/overlay_models.py`：地图事件标记的展示模型。
+- `core/events/models.py`：事件任务状态、动作类型在 UI 中展示。
+
+### C. SYNC 结果
+**连带重读文件：** `core/events/config.py`、`core/events/overlay_models.py`、`core/events/models.py`、`core/events/scheduler.py`、`core/events/action_executor.py`、`core/events/capture_provider.py`、`core/motion_controller.py`。
+
+**CODEBASE.md 更新内容：** 补充 `gui/dialogs/event_manager_dialog.py` 目录职责和模块说明；更新事件管理 UI/地图 marker 数据流；补充 `MotionController.press_key()`、`NavigationModeWidget._render_event_overlay()`、`EventManagerDialog.refresh()` 的函数说明；新增 Event Manager UI 运行说明。
+
+**覆盖进度更新：** `EventManagerDialog` 现在作为独立非模态窗口，展示完整事件选配、任务状态和保存入口；`NavigationModeWidget` 增加“事件管理”按钮、事件 marker 绘制、event config 保存和事件按键执行回调；`EventCoordinator` 在全局禁用或单事件禁用时过滤调度、状态摘要和 overlay；`MotionController` 增加事件按键 `press_key()` 通道。
+
+**验证：** 按用户要求未运行逻辑/单元测试；执行 `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events gui\dialogs\event_manager_dialog.py gui\modes\navigation_mode.py core\motion_controller.py utils\event_icon_probe.py utils\portal_screen_probe.py main.py` 通过；执行 `D:\ACloud\.venv\Scripts\python.exe -c "from gui.dialogs.event_manager_dialog import EventManagerDialog; from gui.modes.navigation_mode import NavigationModeWidget; print('import ok')"` 通过。
+
+**修订的旧结论：** 只靠控制台日志不够支持用户现场测试事件触发；现在事件检测结果同时进入独立 UI 窗口和地图 marker，控制台日志只作为诊断补充。
+## [SYNC] 2026-05-23 传送门按键交互与防反复传送
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈传送门应在小地图识别后跑到附近按 D，并且传送门成对靠近时不能来回反复触发；当前实际存在不会按 D 和反复识别传送的问题。
+**直接变更文件：**
+- `core/events/config.py`
+- `core/events/types/portal/config.py`
+- `core/events/types/portal/handler.py`
+- `core/events/memory.py`
+- `gui/modes/navigation_mode.py`
+- `map_data/A1/event_config.json`
+
+**预计连带影响：**
+- `core/events/models.py`：EventTick 可携带定位失败后的 raw minimap frame。
+- `core/motion_controller.py`：事件按键执行通道继续复用 `press_key()`。
+- `CODEBASE.md`：同步传送门事件新完成判定和冷却半径。
+
+### C. SYNC 结果
+**连带重读文件：** `core/events/config.py`、`core/events/types/portal/config.py`、`core/events/types/portal/handler.py`、`core/events/memory.py`、`core/events/runner.py`、`gui/modes/navigation_mode.py`、`core/motion_controller.py`、`map_data/A1/event_config.json`。
+
+**CODEBASE.md 更新内容：** 更新 portal 默认交互为按 `D`；补充传送完成判定、冷却半径、同类型短冷却和附近 pending 任务抑制说明；新增 Portal Event Current Behavior。
+
+**覆盖进度更新：** `PortalEventConfig` 默认 `interaction="key"`，并新增 `cooldown_radius/type_cooldown_ms/post_interact_wait_ms/teleport_timeout_ms/teleport_min_distance/environment_change_threshold`；`PortalEventHandler` 在 key 模式下到达附近直接按 D，随后用位置变化或小地图环境签名变化判断传送完成；`EventMemory` 支持完成后更大半径冷却和同类型短全局冷却；`EventRunner` 完成任务后忽略附近已存在的同类任务；A1 地图事件配置已改为 key。
+
+**验证：** 按用户要求未运行逻辑/单元测试；执行 `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events gui\dialogs\event_manager_dialog.py gui\modes\navigation_mode.py core\motion_controller.py utils\event_icon_probe.py utils\portal_screen_probe.py main.py` 通过；执行导入检查输出 `key` 和 `import ok`。
+
+**修订的旧结论：** 传送门默认不应该依赖主画面确认后点击；用户当前目标是“跑到小地图识别的传送门附近按 D”。主画面确认保留给 click 模式，但 key 模式直接按键更符合游戏交互。
+## [SYNC] 2026-05-23 传送门小地图误识别定位修正
+
+### A. SYNC 范围声明
+**触发任务：** 用户截图显示地图上识别出多个传送门 marker，但实际小地图只有两个固定蓝色传送门图标；需要先解决传送门定位错误。
+**直接变更文件：**
+- `core/events/config.py`
+- `core/events/types/portal/config.py`
+- `core/events/types/portal/minimap_detector.py`
+- `map_data/A1/event_config.json`
+
+**预计连带影响：**
+- `CODEBASE.md`：同步 portal 小地图检测从纯模板匹配改为模板+颜色校验。
+- 事件 UI/地图 marker：候选数量会从最多 8 个收敛到最多 2 个。
+
+### C. SYNC 结果
+**连带重读文件：** `core/events/detectors/template_matcher.py`、`core/events/types/portal/assets.py`、`core/events/projector.py`。
+
+**CODEBASE.md 更新内容：** 更新 portal 小地图 detector 说明：传送门检测不再只依赖灰度/边缘模板匹配，而是模板命中后增加蓝/青图标颜色校验；补充 `max_candidates` 和 `min_blue_ratio` 配置字段。
+
+**覆盖进度更新：** 根因确认为 `PortalMinimapDetector` 之前以灰度/边缘匹配为主，`top_k=8` 且阈值 0.60，容易把白色墙线和圆形地形误识别为传送门；不是 `minimap_local_to_global()` 投影公式本身造成。现改为默认阈值 0.74、单帧最多接受 2 个候选、候选 bbox 周围必须有足够蓝/青像素，且 detector 每帧使用最新 config。
+
+**验证：** `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events gui\dialogs\event_manager_dialog.py gui\modes\navigation_mode.py core\motion_controller.py utils\event_icon_probe.py utils\portal_screen_probe.py main.py` 通过；导入检查输出默认 `0.74 2 0.08` 和 `import ok`。未运行逻辑/单元测试，等待用户实测。
+
+**修订的旧结论：** 传送门位置偏差不是优先从全局坐标投影修正；更直接的根因是 detector 产生了过多错误 local hit，投影只是把这些错误 local hit 映射到了地图上。
+
+## [SYNC] 2026-05-23 - Event localization through wall registration
+### A. SYNC scope
+**Trigger:** User approved scheme B: every event should be detection -> localization -> trigger -> execution -> completion, and portal global position must come from wall registration plus multi-frame stabilization instead of the old single-frame offset projector.
+
+**Direct files changed:**
+- `docs/plans/2026-05-23-event-localization-stabilizer-design.md`
+- `core/navigation_core.py`
+- `core/events/models.py`
+- `core/events/position_stabilizer.py`
+- `core/events/coordinator.py`
+- `core/events/memory.py`
+- `core/events/config.py`
+- `core/events/types/portal/minimap_detector.py`
+- `core/events/types/portal/config.py`
+- `core/events/types/portal/definition.py`
+- `gui/modes/navigation_mode.py`
+- `gui/dialogs/event_manager_dialog.py`
+- `map_data/A1/event_config.json`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**Removed files:**
+- `core/events/projector.py`
+
+**Expected impact:** Portal detector now reports only local minimap icon candidates. `NavigationCore` exposes per-frame registration data. `EventPositionStabilizer` projects detections through that registration and only emits stable global observations after multi-frame clustering, so map markers/tasks should no longer be created from one bad local hit.
+
+### C. SYNC result
+**Carryover files reviewed:** `core/events/models.py`, `core/events/coordinator.py`, `core/events/memory.py`, `core/events/types/portal/minimap_detector.py`, `core/navigation_core.py`, `gui/modes/navigation_mode.py`.
+
+**CODEBASE.md updated:** Replaced the old `projector.py` directory entry with `position_stabilizer.py`, added `FrameRegistration` and `EventDetection` to the event contracts, corrected portal current behavior, and added an Event Localization Contract section.
+
+**Coverage update:** Event lifecycle is now split into local detection (`EventDetection`), wall-registration projection/stabilization (`EventPositionStabilizer`), stable global observation (`EventObservation`), memory task creation, and handler execution. `stable_frames` replaces portal task confirmation for localization; `memory_confirm_frames` remains as a post-stabilization memory gate.
+
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m compileall -q core\events core\navigation_core.py gui\modes\navigation_mode.py gui\dialogs\event_manager_dialog.py main.py` passed. `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.navigation_mode import NavigationModeWidget; from core.events.types.portal.minimap_detector import PortalMinimapDetector; from core.events.position_stabilizer import EventPositionStabilizer; from core.navigation_core import NavigationCore; print('import ok')"` passed. No logic/unit tests were run per user preference.
+
+**Revised old conclusion:** Portal localization errors should no longer be treated as a detector-only threshold problem. The stable contract is now: detector finds local icon, navigation registration anchors the frame to the wall map, and only repeated projections to the same global coordinate become actionable events.
+
+## [SYNC] 2026-05-23 - Hide default console and fix garbled status text
+### A. SYNC scope
+**Trigger:** User reported that runtime opens a terminal and the printed content is garbled or `????`.
+
+**Direct files changed:**
+- `main.py`
+- `gui/modes/navigation_mode.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**Expected impact:** Normal GUI launch should no longer show an extra console after UAC elevation. Runtime diagnostics are written to `logs/runtime.log` in UTF-8. If live console output is needed, set `MINIMAP_DEBUG_CONSOLE=1` before launching.
+
+### C. SYNC result
+**Root cause:** Admin relaunch used `sys.executable`; when launched from `python.exe`, UAC restarted another console Python process. Console encoding could also corrupt Chinese output, and several navigation status/debug strings had already been saved as literal `????`.
+
+**Fix:** `main.py` now configures UTF-8 output, redirects default stdout/stderr to `logs/runtime.log`, uses `pythonw.exe` for default UAC relaunch, and only keeps console mirroring when `MINIMAP_DEBUG_CONSOLE=1`. Navigation status/debug strings that were literal `????` were restored to readable Chinese.
+
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile main.py gui\modes\navigation_mode.py` passed. `rg "????" main.py gui/modes/navigation_mode.py core/events` returned no matches.
+
+## [SYNC] 2026-05-23 - Release console before admin relaunch
+### A. SYNC scope
+**Trigger:** User still sees a runtime terminal with garbled output.
+**Direct files changed:** `main.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Default GUI startup releases any inherited console before the UAC/admin branch and continues writing diagnostics to UTF-8 `logs/runtime.log`. Explicit debug console remains available via `MINIMAP_DEBUG_CONSOLE=1`.
+
+### C. SYNC result
+**Root cause refinement:** `pythonw.exe` prevents the elevated GUI process from creating a new console, but a non-debug launch from `python.exe` or PowerShell can still inherit/show the initial console until it is explicitly released.
+**Fix:** `hide_console_if_not_debugging()` now runs immediately after output redirection, before DPI/admin checks and before Qt import. The UAC call still uses normal show mode so the Qt main window is not hidden.
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile main.py` passed. No logic/unit tests were run per user preference.
+
+## [SYNC] 2026-05-23 - Paired portal completion handling
+### A. SYNC scope
+**Trigger:** User showed paired portals where localization/markers jump between two nearby portal icons, and after teleport the exit portal should be marked completed to prevent reverse teleport loops.
+**Direct files changed:** `core/events/models.py`, `core/events/position_stabilizer.py`, `core/events/memory.py`, `core/events/runner.py`, `core/events/config.py`, `core/events/types/portal/config.py`, `core/events/types/portal/handler.py`, `map_data/A1/event_config.json`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Two portals visible in the same minimap frame are kept as separate event clusters. When an entry portal completes, the player destination is used to mark the nearby exit portal completed/cooldown as well.
+
+### C. SYNC result
+**Root cause:** `localization_cluster_radius=110` let two close portal detections merge into one cluster, so the stable marker could bounce between them. Completion only applied to the executed entry task, so the exit-side task could remain pending and be selected immediately after teleport.
+**Fix:** Reduced portal localization cluster radius to 56 and made `EventPositionStabilizer` refuse to merge multiple detections from the same frame into one cluster. `EventAction.complete()` now carries metadata; portal handler includes `entry_pos` and `exit_pos`; runner asks memory to mark a related exit task completed before suppressing nearby pending tasks. Added `exit_complete_radius=120` to defaults and A1 config.
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\models.py core\events\position_stabilizer.py core\events\memory.py core\events\runner.py core\events\config.py core\events\types\portal\config.py core\events\types\portal\handler.py` passed. No logic/unit tests were run per user preference.
+
+## [SYNC] 2026-05-23 - Split paired portal tasks in memory
+### A. SYNC scope
+**Trigger:** User reported paired portals still show as one marker jumping between two portal positions; execution logic should wait until recognition/localization is stable.
+**Direct files changed:** `core/events/memory.py`, `core/events/config.py`, `core/events/types/portal/config.py`, `map_data/A1/event_config.json`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Stable observations at two nearby portal coordinates should become two separate tasks/markers instead of repeatedly updating one task position.
+
+### C. SYNC result
+**Root cause refinement:** Runtime logs showed detector and stabilizer already produced two stable portal positions, approximately `(3466,2275)` and `(3512,2327)`. The jump happened in `EventMemory._find_matching_task()` because the default dedupe radius was 80 and the two portals are roughly 69px apart.
+**Fix:** Added portal `dedupe_radius=32` defaults and A1 config. `EventMemory.merge_observations()` now tracks task IDs touched during the current frame, so two observations from one frame cannot both merge into the same task.
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\memory.py core\events\config.py core\events\types\portal\config.py` passed. No logic/unit tests were run per user preference.

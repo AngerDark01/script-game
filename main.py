@@ -14,8 +14,100 @@
 
 import ctypes
 import os
+from pathlib import Path
 import subprocess
 import sys
+import time
+
+
+DEBUG_CONSOLE_ENV = "MINIMAP_DEBUG_CONSOLE"
+_RUNTIME_LOG_HANDLE = None
+
+
+class _OutputTee:
+    def __init__(self, *targets):
+        self.targets = [target for target in targets if target is not None]
+        self.encoding = "utf-8"
+        self.errors = "replace"
+
+    def write(self, text):
+        for target in self.targets:
+            try:
+                target.write(text)
+            except Exception:
+                pass
+        return len(text)
+
+    def flush(self):
+        for target in self.targets:
+            try:
+                target.flush()
+            except Exception:
+                pass
+
+    def isatty(self):
+        return any(bool(getattr(target, "isatty", lambda: False)()) for target in self.targets)
+
+
+def _has_console_window():
+    if os.name != "nt":
+        return True
+    try:
+        return bool(ctypes.windll.kernel32.GetConsoleWindow())
+    except Exception:
+        return False
+
+
+def _debug_console_enabled():
+    return os.environ.get(DEBUG_CONSOLE_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def configure_runtime_output():
+    """Use UTF-8 output and keep diagnostics in a log file even under pythonw."""
+    global _RUNTIME_LOG_HANDLE
+    if os.name == "nt":
+        try:
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+    log_dir = Path(__file__).resolve().parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "runtime.log"
+    _RUNTIME_LOG_HANDLE = log_path.open("a", encoding="utf-8", buffering=1)
+    _RUNTIME_LOG_HANDLE.write(f"\n=== session {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+
+    current_stdout = getattr(sys, "stdout", None)
+    current_stderr = getattr(sys, "stderr", None)
+    if _has_console_window() and _debug_console_enabled():
+        sys.stdout = _OutputTee(current_stdout, _RUNTIME_LOG_HANDLE)
+        sys.stderr = _OutputTee(current_stderr, _RUNTIME_LOG_HANDLE)
+    else:
+        sys.stdout = _RUNTIME_LOG_HANDLE
+        sys.stderr = _RUNTIME_LOG_HANDLE
+
+
+def hide_console_if_not_debugging():
+    """Detach the console for GUI use; diagnostics remain in logs/runtime.log."""
+    if os.name != "nt" or _debug_console_enabled():
+        return
+    try:
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
+
+
+configure_runtime_output()
+hide_console_if_not_debugging()
 
 
 def set_process_dpi_awareness():
@@ -47,18 +139,31 @@ def relaunch_as_admin():
     if os.name != "nt":
         return False
     if getattr(sys, "frozen", False):
+        executable = sys.executable
         params = subprocess.list2cmdline(sys.argv[1:])
     else:
+        executable = _gui_python_executable()
         params = subprocess.list2cmdline(sys.argv)
     result = ctypes.windll.shell32.ShellExecuteW(
         None,
         "runas",
-        sys.executable,
+        executable,
         params,
         os.getcwd(),
         1,
     )
     return result > 32
+
+
+def _gui_python_executable():
+    if _debug_console_enabled():
+        return sys.executable
+    current = Path(sys.executable)
+    if current.name.lower() in {"python.exe", "python3.exe"}:
+        pythonw = current.with_name("pythonw.exe")
+        if pythonw.exists():
+            return str(pythonw)
+    return sys.executable
 
 
 DPI_AWARENESS_RESULT = set_process_dpi_awareness()
@@ -70,7 +175,6 @@ if os.name == "nt" and not is_running_as_admin():
         sys.exit(0)
     print("管理员提权失败或被取消，程序退出。")
     sys.exit(1)
-
 
 from PySide6.QtWidgets import QApplication
 from gui import MainWindow

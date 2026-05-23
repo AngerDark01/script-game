@@ -1,6 +1,7 @@
 import os
 import cv2
 import numpy as np
+from core.events.models import FrameRegistration
 from .recognizer_optimized import HSVRecognizer
 
 class NavigationCore:
@@ -68,6 +69,36 @@ class NavigationCore:
         
         # 绘图缩放比例 (必须与 StitcherCore 保持一致)
         self.draw_scale = 2.0
+        self.last_frame_registration = FrameRegistration(valid=False, draw_scale=self.draw_scale)
+
+    def _clear_frame_registration(self, confidence=0.0, source="failed"):
+        self.last_frame_registration = FrameRegistration(
+            valid=False,
+            confidence=float(confidence or 0.0),
+            draw_scale=float(self.draw_scale),
+            source=str(source),
+        )
+
+    def _set_frame_registration(self, player_global_pos, player_local_pos, frame_shape, confidence, source, metadata=None):
+        if player_global_pos is None or player_local_pos is None:
+            self._clear_frame_registration(confidence, source)
+            return
+        origin_x = float(player_global_pos[0]) - float(player_local_pos[0]) * float(self.draw_scale)
+        origin_y = float(player_global_pos[1]) - float(player_local_pos[1]) * float(self.draw_scale)
+        frame_size = None
+        if frame_shape is not None and len(frame_shape) >= 2:
+            frame_size = (int(frame_shape[1]), int(frame_shape[0]))
+        self.last_frame_registration = FrameRegistration(
+            valid=True,
+            confidence=float(confidence or 0.0),
+            frame_origin_global=(origin_x, origin_y),
+            draw_scale=float(self.draw_scale),
+            player_global_pos=(float(player_global_pos[0]), float(player_global_pos[1])),
+            player_local_minimap_pos=(int(player_local_pos[0]), int(player_local_pos[1])),
+            source=str(source),
+            frame_size=frame_size,
+            metadata=dict(metadata or {}),
+        )
 
     def set_center_offset(self, center_offset_y):
         """更新Y轴偏移量"""
@@ -142,6 +173,7 @@ class NavigationCore:
             tuple: (x, y, confidence) 全局坐标和置信度. 如果失败返回 (None, None, 0)
         """
         if minimap_img is None:
+            self._clear_frame_registration(0.0, "no_frame")
             return None, None, 0.0
             
         # 1. 预处理：提取特征 (Mask)
@@ -156,6 +188,7 @@ class NavigationCore:
         masks = self.recognizer.extract_combined(minimap_img, player_pos=player_pos)
         
         if masks is None:
+            self._clear_frame_registration(0.0, "no_mask")
             return None, None, 0.0
             
         # 修正：使用 wall_mask (masks[1]) 进行匹配
@@ -176,6 +209,7 @@ class NavigationCore:
         if match_feature_count < self.min_match_features or wall_feature_count < self.min_wall_features:
             self.prev_mask = None
             self.prev_wall_mask = None
+            self._clear_frame_registration(0.0, "low_features")
             return None, None, 0.0
 
         # === 策略分支 ===
@@ -216,6 +250,14 @@ class NavigationCore:
                 self.last_good_pos = self.current_pos
                 self.prev_mask = match_mask
                 self.prev_wall_mask = wall_mask
+                self._set_frame_registration(
+                    self.current_pos,
+                    player_pos,
+                    minimap_img.shape,
+                    qual,
+                    "f2f",
+                    {"shift": (float(dx), float(dy)), "shift_dist": float(shift_dist)},
+                )
 
                 return self.current_pos[0], self.current_pos[1], qual
 
@@ -255,6 +297,7 @@ class NavigationCore:
         try:
             # 确保输入类型正确
             if wall_mask is None or search_area is None:
+                self._clear_frame_registration(0.0, "invalid_match_input")
                 return None, None, 0.0
                 
             # === 关键修正：缩放匹配 ===
@@ -279,6 +322,8 @@ class NavigationCore:
             h_s, w_s = search_area.shape
             h_t, w_t = wall_mask_scaled.shape
             if h_t > h_s or w_t > w_s:
+                self._clear_frame_registration(0.0, "template_larger_than_search")
+                return None, None, 0.0
                 # 模板比搜索区域大，无法匹配
                 return None, None, 0.0
 
@@ -309,6 +354,7 @@ class NavigationCore:
                         self.is_localized = False
                         self.prev_mask = None
                         self.prev_wall_mask = None
+                        self._clear_frame_registration(max_val, "jump_rejected")
                         return None, None, max_val
 
                 # --- DEBUG: 对比第一帧定位 ---
@@ -335,6 +381,20 @@ class NavigationCore:
                 # 初始化跟踪器 (使用原始 mask)
                 self.prev_mask = match_mask
                 self.prev_wall_mask = wall_mask
+                self._set_frame_registration(
+                    self.current_pos,
+                    player_pos,
+                    minimap_img.shape,
+                    max_val,
+                    "template_match",
+                    {
+                        "template_top_left": (
+                            int(top_left_offset[0] + max_loc[0]),
+                            int(top_left_offset[1] + max_loc[1]),
+                        ),
+                        "search_offset": (int(top_left_offset[0]), int(top_left_offset[1])),
+                    },
+                )
 
                 return center_x, center_y, max_val
             else:
@@ -346,10 +406,12 @@ class NavigationCore:
                     self.prev_mask = None # 丢失跟踪
                     self.prev_wall_mask = None
 
+                self._clear_frame_registration(max_val, "template_match_failed")
                 return None, None, max_val
                 
         except Exception as e:
             print(f"Localization error: {e}")
+            self._clear_frame_registration(0.0, "exception")
             return None, None, 0.0
 
     def get_map_image(self):

@@ -1,0 +1,24 @@
+{
+  "dpi": "shcore.SetProcessDpiAwareness(2)",
+  "source": "game-window",
+  "rect": {
+    "left": -2,
+    "top": -11,
+    "width": 2564,
+    "height": 1541
+  },
+  "window": {
+    "hwnd": 68594,
+    "title": "Torchlight: Infinite  ",
+    "class_name": "UnrealWindow",
+    "rect": {
+      "left": -2,
+      "top": -11,
+      "width": 2564,
+      "height": 1541
+    }
+  },
+  "threshold": 0.42,
+  "min_area": 180.0,
+  "max_area_ratio": 0.1
+}

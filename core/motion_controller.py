@@ -79,6 +79,37 @@ class MotionController:
         self._execute_click(target_screen_pos)
         return self.last_click_info
 
+    def click_screen_position(self, screen_pos: tuple[int, int], reason: str = "direct_screen_click"):
+        """Click an explicit screen position, used by event interactions."""
+        if not self.control_enabled:
+            print("Motion control is disabled. Skipping screen click.")
+            return None
+        requested = (int(screen_pos[0]), int(screen_pos[1]))
+        self.last_click_info = {
+            "map_delta": (0.0, 0.0),
+            "map_distance": 0.0,
+            "raw_screen_radius": 0.0,
+            "screen_radius": 0.0,
+            "direction": (0.0, 0.0),
+            "screen_pos": requested,
+            "reason": reason,
+        }
+        self._execute_click(requested)
+        return self.last_click_info
+
+    def press_key(self, key: str, reason: str = "event_key"):
+        """Press a keyboard key for event interactions."""
+        if not self.control_enabled:
+            print("Motion control is disabled. Skipping key press.")
+            return None
+        normalized_key = str(key).strip().lower()
+        if not normalized_key:
+            print("Empty key requested. Skipping key press.")
+            return None
+        print(f"Executing key press: key={normalized_key}, reason={reason}")
+        pydirectinput.press(normalized_key)
+        return {"key": normalized_key, "reason": reason}
+
     def _calculate_target_screen_position(
         self,
         player_global_pos: tuple,
