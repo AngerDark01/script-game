@@ -1,12 +1,6 @@
 
-import sys
-import os
 import json
-import ctypes
-from datetime import datetime
 
-import cv2
-import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QGroupBox, QCheckBox,
@@ -14,7 +8,6 @@ from PySide6.QtWidgets import (
     QInputDialog, QMessageBox
 )
 from PySide6.QtCore import Qt, QTimer, QPoint
-from PySide6.QtGui import QImage, QPixmap
 
 from ..selection.region_overlay import TransparentOverlay
 from ..selection.center_selector import CenterPointSelector
@@ -22,6 +15,25 @@ from ..dialogs.color_picker_dialog import ColorPickerDialog
 from ..widgets.scalable_map import ScalableMapWidget
 from ..widgets.collapsible_group import CollapsibleMapGroup
 from ..dialogs.advanced_settings_dialog import AdvancedSettingsDialog
+from .mapping.save_load import (
+    build_mapping_config,
+    ensure_map_folder,
+    load_root_config,
+    save_map_config,
+    save_root_config,
+)
+from .mapping.map_renderer import (
+    pixmap_from_bgr,
+    render_global_map_pixmap,
+    unpack_enhanced_map_result,
+)
+from .mapping.params_adapter import (
+    apply_hsv_toggles,
+    apply_merge_weight,
+    feature_params_from_widgets,
+    sync_recognizer_widgets,
+    sync_stitcher_widgets,
+)
 
 class MappingWidget(QWidget):
     """绘图模式专属控件"""
@@ -359,59 +371,22 @@ class MappingWidget(QWidget):
             self._show_image(self.capture_label, current_img)
 
         result = self.app_context.stitcher.get_enhanced_map(margin=500)
-        if isinstance(result, tuple):
-            global_map, (crop_x1, crop_y1) = result
-        else: # Fallback
-            global_map, crop_x1, crop_y1 = result, 0, 0
-
+        global_map, crop_x1, crop_y1 = unpack_enhanced_map_result(result)
         if global_map.size > 0:
-            if len(global_map.shape) == 2:
-                global_colored = cv2.cvtColor(global_map, cv2.COLOR_GRAY2BGR)
-            else:
-                global_colored = global_map.copy()
             self.map_crop_offset = (crop_x1, crop_y1)
-
-            # Draw navigation path
-            if self.nav_path:
-                points_to_draw = []
-                for px, py in self.nav_path:
-                    local_px = px - crop_x1
-                    local_py = py - crop_y1
-                    points_to_draw.append([local_px, local_py])
-                if len(points_to_draw) > 1:
-                    cv2.polylines(global_colored, [np.array(points_to_draw)], False, (0, 255, 255), 2)
-
-            # Draw current position and viewport
-            current_x, current_y = self.app_context.stitcher.get_current_position()
-            fov_x = int(current_x - crop_x1)
-            fov_y = int(current_y - crop_y1)
-
-            # Draw viewport rectangle
             capture_size = capture_size or self.last_capture_size
             player_pos = player_pos or self.last_player_local_pos
-            if capture_size is not None and player_pos is not None:
-                draw_scale = self.app_context.stitcher.draw_scale
-                fov_w = int(capture_size[0] * draw_scale)
-                fov_h = int(capture_size[1] * draw_scale)
-                player_x = int(player_pos[0] * draw_scale)
-                player_y = int(player_pos[1] * draw_scale)
-
-                cv2.rectangle(
-                    global_colored,
-                    (fov_x - player_x, fov_y - player_y),
-                    (fov_x - player_x + fov_w, fov_y - player_y + fov_h),
-                    (0, 255, 0), 3  # Green rectangle
-                )
-
-            # Draw center point
-            cv2.circle(global_colored, (fov_x, fov_y), 8, (0, 255, 0), -1)
-            cv2.circle(global_colored, (fov_x, fov_y), 10, (0, 0, 255), 2) # Red outer circle for visibility
-
-            # Show on scalable map widget
-            h, w, ch = global_colored.shape
-            bytes_per_line = ch * w
-            q_img = QImage(cv2.cvtColor(global_colored, cv2.COLOR_BGR2RGB).data, w, h, bytes_per_line, QImage.Format_RGB888)
-            self.global_map_widget.set_image(QPixmap.fromImage(q_img.copy()))
+            pixmap = render_global_map_pixmap(
+                global_map=global_map,
+                crop_x1=crop_x1,
+                crop_y1=crop_y1,
+                nav_path=self.nav_path,
+                current_position=self.app_context.stitcher.get_current_position(),
+                draw_scale=self.app_context.stitcher.draw_scale,
+                player_pos=player_pos,
+                capture_size=capture_size,
+            )
+            self.global_map_widget.set_image(pixmap)
 
 
     def on_map_click(self, x, y):
@@ -429,34 +404,30 @@ class MappingWidget(QWidget):
 
     def _show_image(self, label, img):
         if img is None: return
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
-        q_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
-        label.setPixmap(QPixmap.fromImage(q_img.copy()))
+        label.setPixmap(pixmap_from_bgr(img))
 
     def update_statistics(self):
         stats = self.app_context.stitcher.get_statistics()
         self.stats_text.setText(f"总帧数: {stats['total_frames']}\n成功匹配: {stats['successful_matches']}")
 
     def update_hsv_params(self):
-        self.app_context.recognizer.enable_wall = self.wall_check.isChecked()
-        self.app_context.recognizer.enable_fog = self.fog_check.isChecked()
+        apply_hsv_toggles(self.app_context.recognizer, self.wall_check, self.fog_check)
 
     def update_feature_params(self):
-        params = {
-            'clahe_enabled': self.clahe_check.isChecked(),
-            'deepen_enabled': self.deepen_check.isChecked(),
-            'wall_weight': self.wall_weight_spin.value(),
-            'edge_weight': self.edge_weight_spin.value(),
-            'gray_weight': self.gray_weight_spin.value(),
-            'edge_low': self.canny_low_spin.value(),
-            'edge_high': self.canny_high_spin.value()
-        }
+        params = feature_params_from_widgets(
+            clahe_check=self.clahe_check,
+            deepen_check=self.deepen_check,
+            wall_weight_spin=self.wall_weight_spin,
+            edge_weight_spin=self.edge_weight_spin,
+            gray_weight_spin=self.gray_weight_spin,
+            canny_low_spin=self.canny_low_spin,
+            canny_high_spin=self.canny_high_spin,
+        )
         self.app_context.recognizer.set_params(params)
         self.save_config()
 
     def update_merge_params(self):
-        self.app_context.stitcher.weight_add = self.weight_spin.value()
+        apply_merge_weight(self.app_context.stitcher, self.weight_spin)
 
     def open_advanced_settings(self):
         current_params = self.app_context.recognizer.get_params()
@@ -480,50 +451,24 @@ class MappingWidget(QWidget):
         map_name, ok = QInputDialog.getText(self, '保存地图', '请输入地图名称:')
         if not ok or not map_name: return
 
-        # This path logic needs to be robust
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        map_folder = os.path.join(project_root, "map_data", map_name)
-        os.makedirs(map_folder, exist_ok=True)
+        map_folder = ensure_map_folder(__file__, map_name)
         
-        self.app_context.stitcher.save_map_package(map_folder)
+        self.app_context.stitcher.save_map_package(str(map_folder))
         
-        config_data = {
-            "draw_scale": self.app_context.stitcher.draw_scale,
-            "monitor_logical_center": self.app_context.monitor_logical_center,
-            "monitor_region": self.app_context.monitor_region,
-            "monitor_size": self.app_context.monitor_size,
-            "fps": self.fps_spin.value(),
-            "recognizer_params": self.app_context.recognizer.get_params(),
-            "stitcher_params": self.app_context.stitcher.get_params(),
-        }
-        with open(os.path.join(map_folder, 'config.json'), 'w', encoding='utf-8') as f:
-            json.dump(config_data, f, indent=4)
+        config_data = build_mapping_config(self.app_context, self.fps_spin.value(), include_draw_scale=True)
+        save_map_config(map_folder, config_data)
         
         QMessageBox.information(self, "成功", f"地图 '{map_name}' 已保存!")
 
     def save_config(self):
-        config = {
-            'monitor_logical_center': self.app_context.monitor_logical_center,
-            'monitor_size': self.app_context.monitor_size,
-            'monitor_region': self.app_context.monitor_region,
-            'fps': self.fps_spin.value(),
-            'recognizer_params': self.app_context.recognizer.get_params(),
-            'stitcher_params': self.app_context.stitcher.get_params(),
-        }
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        config_path = os.path.join(project_root, 'config.json')
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=4)
+        config = build_mapping_config(self.app_context, self.fps_spin.value())
+        save_root_config(__file__, config)
 
     def load_saved_params(self):
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        config_path = os.path.join(project_root, 'config.json')
-        if not os.path.exists(config_path):
-            return
-
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            config = load_root_config(__file__)
+            if config is None:
+                return
 
             self.app_context.monitor_logical_center = config.get('monitor_logical_center')
             self.app_context.monitor_size = config.get('monitor_size', 320)
@@ -546,21 +491,21 @@ class MappingWidget(QWidget):
 
             if 'recognizer_params' in config:
                 self.app_context.recognizer.set_params(config['recognizer_params'])
-                # Update UI from loaded params
-                r_params = config['recognizer_params']
-                self.clahe_check.setChecked(r_params.get('clahe_enabled', True))
-                self.deepen_check.setChecked(r_params.get('deepen_enabled', True))
-                self.wall_weight_spin.setValue(r_params.get('wall_weight', 50))
-                self.edge_weight_spin.setValue(r_params.get('edge_weight', 30))
-                self.gray_weight_spin.setValue(r_params.get('gray_weight', 20))
-                self.canny_low_spin.setValue(r_params.get('edge_low', 50))
-                self.canny_high_spin.setValue(r_params.get('edge_high', 150))
+                sync_recognizer_widgets(
+                    config['recognizer_params'],
+                    clahe_check=self.clahe_check,
+                    deepen_check=self.deepen_check,
+                    wall_weight_spin=self.wall_weight_spin,
+                    edge_weight_spin=self.edge_weight_spin,
+                    gray_weight_spin=self.gray_weight_spin,
+                    canny_low_spin=self.canny_low_spin,
+                    canny_high_spin=self.canny_high_spin,
+                )
 
 
             if 'stitcher_params' in config:
                 self.app_context.stitcher.set_params(config['stitcher_params'])
-                s_params = config['stitcher_params']
-                self.weight_spin.setValue(s_params.get('weight_add', 0.3))
+                sync_stitcher_widgets(config['stitcher_params'], weight_spin=self.weight_spin)
 
         except (json.JSONDecodeError, KeyError) as e:
             print(f"配置文件 'config.json' 加载失败或格式错误: {e}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import os
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ def event_log(message: str, **fields: Any) -> None:
     suffix = _format_fields(fields)
     timestamp = time.strftime("%H:%M:%S")
     millis = int((time.time() % 1) * 1000)
-    line = f"[Event {timestamp}.{millis:03d}] {message}{suffix}"
+    line = f"[Event {timestamp}.{millis:03d} pid={os.getpid()}] {message}{suffix}"
     _EVENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if _EVENT_SESSION_STARTED else "w"
     with _EVENT_LOG_PATH.open(mode, encoding="utf-8") as handle:

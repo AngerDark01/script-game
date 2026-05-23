@@ -31,6 +31,23 @@ class EventMemory:
             if task.state in (EventTaskState.PENDING, EventTaskState.RUNNING)
         ]
 
+    def clear_event_type(self, event_type: str, now_ms: int | None = None) -> int:
+        before = len(self._tasks)
+        self._tasks = [task for task in self._tasks if task.event_type != event_type]
+        removed = before - len(self._tasks)
+        self._last_log_ms = {
+            key: value
+            for key, value in self._last_log_ms.items()
+            if f":{event_type}" not in key and not key.endswith(event_type)
+        }
+        event_log(
+            "event memory cleared",
+            event=event_type,
+            removed=removed,
+            now_ms=int(now_ms or 0),
+        )
+        return removed
+
     def merge_observations(self, observations: Iterable[EventObservation], config, now_ms: int) -> None:
         touched_task_ids: set[str] = set()
         for observation in observations:
@@ -126,6 +143,61 @@ class EventMemory:
             attempts=task.attempts,
             global_pos=task.global_pos,
         )
+
+    def complete_teleport_session(
+        self,
+        entry_task: EventTask,
+        exit_pos: tuple[int, int] | None,
+        now_ms: int,
+        config,
+    ) -> tuple[EventTask, EventTask | None]:
+        event_config = config.event(entry_task.event_type) if hasattr(config, "event") else {}
+        session_id = f"teleport:{entry_task.id}:{int(now_ms)}"
+        exit_task = self._find_session_exit_task(entry_task, exit_pos, event_config)
+
+        exit_player_pos = _int_pos(exit_pos)
+        entry_task.metadata["teleport_session_id"] = session_id
+        entry_task.metadata["teleport_role"] = "entry"
+        if exit_player_pos is not None:
+            entry_task.metadata["teleport_exit_player_pos"] = exit_player_pos
+        entry_task.mark_completed(now_ms)
+
+        if exit_player_pos is not None and exit_task is None:
+            exit_task = EventTask(
+                id=self._new_id(entry_task.event_type),
+                event_type=entry_task.event_type,
+                global_pos=exit_player_pos,
+                first_seen_ms=int(now_ms),
+                last_seen_ms=int(now_ms),
+                priority=int(event_config.get("priority", 0)),
+                confidence=1.0,
+                metadata={"synthetic": True, "complete_reason": "teleport exit"},
+            )
+            self._tasks.append(exit_task)
+
+        if exit_task is not None:
+            exit_task.last_seen_ms = int(now_ms)
+            exit_task.metadata["teleport_session_id"] = session_id
+            exit_task.metadata["teleport_role"] = "exit"
+            exit_task.metadata["complete_reason"] = "teleport exit"
+            if exit_player_pos is not None:
+                exit_task.metadata["teleport_exit_player_pos"] = exit_player_pos
+            exit_task.mark_completed(now_ms)
+
+        self.suppress_nearby_pending(entry_task, config, now_ms)
+        if exit_task is not None:
+            self.suppress_nearby_pending(exit_task, config, now_ms)
+
+        event_log(
+            "teleport session completed",
+            session=session_id,
+            entry_id=entry_task.id,
+            exit_id=exit_task.id if exit_task is not None else None,
+            entry_pos=entry_task.global_pos,
+            exit_pos=exit_task.global_pos if exit_task is not None else None,
+            exit_player_pos=exit_player_pos,
+        )
+        return entry_task, exit_task
 
     def mark_related_completed(
         self,
@@ -245,6 +317,31 @@ class EventMemory:
                 return task
         return None
 
+    def _find_session_exit_task(
+        self,
+        entry_task: EventTask,
+        exit_pos: tuple[int, int] | None,
+        event_config: dict | None,
+    ) -> EventTask | None:
+        normalized_exit_pos = _int_pos(exit_pos)
+        if normalized_exit_pos is None:
+            return None
+        radius = float((event_config or {}).get("exit_complete_radius", (event_config or {}).get("dedupe_radius", self.dedupe_radius)))
+        best = None
+        best_distance = None
+        for task in self._tasks:
+            if task is entry_task:
+                continue
+            if task.event_type != entry_task.event_type:
+                continue
+            if task.state in (EventTaskState.COMPLETED, EventTaskState.IGNORED):
+                continue
+            distance = _distance(task.global_pos, normalized_exit_pos)
+            if distance <= radius and (best_distance is None or distance < best_distance):
+                best = task
+                best_distance = distance
+        return best
+
     def _find_nearest_task(self, event_type: str, global_pos: tuple[int, int], radius: float) -> EventTask | None:
         best = None
         best_distance = None
@@ -305,3 +402,9 @@ class EventMemory:
 
 def _distance(a, b) -> float:
     return float(math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1])))
+
+
+def _int_pos(pos) -> tuple[int, int] | None:
+    if pos is None:
+        return None
+    return int(pos[0]), int(pos[1])

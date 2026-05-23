@@ -17,7 +17,13 @@ class EventRunner:
         if task is None:
             if self.active_task is not None:
                 event_log("runner idle clear", previous=describe_task(self.active_task))
-            self._clear()
+            self._clear(requeue_running=True)
+            return None
+
+        if task.state in (EventTaskState.COMPLETED, EventTaskState.IGNORED):
+            event_log("runner terminal task ignored", task=describe_task(task))
+            if self.active_task is task:
+                self._clear()
             return None
 
         if self.active_task is not task:
@@ -34,20 +40,17 @@ class EventRunner:
         if self._should_log_action(action, tick.now_ms):
             event_log("runner action", task=describe_task(task), action=describe_action(action))
         if action.type == EventActionType.COMPLETE:
-            exit_pos = (action.metadata or {}).get("exit_pos")
-            self.memory.mark_completed(task, tick.now_ms)
-            exit_task = None
-            if exit_pos is not None:
-                exit_task = self.memory.mark_related_completed(
-                    task.event_type,
-                    exit_pos,
-                    tick.now_ms,
-                    config,
-                    reason="portal exit after teleport",
+            metadata = action.metadata or {}
+            if metadata.get("completion_kind") == "teleport":
+                self.memory.complete_teleport_session(
+                    task,
+                    exit_pos=metadata.get("exit_pos"),
+                    now_ms=tick.now_ms,
+                    config=config,
                 )
-            self.memory.suppress_nearby_pending(task, config, tick.now_ms)
-            if exit_task is not None:
-                self.memory.suppress_nearby_pending(exit_task, config, tick.now_ms)
+            else:
+                self.memory.mark_completed(task, tick.now_ms)
+                self.memory.suppress_nearby_pending(task, config, tick.now_ms)
             self._clear()
         elif action.type == EventActionType.FAIL:
             self.memory.mark_failed(task, tick.now_ms, config)
@@ -55,6 +58,9 @@ class EventRunner:
         return action
 
     def _start_task(self, task, config) -> None:
+        if task.state in (EventTaskState.COMPLETED, EventTaskState.IGNORED):
+            event_log("runner refused terminal task", task=describe_task(task))
+            return
         definition = self.registry.get(task.event_type)
         if not definition:
             event_log("runner missing definition", task=describe_task(task))
@@ -67,7 +73,12 @@ class EventRunner:
         self.active_handler.start(task)
         event_log("runner start task", task=describe_task(task))
 
-    def _clear(self) -> None:
+    def _clear(self, requeue_running: bool = False) -> None:
+        if requeue_running and self.active_task is not None:
+            state_value = getattr(getattr(self.active_task, "state", None), "value", getattr(self.active_task, "state", None))
+            if str(state_value).lower() == "running":
+                self.active_task.state = EventTaskState.PENDING
+                event_log("runner requeued active task", task=describe_task(self.active_task))
         if self.active_handler:
             self.active_handler.reset()
         self.active_task = None

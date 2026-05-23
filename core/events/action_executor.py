@@ -19,7 +19,7 @@ class EventActionExecutor:
         self._log_execute("execute action", action)
         if action.type == EventActionType.MOVE_TO:
             if self.move_to_callback:
-                self.move_to_callback(action.target_global_pos)
+                self.move_to_callback(action.target_global_pos, action.metadata)
             self.last_result = "move_to"
             self._log_execute("execute result", action, result=self.last_result)
             return True

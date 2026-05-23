@@ -27,6 +27,7 @@ class PortalEventConfig:
     type_cooldown_ms: int = 10000
     click_wait_ms: int = 1200
     confirm_timeout_ms: int = 2500
+    portal_point_click_wait_ms: int = 350
     post_interact_wait_ms: int = 800
     teleport_timeout_ms: int = 6000
     teleport_min_distance: int = 180
@@ -58,6 +59,7 @@ class PortalEventConfig:
             type_cooldown_ms=int(values.get("type_cooldown_ms", 10000)),
             click_wait_ms=int(values.get("click_wait_ms", 1200)),
             confirm_timeout_ms=int(values.get("confirm_timeout_ms", 2500)),
+            portal_point_click_wait_ms=int(values.get("portal_point_click_wait_ms", 350)),
             post_interact_wait_ms=int(values.get("post_interact_wait_ms", 800)),
             teleport_timeout_ms=int(values.get("teleport_timeout_ms", 6000)),
             teleport_min_distance=int(values.get("teleport_min_distance", 180)),

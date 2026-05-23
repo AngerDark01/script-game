@@ -31,6 +31,7 @@ DEFAULT_EVENT_CONFIG = {
             "cooldown_radius": 260,
             "exit_complete_radius": 120,
             "type_cooldown_ms": 10000,
+            "portal_point_click_wait_ms": 350,
             "post_interact_wait_ms": 800,
             "teleport_timeout_ms": 6000,
             "teleport_min_distance": 180,

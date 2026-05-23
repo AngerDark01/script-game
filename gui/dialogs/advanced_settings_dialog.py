@@ -13,6 +13,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from .advanced_settings.params_adapter import (
+    apply_loaded_params_to_widgets,
+    apply_preset_to_widgets,
+    collect_params_from_widgets,
+    load_params_to_widgets,
+    reset_widgets_to_default,
+)
+
 
 class AdvancedSettingsDialog(QDialog):
     """高级参数调节对话框"""
@@ -578,88 +586,11 @@ class AdvancedSettingsDialog(QDialog):
 
     def load_current_params(self):
         """加载当前参数到界面"""
-        params = self.current_params
-
-        # 预处理参数
-        self.blur_strength_spin.setValue(3)  # 高斯模糊核大小固定为3x3
-        self.deepen_enabled_check.setChecked(params.get('deepen_enabled', True))
-        self.contrast_factor_spin.setValue(params.get('deepen_factor', 1.2))
-        self.blue_boost_spin.setValue(params.get('blue_boost', 1.1))
-        
-        self.gamma_enabled_check.setChecked(params.get('gamma_enabled', True))
-        self.gamma_value_spin.setValue(params.get('gamma_value', 2.0))
-        
-        self.tophat_enabled_check.setChecked(params.get('tophat_enabled', True))
-        self.tophat_kernel_spin.setValue(params.get('tophat_kernel_size', 15))
-        self.tophat_strength_spin.setValue(params.get('tophat_strength', 4))
-        
-        self.clahe_enabled_check.setChecked(params.get('clahe_enabled', True))
-        self.clahe_clip_spin.setValue(params.get('clahe_clip', 2.0))
-        self.clahe_grid_spin.setValue(params.get('clahe_grid', 8))
-
-        # 特征提取参数
-        self.edge_low_spin.setValue(params.get('edge_low', 50))
-        self.edge_high_spin.setValue(params.get('edge_high', 150))
-        self.wall_weight_spin.setValue(params.get('wall_weight', 50))
-        self.edge_weight_spin.setValue(params.get('edge_weight', 30))
-        self.gray_weight_spin.setValue(params.get('gray_weight', 20))
-        
-        # 透明模式参数
-        self.transparent_mode_check.setChecked(params.get('transparent_mode', False))
-        self.trans_wall_thresh_spin.setValue(params.get('trans_wall_thresh', 60))
-        self.trans_sat_penalty_spin.setValue(params.get('trans_sat_penalty', 1.5))
-
-        # 饱和度过滤
-        self.sat_filter_check.setChecked(params.get('sat_filter_enabled', True))
-        self.sat_thresh_spin.setValue(params.get('sat_filter_thresh', 40))
-        self.sat_radius_spin.setValue(params.get('sat_filter_radius', 0))
-
-        # 拼接器参数
-        if hasattr(self, 'conf_thresh_spin'):
-            self.conf_thresh_spin.setValue(params.get('conf_thresh', 0.30))
-            self.keyframe_thresh_spin.setValue(params.get('keyframe_thresh', 0.25))
-            self.weight_add_spin.setValue(params.get('weight_add', 0.3))
-            self.weight_cap_spin.setValue(params.get('weight_cap', 5.0))
+        load_params_to_widgets(self, self.current_params)
 
     def apply_params(self):
         """应用参数到识别器"""
-        params = {
-            # 预处理参数
-            'deepen_enabled': self.deepen_enabled_check.isChecked(),
-            'deepen_factor': self.contrast_factor_spin.value(),
-            'blue_boost': self.blue_boost_spin.value(),
-            'gamma_enabled': self.gamma_enabled_check.isChecked(),
-            'gamma_value': self.gamma_value_spin.value(),
-            'tophat_enabled': self.tophat_enabled_check.isChecked(),
-            'tophat_kernel_size': self.tophat_kernel_spin.value(),
-            'tophat_strength': self.tophat_strength_spin.value(),
-            'clahe_enabled': self.clahe_enabled_check.isChecked(),
-            'clahe_clip': self.clahe_clip_spin.value(),
-            'clahe_grid': self.clahe_grid_spin.value(),
-
-            # 特征提取参数
-            'edge_low': self.edge_low_spin.value(),
-            'edge_high': self.edge_high_spin.value(),
-            'wall_weight': self.wall_weight_spin.value(),
-            'edge_weight': self.edge_weight_spin.value(),
-            'gray_weight': self.gray_weight_spin.value(),
-            
-            # 透明模式参数
-            'transparent_mode': self.transparent_mode_check.isChecked(),
-            'trans_wall_thresh': self.trans_wall_thresh_spin.value(),
-            'trans_sat_penalty': self.trans_sat_penalty_spin.value(),
-
-            # 饱和度过滤参数
-            'sat_filter_enabled': self.sat_filter_check.isChecked(),
-            'sat_filter_thresh': self.sat_thresh_spin.value(),
-            'sat_filter_radius': self.sat_radius_spin.value(),
-
-            # 拼接器参数
-            'conf_thresh': self.conf_thresh_spin.value() if hasattr(self, 'conf_thresh_spin') else 0.3,
-            'keyframe_thresh': self.keyframe_thresh_spin.value() if hasattr(self, 'keyframe_thresh_spin') else 0.25,
-            'weight_add': self.weight_add_spin.value() if hasattr(self, 'weight_add_spin') else 0.3,
-            'weight_cap': self.weight_cap_spin.value() if hasattr(self, 'weight_cap_spin') else 5.0
-        }
+        params = collect_params_from_widgets(self)
 
         if self.recognizer:
             self.recognizer.set_params(params)
@@ -677,38 +608,7 @@ class AdvancedSettingsDialog(QDialog):
 
     def reset_to_default(self):
         """重置为默认参数"""
-        # 重置为默认值
-        self.deepen_enabled_check.setChecked(True)
-        self.contrast_factor_spin.setValue(1.2)
-        self.blue_boost_spin.setValue(1.1)
-        self.gamma_enabled_check.setChecked(True)
-        self.gamma_value_spin.setValue(2.0)
-        self.tophat_enabled_check.setChecked(True)
-        self.tophat_kernel_spin.setValue(15)
-        self.tophat_strength_spin.setValue(4)
-        self.clahe_enabled_check.setChecked(True)
-        self.clahe_clip_spin.setValue(2.0)
-        self.clahe_grid_spin.setValue(8)
-
-        self.edge_low_spin.setValue(50)
-        self.edge_high_spin.setValue(150)
-        self.wall_weight_spin.setValue(50)
-        self.edge_weight_spin.setValue(30)
-        self.gray_weight_spin.setValue(20)
-        
-        self.sat_filter_check.setChecked(True)
-        self.sat_thresh_spin.setValue(40)
-        self.sat_radius_spin.setValue(0)
-        
-        self.transparent_mode_check.setChecked(False)
-        self.trans_wall_thresh_spin.setValue(60)
-        self.trans_sat_penalty_spin.setValue(1.5)
-        
-        if hasattr(self, 'conf_thresh_spin'):
-            self.conf_thresh_spin.setValue(0.30)
-            self.keyframe_thresh_spin.setValue(0.25)
-            self.weight_add_spin.setValue(0.3)
-            self.weight_cap_spin.setValue(5.0)
+        reset_widgets_to_default(self)
 
     def save_current_params(self):
         """保存当前参数到文件"""
@@ -764,58 +664,13 @@ class AdvancedSettingsDialog(QDialog):
         """应用已加载的参数"""
         if hasattr(self, 'temp_loaded_params'):
             params = self.temp_loaded_params
-            # 更新界面控件
-            self.deepen_enabled_check.setChecked(params.get('deepen_enabled', True))
-            self.contrast_factor_spin.setValue(params.get('deepen_factor', 1.2))
-            self.blue_boost_spin.setValue(params.get('blue_boost', 1.1))
-            self.clahe_enabled_check.setChecked(params.get('clahe_enabled', True))
-            self.clahe_clip_spin.setValue(params.get('clahe_clip', 2.0))
-            self.clahe_grid_spin.setValue(params.get('clahe_grid', 8))
-
-            self.edge_low_spin.setValue(params.get('edge_low', 50))
-            self.edge_high_spin.setValue(params.get('edge_high', 150))
-            self.wall_weight_spin.setValue(params.get('wall_weight', 50))
-            self.edge_weight_spin.setValue(params.get('edge_weight', 30))
-            self.gray_weight_spin.setValue(params.get('gray_weight', 20))
-
-            self.sat_filter_check.setChecked(params.get('sat_filter_enabled', True))
-            self.sat_thresh_spin.setValue(params.get('sat_filter_thresh', 40))
-            self.sat_radius_spin.setValue(params.get('sat_filter_radius', 0))
-
+            apply_loaded_params_to_widgets(self, params)
             print("✅ 已加载参数，点击应用参数按钮生效")
 
     def apply_preset(self):
         """应用预设参数"""
         preset = self.preset_combo.currentText()
-
-        if preset == "默认参数":
-            self.reset_to_default()
-        elif preset == "流放之路优化":
-            # 为流放之路优化的参数
-            self.contrast_factor_spin.setValue(1.3)
-            self.blue_boost_spin.setValue(1.2)
-            self.edge_low_spin.setValue(40)
-            self.edge_high_spin.setValue(120)
-            self.wall_weight_spin.setValue(60)
-            self.edge_weight_spin.setValue(25)
-            self.gray_weight_spin.setValue(15)
-        elif preset == "火炬之光优化":
-            # 为火炬之光优化的参数
-            self.contrast_factor_spin.setValue(1.1)
-            self.blue_boost_spin.setValue(1.0)
-            self.edge_low_spin.setValue(60)
-            self.edge_high_spin.setValue(180)
-            self.wall_weight_spin.setValue(45)
-            self.edge_weight_spin.setValue(35)
-            self.gray_weight_spin.setValue(20)
-        elif preset == "高对比度模式":
-            self.contrast_factor_spin.setValue(1.5)
-            self.blue_boost_spin.setValue(1.3)
-            self.clahe_clip_spin.setValue(3.0)
-        elif preset == "低对比度模式":
-            self.contrast_factor_spin.setValue(1.0)
-            self.blue_boost_spin.setValue(1.0)
-            self.clahe_clip_spin.setValue(1.5)
+        apply_preset_to_widgets(self, preset)
 
 
 # 导入必要的模块

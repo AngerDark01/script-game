@@ -28,6 +28,7 @@ class EventManagerDialog(QDialog):
     config_changed = Signal(object)
     save_requested = Signal()
     test_portal_requested = Signal()
+    reset_portal_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,14 +97,17 @@ class EventManagerDialog(QDialog):
         footer = QHBoxLayout()
         self.status_label = QLabel("未加载地图")
         self.refresh_button = QPushButton("刷新")
+        self.reset_portal_button = QPushButton("刷新传送门状态")
         self.test_portal_button = QPushButton("测试传送门")
         self.test_portal_button.setCheckable(True)
         self.save_button = QPushButton("保存配置")
         self.refresh_button.clicked.connect(self.refresh)
+        self.reset_portal_button.clicked.connect(self.reset_portal_requested.emit)
         self.test_portal_button.clicked.connect(lambda _checked=False: self.test_portal_requested.emit())
         self.save_button.clicked.connect(self.save_requested.emit)
         footer.addWidget(self.status_label, 1)
         footer.addWidget(self.refresh_button)
+        footer.addWidget(self.reset_portal_button)
         footer.addWidget(self.test_portal_button)
         footer.addWidget(self.save_button)
         layout.addLayout(footer)
@@ -119,6 +123,9 @@ class EventManagerDialog(QDialog):
         self._refresh_events()
         self._refresh_tasks()
 
+    def refresh_tasks(self) -> None:
+        self._refresh_tasks()
+
     def _refresh_events(self) -> None:
         previous_selection = self._selected_event_type
         self._event_checkboxes.clear()
@@ -128,12 +135,14 @@ class EventManagerDialog(QDialog):
 
         if not self.registry or not self.config:
             self.global_enabled_checkbox.setEnabled(False)
+            self.reset_portal_button.setEnabled(False)
             self.test_portal_button.setEnabled(False)
             self.status_label.setText("未加载事件配置")
             self._clear_params("请先加载地图。")
             return
 
         self.global_enabled_checkbox.setEnabled(True)
+        self.reset_portal_button.setEnabled(True)
         self.test_portal_button.setEnabled(True)
         with QSignalBlocker(self.global_enabled_checkbox):
             self.global_enabled_checkbox.setChecked(bool(getattr(self.config, "enabled", True)))
@@ -342,6 +351,7 @@ class EventManagerDialog(QDialog):
             "stable_frames",
             "arrival_radius",
             "interact_radius",
+            "portal_point_click_wait_ms",
             "cooldown_ms",
             "type_cooldown_ms",
             "retry_limit",

@@ -79,6 +79,30 @@ class MotionController:
         self._execute_click(target_screen_pos)
         return self.last_click_info
 
+    def click_map_target_once(
+        self,
+        player_global_pos: tuple,
+        target_global_pos: tuple,
+        reason: str = "force_click_target",
+    ):
+        """Click a mapped target once, even when player and target nearly overlap."""
+        if not self.control_enabled:
+            print("Motion control is disabled. Skipping target click.")
+            return None
+
+        if not self.game_screen_center:
+            print("Error: Game screen center is not calibrated.")
+            return None
+
+        target_screen_pos = self._calculate_mapped_target_screen_position(
+            player_global_pos,
+            target_global_pos,
+            reason=reason,
+        )
+
+        self._execute_click(target_screen_pos)
+        return self.last_click_info
+
     def click_screen_position(self, screen_pos: tuple[int, int], reason: str = "direct_screen_click"):
         """Click an explicit screen position, used by event interactions."""
         if not self.control_enabled:
@@ -146,6 +170,38 @@ class MotionController:
             "screen_radius": screen_radius,
             "direction": (direction_x, direction_y),
             "screen_pos": screen_pos,
+        }
+        return screen_pos
+
+    def _calculate_mapped_target_screen_position(
+        self,
+        player_global_pos: tuple,
+        target_global_pos: tuple,
+        reason: str = "force_click_target",
+    ) -> tuple[int, int]:
+        """Map a global target to screen space without applying movement min radius."""
+        delta_map_x = float(target_global_pos[0]) - float(player_global_pos[0])
+        delta_map_y = float(target_global_pos[1]) - float(player_global_pos[1])
+        map_distance = math.hypot(delta_map_x, delta_map_y)
+        direction_x = 0.0
+        direction_y = 0.0
+        if map_distance > 1e-6:
+            direction_x = delta_map_x / map_distance
+            direction_y = delta_map_y / map_distance
+        raw_screen_radius = map_distance * self.movement_scale_factor
+        screen_radius = min(max(raw_screen_radius, 0.0), float(self.movement_max_click_radius))
+        target_screen_x = self.game_screen_center[0] + direction_x * screen_radius
+        target_screen_y = self.game_screen_center[1] + direction_y * screen_radius
+        screen_pos = (int(round(target_screen_x)), int(round(target_screen_y)))
+        self.last_click_info = {
+            "map_delta": (delta_map_x, delta_map_y),
+            "map_distance": map_distance,
+            "raw_screen_radius": raw_screen_radius,
+            "screen_radius": screen_radius,
+            "direction": (direction_x, direction_y),
+            "screen_pos": screen_pos,
+            "mapped_target_click": True,
+            "reason": reason,
         }
         return screen_pos
 

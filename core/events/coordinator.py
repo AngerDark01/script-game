@@ -57,6 +57,7 @@ class EventCoordinator:
                 events=",".join(sorted({item.event_type for item in observations})),
             )
         self.memory.merge_observations(observations, self.config, tick.now_ms)
+        tick.event_tasks = self.memory.tasks()
         task = self.scheduler.pick(self._enabled_active_tasks(), tick.player_global_pos)
         if task is not self.last_selected_task:
             event_log("scheduler selected", task=describe_task(task))
@@ -74,6 +75,28 @@ class EventCoordinator:
 
     def tasks(self):
         return self.memory.tasks()
+
+    def reset_event_type(self, event_type: str, now_ms: int | None = None) -> int:
+        if self.runner.active_task is not None and self.runner.active_task.event_type == event_type:
+            self.runner._clear()
+        removed_tasks = self.memory.clear_event_type(event_type, now_ms=now_ms)
+        removed_clusters = self.position_stabilizer.clear_event_type(event_type, now_ms=now_ms)
+        self.last_detections = [
+            detection for detection in self.last_detections if detection.event_type != event_type
+        ]
+        self.last_observations = [
+            observation for observation in self.last_observations if observation.event_type != event_type
+        ]
+        if self.last_selected_task is not None and self.last_selected_task.event_type == event_type:
+            self.last_selected_task = None
+        self.last_action = None
+        event_log(
+            "event coordinator reset event type",
+            event=event_type,
+            tasks=removed_tasks,
+            clusters=removed_clusters,
+        )
+        return removed_tasks
 
     def overlays(self):
         if not getattr(self.config, "enabled", True):

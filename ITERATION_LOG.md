@@ -958,3 +958,768 @@
 **Fix:** Rebuilt `EventManagerDialog` with a parameter panel driven by each event's `config_schema()`. Parameter changes update the in-memory `EventSystemConfig` and the existing save button persists them through `NavigationModeWidget._save_event_config()`. `PortalEventDefinition.config_schema()` now exposes `interact_radius`, `cooldown_ms`, and `type_cooldown_ms`; `PortalEventConfig` defaults match the current longer cooldown values.
 
 **Verification:** Pending final compile/import checks. No logic/unit tests will be run per user preference.
+
+## [STRUCTURE AUDIT] 2026-05-23 - Round 1 core responsibility scan
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `gui/modes/navigation_mode.py`（原因：导航模式主类仍是最大 GUI 聚合点，需要确认 UI、路线、事件、输入、overlay、循环是否混杂）
+- `gui/modes/mapping_widget.py`（原因：绘图模式可能同时承担采集、渲染、保存、参数同步）
+- `gui/dialogs/*.py` 与 `gui/navigation_params.py`（原因：配置编辑、事件管理、导航参数边界需要确认）
+- `core/navigation_core.py`、`core/stitcher_core.py`、`core/auto_navigator.py`、`core/motion_controller.py`、`core/pathfinder.py`、`core/path_utils.py`（原因：核心算法层是否混入 UI/输入/调试职责）
+- `core/events/*` 与 `utils/*.py`（原因：事件包、输入/窗口/探针能力是否可复用且边界清晰）
+
+**本轮想弄清楚：**
+- 大文件、大类、大函数集中在哪里，哪些是低风险移动代码候选。
+- GUI 主页面是否承担了可拆分的 overlay、路线编辑、地图加载、参数桥接、事件桥接、输入模式控制。
+- Core 算法层是否存在 GUI 状态、窗口输入或配置编辑耦合。
+- 事件系统各层 detector/localizer/memory/scheduler/runner/handler/action executor 的职责是否清晰。
+- 第一批低风险重构应只移动哪些模块，并保留现有 import 入口。
+
+### C. 本轮发现
+**关键发现：**
+- (verified) `gui/modes/navigation_mode.py` 约 1584 行，是当前最大职责混合点：UI 创建/信号、地图加载、路线编辑、路线 overlay、事件 overlay、事件配置桥接、事件 action 回调、捕获几何、屏幕幕布、校准、输入窗口置顶控制和导航循环都在同一个类。
+- (verified) `gui/modes/mapping_widget.py` 约 500 行，承担绘图页 UI、区域/中心选择、截图循环、识别/拼接调用、地图显示渲染、路径预览、参数同步、保存地图和全局配置读写。
+- (verified) `gui/dialogs/advanced_settings_dialog.py` 约 763 行，混合 tab 构建、参数默认值、预设、文件 IO 和对 recognizer/stitcher 的实时应用；`gui/dialogs/nav_params_dialog.py` 约 543 行，混合字段映射、配置替换、屏幕边界估算和 UI 同步。
+- (verified) `core/stitcher_core.py`、`core/navigation_core.py`、`core/auto_navigator.py` 是算法敏感大文件。它们没有直接依赖 Qt，但含保存/加载、显示图生成、调试 print 或状态机辅助逻辑，拆分风险高于 GUI helper 移动。
+- (verified) 事件系统核心边界相对清晰：`coordinator -> monitor -> position_stabilizer -> memory -> scheduler -> runner -> handler/action`。主要耦合点在 `NavigationModeWidget` 负责构造 `EventTick`、执行 event MOVE_TO、绘制 event overlay。
+- (verified) `MotionController` 是输入控制聚合点，集中地图方向到屏幕点击、底部禁点防护、Win32 输入后端、pydirectinput 兜底、键盘事件和窗口诊断。它是后续输入控制模块化目标，但不适合作为第一批低风险拆分。
+
+**修订的旧结论：**
+- 原先 `navigation_mode.py` 已经把手动事件测试按钮和事件 MOVE_TO 路径规划拆出一部分，但它仍不是薄门面；事件桥接和 overlay 绘制仍在主类内。
+- 事件系统本体暂不应作为第一批拆分对象；更低风险的是先从 GUI 主类移出展示/桥接代码。
+
+**新增疑问：**
+- `AdvancedSettingsDialog` 是否仍被频繁使用，且其参数文件保存到当前工作目录是否属于预期行为，需要后续单独确认后再移动 IO 路径。
+- `ColorPickerDialog.update_preview()` 会写 debug 图片和日志到当前工作目录；这是既有行为，结构拆分时不应顺手改变输出位置。
+
+**更新了 CODEBASE.md：**
+- 新增 `## 15. Structural Audit Snapshot`，记录本轮结构热点、可复用能力、边界不清晰点和推荐重构顺序。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/navigation_mode.py` | 已有事件重构记录 | (partial) | 1 | 读完类结构、route/event overlay、事件桥接、配置桥接、导航循环；尚未逐行索引所有函数体。 |
+| `gui/modes/mapping_widget.py` | PENDING | (partial) | 1 | 读完主类职责、捕获循环、显示渲染、保存/加载配置；适合作为第二批 GUI 拆分目标。 |
+| `gui/dialogs/event_manager_dialog.py` | 已有事件 UI 记录 | (partial) | 1 | 读完 schema 参数面板、事件表、任务表刷新；可拆参数控件工厂和表格刷新 helper。 |
+| `gui/dialogs/nav_params_dialog.py` | PENDING | (partial) | 1 | 读完 UI 构建、widget_map、配置替换、自动估算点击半径；低风险 helper 候选。 |
+| `gui/dialogs/advanced_settings_dialog.py` | PENDING | 浅读 | 1 | 确认大文件职责混杂和文件 IO/预设/UI 混合，未逐函数精读。 |
+| `gui/dialogs/color_picker_dialog.py` | PENDING | 浅读 | 1 | 确认采样、HSV 计算、预览渲染、debug 文件输出混合，未逐函数精读。 |
+| `gui/navigation_params.py` | 已有记录 | (partial) | 1 | 确认配置模型边界清晰，但解析/序列化可更健壮；暂不优先动。 |
+| `core/navigation_core.py` | 已有记录 | (partial) | 1 | 读完定位主链路，确认算法敏感，不作为第一批移动对象。 |
+| `core/stitcher_core.py` | 已有记录 | (partial) | 1 | 读完拼接/融合/保存/显示职责，建议后期拆分。 |
+| `core/auto_navigator.py` | 已有记录 | (partial) | 1 | 读完状态机和路线 helper，建议先保持稳定。 |
+| `core/motion_controller.py` | 已有输入记录 | (partial) | 1 | 读完输入聚合职责，后续拆输入后端/诊断，首批不动。 |
+| `core/pathfinder.py` | 已有记录 | (partial) | 1 | A* 边界清晰，暂不拆。 |
+| `core/path_utils.py` | 已有记录 | (partial) | 1 | 纯工具边界清晰，可复用，不需要首批重构。 |
+| `core/events/*` | 已有事件记录 | (partial) | 1 | 读完主链路与 portal 包关键文件，边界总体清晰；GUI 桥接优先拆。 |
+| `utils/*.py` | 已有探针记录 | 浅读 | 1 | 探针是独立 CLI，输入探针有和 MotionController 重复的输入诊断概念，暂不动。 |
+
+**下一轮计划：**
+- 等用户确认第一批低风险拆分计划后，先从 `gui/modes/navigation_mode.py` 中拆出纯 GUI 绘制/桥接模块：`gui/modes/navigation/route_overlay.py`、`event_overlay.py` 或 `event_adapter.py`、`map_runtime.py` 中最独立的一小块。
+- 每批只移动少量代码，保留 `gui.modes.navigation_mode.NavigationModeWidget` 入口，执行 `python -m py_compile ...` 和必要 import 检查后再做下一批。
+
+## [REFACTOR] 2026-05-23 - Navigation overlay split batch 1
+### A. 变更范围声明（执行前）
+**触发任务：** 用户确认执行第一批低风险结构拆分。
+
+**直接计划变更文件：**
+- `gui/modes/navigation_mode.py`
+- `gui/modes/navigation/__init__.py`
+- `gui/modes/navigation/route_overlay.py`
+- `gui/modes/navigation/event_overlay.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- `NavigationModeWidget` 保留 `_render_route_overlay()`、`_render_event_overlay()`、`_clear_route_overlay()`、`_clear_event_overlay()` 等原有内部入口，但方法体改为委托新 helper。
+- 新 helper 只接收现有 `scene/nav_core/route_data/event_coordinator` 和 item 列表，不改变路线、事件、自动导航或点击行为。
+- 最小验证范围为 `py_compile` 和 `NavigationModeWidget` import。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/navigation/` helper 包。
+- (verified) 新增 `event_overlay.py`，承接事件 marker 清理、全局坐标到场景坐标转换、事件 overlay 绘制。
+- (verified) 新增 `route_overlay.py`，承接路线 overlay 清理、出口/必经点/途经点/当前路径/subgoal 绘制。
+- (verified) `NavigationModeWidget` 保留原 `_clear_route_overlay()`、`_clear_event_overlay()`、`_global_to_scene()`、`_render_event_overlay()`、`_render_route_overlay()`，方法体改为委托新 helper。
+- (verified) `NavigationModeWidget._render_route_overlay()` 保留原来的 scene/nav_core 不可用时早退语义；未改变导航循环、事件调度、路线数据读写、点击行为或默认参数。
+
+**CODEBASE.md 更新内容：**
+- 更新目录结构图，新增 `gui/modes/navigation/__init__.py`、`event_overlay.py`、`route_overlay.py`。
+- 更新 `gui/modes/navigation_mode.py` 模块说明，标明 overlay 绘制已拆出。
+- 新增 `event_overlay.py` / `route_overlay.py` 模块详解。
+- 更新 `NavigationModeWidget._render_event_overlay()` 函数索引，并新增 `render_route_overlay()`、`render_event_overlay()` 函数索引。
+- 更新结构审计快照，记录第一批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 2 | 本轮重读并修改 overlay 方法，保留兼容入口，主类行数下降但仍承担导航循环/事件桥接/配置桥接。 |
+| `gui/modes/navigation/__init__.py` | PENDING | 深度完整 | 1 | 新增空包入口，仅用于 helper 模块命名空间。 |
+| `gui/modes/navigation/event_overlay.py` | PENDING | 深度完整 | 1 | 新增事件 overlay helper，只绘制/清理 QGraphicsItem，不读取业务配置。 |
+| `gui/modes/navigation/route_overlay.py` | PENDING | 深度完整 | 1 | 新增路线 overlay helper，只消费传入 route/current 状态并绘制 QGraphicsItem。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\navigation_mode.py gui\modes\navigation\__init__.py gui\modes\navigation\event_overlay.py gui\modes\navigation\route_overlay.py` 待最终复跑。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.navigation_mode import NavigationModeWidget; ..."` 待最终复跑。
+
+**下一轮计划：**
+- 若本批通过，下一批建议继续拆 `navigation_mode.py` 的事件桥接：`EventTick` 构造、event action 判断、事件状态文字、event config dialog bridge 可进入 `gui/modes/navigation/event_adapter.py`，但仍保留原私有方法委托入口。
+
+## [REFACTOR] 2026-05-23 - Navigation event adapter split batch 2
+### A. 变更范围声明（执行前）
+**触发任务：** 用户要求继续并由 agent 自主规划完成结构优化。
+
+**直接计划变更文件：**
+- `gui/modes/navigation_mode.py`
+- `gui/modes/navigation/event_adapter.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 只移动事件桥接中纯构造/判断/展示 helper：registry 创建、事件启用摘要、`EventTick` 构造、action 是否接管导航、事件状态文案。
+- 保留 `NavigationModeWidget._build_event_tick()`、`_should_event_action_take_control()`、`_event_status_text()` 原私有入口，避免改调用方。
+- 不拆 `EventCoordinator`、`EventMemory`、`EventRunner`、`PortalEventHandler` 等事件核心模块。
+- 不改变 `event_config.json` 保存、事件调度、移动点击或传送门行为。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/navigation/event_adapter.py`。
+- (verified) `NavigationModeWidget.__init__()` 通过 `create_default_event_registry()` 创建默认事件 registry，仍注册同一个 `PortalEventDefinition`。
+- (verified) 事件初始化/配置变更日志的事件开关摘要委托 `event_config_summary()`。
+- (verified) `_find_game_window_rect()` 委托 `find_default_game_window_rect()`，仍查找 `Torchlight` / `UnrealWindow`。
+- (verified) `_build_event_tick()` 委托 `build_event_tick()`，字段保持原 `EventTick` 契约。
+- (verified) `_should_event_action_take_control()` 委托 `should_event_action_take_control()`；终止 action 判断改用 `is_terminal_event_action()`。
+- (verified) `_event_status_text()` 委托 `event_status_text()`。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构和模块详解：`gui/modes/navigation/event_adapter.py`。
+- 更新 `navigation_mode.py` 依赖和职责说明。
+- 新增 `build_event_tick()`、`should_event_action_take_control()` 函数索引。
+- 更新结构审计快照，记录第二批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 3 | 本轮重读事件桥接区域并改为 helper 委托；仍保留原私有入口。 |
+| `gui/modes/navigation/event_adapter.py` | PENDING | 深度完整 | 1 | 新增事件桥接 helper，不推进事件系统状态，不执行输入。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\navigation_mode.py gui\modes\navigation\event_adapter.py gui\modes\navigation\event_overlay.py gui\modes\navigation\route_overlay.py` 待最终复跑。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.navigation_mode import NavigationModeWidget; from gui.modes.navigation.event_adapter import build_event_tick, create_default_event_registry; print('imports ok')"` 待最终复跑。
+
+**下一轮计划：**
+- 下一批优先拆 `navigation_mode.py` 的地图/配置运行时 helper：地图目录定位、地图列表读取、配置读写、capture geometry 或 game-view/monitor rect 计算，仍保持主类 UI 入口不变。
+
+## [REFACTOR] 2026-05-23 - Navigation map runtime split batch 3
+### A. 变更范围声明（执行前）
+**触发任务：** 继续自主推进导航页面职责分离。
+
+**直接计划变更文件：**
+- `gui/modes/navigation_mode.py`
+- `gui/modes/navigation/map_runtime.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出项目根目录/map_data 路径定位、地图列表读取、地图文件夹解析、`NavConfig` 加载/保存、DPR 物理中心换算、capture geometry 计算。
+- 保留 `NavigationModeWidget.refresh_map_list()`、`load_map()`、`_build_capture_geometry()`、`_save_nav_config()` 等原入口；主类仍负责按钮状态、弹窗和状态栏。
+- 不改变 config.json 字段、不改变默认参数、不改变截图矩形计算结果。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/navigation/map_runtime.py`。
+- (verified) `refresh_map_list()` 通过 `list_map_names(__file__)` 获取地图名，缺失时仍显示原文案 `未找到 map_data 文件夹`。
+- (verified) `load_map()` 通过 `resolve_map_folder()` 和 `load_nav_config()` 解析地图路径与配置；缺少配置仍使用默认 `NavConfig()` 并弹出原警告。
+- (verified) 逻辑中心到物理中心换算委托 `physical_center_from_logical()`。
+- (verified) `_build_capture_geometry()` 委托 `map_runtime.build_capture_geometry()`，保留 region 模式与 center 模式旧返回契约。
+- (verified) `_save_nav_config()` 委托 `save_nav_config()` 写回当前地图 `config.json`，保存字段和格式保持 `NavConfig.to_dict()` + `indent=4` + `ensure_ascii=False`。
+- (verified) 清理了 `navigation_mode.py` 中不再需要的 `os/json` import 和旧路径计算残留。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构和模块详解：`gui/modes/navigation/map_runtime.py`。
+- 新增 `map_runtime.build_capture_geometry()` 函数索引。
+- 更新结构审计快照，记录第三批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 4 | 本轮重读地图列表、配置读写、capture geometry 区域并改为 helper 委托。 |
+| `gui/modes/navigation/map_runtime.py` | PENDING | 深度完整 | 1 | 新增地图运行时 helper，只做路径/配置/几何数据处理，不处理 UI。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.navigation.map_runtime import project_root_from_file, map_data_dir, list_map_names; ..."` 已确认 project root 为 `D:\ACloud\minimap_stitcher copy 13`，map_data 路径为项目内 `map_data`，当前识别到 17 个地图目录。
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\navigation_mode.py gui\modes\navigation\map_runtime.py gui\modes\navigation\event_adapter.py gui\modes\navigation\event_overlay.py gui\modes\navigation\route_overlay.py` 待最终复跑。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.navigation_mode import NavigationModeWidget; from gui.modes.navigation.map_runtime import load_nav_config, save_nav_config, build_capture_geometry; print('imports ok')"` 待最终复跑。
+
+**下一轮计划：**
+- 下一批继续在导航 GUI 层内拆矩形/overlay runtime：`_update_monitor_rect()`、`_update_game_view_rect()` 和 overlay screen rect 逻辑可进入 `gui/modes/navigation/viewport_overlay.py`，降低主类绘图细节。
+
+## [REFACTOR] 2026-05-23 - Navigation viewport overlay split batch 4
+### A. 变更范围声明（执行前）
+**触发任务：** 继续自主推进导航页面职责分离。
+
+**直接计划变更文件：**
+- `gui/modes/navigation_mode.py`
+- `gui/modes/navigation/viewport_overlay.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出屏幕幕布逻辑坐标矩形计算、监控区域地图矩形计算、真实主画面地图矩形计算。
+- 主类仍负责调用 `overlay.set_rect_and_show()` 和更新已有 QGraphicsRectItem，不改变颜色、zValue、可见性或触发时机。
+- 不改变 `monitor_region` / `monitor_logical_center` / `game_view_map_size` 语义。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/navigation/viewport_overlay.py`。
+- (verified) `_update_overlay_display()` 使用 `screen_overlay_geometry()` 计算逻辑坐标屏幕幕布 rect 和 anchor，仍由主类调用 `overlay.set_rect_and_show()`。
+- (verified) `_update_monitor_rect()` 使用 `monitor_scene_rect()` 计算绿色截图范围框地图矩形，仍由主类更新已有 `monitor_rect_item`。
+- (verified) `_update_game_view_rect()` 使用 `game_view_scene_rect()` 计算橙色主画面范围框地图矩形；尺寸无效时仍隐藏该 item。
+- (verified) 不改变 QPen/QColor/zValue 创建逻辑，也不改变刷新触发时机。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构和模块详解：`gui/modes/navigation/viewport_overlay.py`。
+- 新增 `viewport_overlay.monitor_scene_rect()` 和 `viewport_overlay.game_view_scene_rect()` 函数索引。
+- 更新结构审计快照，记录第四批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 5 | 本轮重读屏幕幕布、绿色监控框、橙色主画面框更新逻辑并委托几何 helper。 |
+| `gui/modes/navigation/viewport_overlay.py` | PENDING | 深度完整 | 1 | 新增矩形几何 helper，只返回数据，不创建 Qt item。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\navigation_mode.py gui\modes\navigation\viewport_overlay.py` 已通过初检，待最终全量轻量复跑。
+
+**下一轮计划：**
+- 导航页面低风险 helper 拆分已完成 4 批；下一步转向 `mapping_widget.py`，先拆 `gui/modes/mapping/save_load.py` 或 `params_adapter.py`，移动全局 config/map save/load 逻辑，保留 `MappingWidget` 入口。
+
+## [REFACTOR] 2026-05-23 - Mapping save/load split batch 5
+### A. 变更范围声明（执行前）
+**触发任务：** 继续自主推进全项目结构优化，从导航页面转向绘图页面低风险拆分。
+
+**直接计划变更文件：**
+- `gui/modes/mapping_widget.py`
+- `gui/modes/mapping/__init__.py`
+- `gui/modes/mapping/save_load.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出项目根目录解析、全局 `config.json` 读写、地图保存配置 dict 构造、地图文件夹创建。
+- `MappingWidget.save_map()`、`save_config()`、`load_saved_params()` 原入口保留，仍负责弹窗、UI 控件同步和调用 stitcher/recognizer。
+- 不改变保存文件名、保存字段、默认值或 map_data 目录结构。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/mapping/` helper 包。
+- (verified) 新增 `gui/modes/mapping/save_load.py`，承接项目根目录解析、`map_data/<name>` 创建、根级/地图级 `config.json` 读写和 mapping config dict 构造。
+- (verified) `MappingWidget.save_map()` 保留原方法入口，仍负责地图名弹窗、调用 `stitcher.save_map_package()` 和成功提示；路径/配置写入委托 helper。
+- (verified) `MappingWidget.save_config()` 保留原方法入口，委托 `build_mapping_config()` + `save_root_config()`。
+- (verified) `MappingWidget.load_saved_params()` 保留原方法入口，委托 `load_root_config()`；根配置不存在仍直接返回，JSON/KeyError 仍由原 except 处理。
+- (verified) 清理 `mapping_widget.py` 中本批不再需要的 `sys/os/ctypes/datetime` import；保留 `json` 仅用于原 `JSONDecodeError` except 契约。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构说明：`gui/modes/mapping/__init__.py`、`gui/modes/mapping/save_load.py`。
+- 新增模块详解：`mapping_widget.py`、`mapping/__init__.py`、`mapping/save_load.py`。
+- 新增函数索引：`build_mapping_config()`、`ensure_map_folder()`、`save_root_config()`、`load_root_config()`。
+- 新增数据流：绘图模式地图保存和根配置加载。
+- 更新结构审计快照，记录第五批拆分结果和 mapping 后续低风险候选。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/mapping_widget.py` | 浅读 | (partial) | 2 | 本轮重读保存/加载区域并改为 helper 委托；捕获循环和渲染区域仍未深拆。 |
+| `gui/modes/mapping/__init__.py` | PENDING | 深度完整 | 1 | 新增空包入口，确认无业务逻辑。 |
+| `gui/modes/mapping/save_load.py` | PENDING | 深度完整 | 1 | 新增纯路径/JSON/config helper，不接触 Qt 控件和拼接算法生命周期。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\mapping_widget.py gui\modes\mapping\__init__.py gui\modes\mapping\save_load.py` 已通过。
+
+**下一轮计划：**
+- 继续在绘图页做低风险拆分：优先把 `update_displays()` / `_show_image()` 中的图像转 QPixmap、全局地图着色、路径线/视野框/当前位置绘制移动到 `gui/modes/mapping/map_renderer.py`，保留 `MappingWidget.update_displays()` 入口和 UI setPixmap 调用时机。
+
+## [REFACTOR] 2026-05-23 - Mapping renderer split batch 6
+### A. 变更范围声明（执行前）
+**触发任务：** 继续自主推进绘图页面职责分离，优先移动纯渲染逻辑。
+
+**直接计划变更文件：**
+- `gui/modes/mapping_widget.py`
+- `gui/modes/mapping/map_renderer.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出 OpenCV 全局地图着色、导航路径 polyline、视野框、当前位置圆点绘制和 BGR/RGB QPixmap 转换。
+- `MappingWidget.update_displays()` 和 `_show_image()` 原入口保留，仍负责调用 stitcher、读取 UI/runtime 状态、写入 Qt label/map widget。
+- 不改变颜色、线宽、crop offset、路径坐标换算、当前位姿显示或 fallback 逻辑。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/mapping/map_renderer.py`。
+- (verified) `pixmap_from_bgr()` 承接 BGR -> RGB -> QImage -> QPixmap 转换，保留 `.copy()` 避免临时 numpy buffer 生命周期问题。
+- (verified) `unpack_enhanced_map_result()` 保留旧 `get_enhanced_map()` tuple/fallback 解包契约。
+- (verified) `render_global_map_pixmap()` 承接全局地图灰度转 BGR、路径线、绿色视野框、当前位置圆点绘制，颜色和线宽保持旧值。
+- (verified) `MappingWidget.update_displays()` 保留入口，只负责取 stitcher 结果、保存 `map_crop_offset`、选择 fallback `capture_size/player_pos` 并设置 `global_map_widget`。
+- (verified) `MappingWidget._show_image()` 保留入口，委托 `pixmap_from_bgr()` 后设置 label pixmap。
+- (verified) 移除 `mapping_widget.py` 中不再需要的 `cv2/numpy/QImage/QPixmap` import。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构说明和模块详解：`gui/modes/mapping/map_renderer.py`。
+- 更新 `mapping_widget.py` 职责说明，标明渲染细节已委托。
+- 新增函数索引：`render_global_map_pixmap()`、`pixmap_from_bgr()`。
+- 更新结构审计快照，记录第六批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/mapping_widget.py` | (partial) | (partial) | 3 | 本轮重读 `update_displays()` / `_show_image()` 并改为渲染 helper 委托；捕获循环和参数控件同步仍未深拆。 |
+| `gui/modes/mapping/map_renderer.py` | PENDING | 深度完整 | 1 | 新增纯图像渲染 helper，只返回 QPixmap，不读取 app_context、不设置 Qt 控件。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\mapping_widget.py gui\modes\mapping\map_renderer.py gui\modes\mapping\save_load.py gui\modes\mapping\__init__.py` 已通过。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.mapping_widget import MappingWidget; from gui.modes.mapping.map_renderer import render_global_map_pixmap, pixmap_from_bgr; print('mapping renderer imports ok')"` 已通过。
+
+**下一轮计划：**
+- 优先检查 `mapping_widget.py` 的参数控件同步区：HSV、feature、merge、advanced settings、load_saved_params UI 回填是否能拆成 `params_adapter.py`。若发现需要大范围信号阻断或默认参数调整，则暂缓，转向 dialog helper。
+
+## [REFACTOR] 2026-05-23 - Mapping params adapter split batch 7
+### A. 变更范围声明（执行前）
+**触发任务：** 继续绘图页面低风险职责分离，拆出参数控件到运行时参数的轻量桥接。
+
+**直接计划变更文件：**
+- `gui/modes/mapping_widget.py`
+- `gui/modes/mapping/params_adapter.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出 feature 参数 dict 构造、HSV 开关应用、merge weight 应用、已加载 recognizer/stitcher 参数写回控件。
+- 保留 `MappingWidget.update_hsv_params()`、`update_feature_params()`、`update_merge_params()`、`load_saved_params()` 原入口。
+- 不改变默认值、字段名、setChecked/setValue 顺序或信号触发行为；不新增信号阻断。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/modes/mapping/params_adapter.py`。
+- (verified) `apply_hsv_toggles()` 承接墙体/迷雾复选框到 recognizer 字段写入。
+- (verified) `feature_params_from_widgets()` 承接 feature 控件到 `recognizer.set_params()` dict 的构造，字段名和默认读取来源保持不变。
+- (verified) `apply_merge_weight()` 承接 merge weight spinbox 到 stitcher `weight_add` 字段写入。
+- (verified) `sync_recognizer_widgets()` 和 `sync_stitcher_widgets()` 承接加载配置后的控件回填，默认值和 `setChecked/setValue` 顺序保持旧实现。
+- (verified) `MappingWidget` 保留原更新方法入口，并仍负责调用 `recognizer.set_params()`、`stitcher.set_params()` 和 `save_config()`。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构说明和模块详解：`gui/modes/mapping/params_adapter.py`。
+- 更新 `mapping_widget.py` 职责说明，标明参数控件桥接已委托。
+- 新增函数索引：`feature_params_from_widgets()`、`sync_recognizer_widgets()`、`apply_hsv_toggles()`。
+- 更新结构审计快照，记录第七批拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/modes/mapping_widget.py` | (partial) | (partial) | 4 | 本轮重读 HSV/feature/merge 参数更新和加载回填区域，并改为 params adapter 委托。 |
+| `gui/modes/mapping/params_adapter.py` | PENDING | 深度完整 | 1 | 新增参数控件桥接 helper，不保存配置、不阻断信号、不创建控件。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\mapping_widget.py gui\modes\mapping\params_adapter.py gui\modes\mapping\map_renderer.py gui\modes\mapping\save_load.py gui\modes\mapping\__init__.py` 已通过。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.modes.mapping_widget import MappingWidget; from gui.modes.mapping.params_adapter import feature_params_from_widgets, sync_recognizer_widgets; print('mapping params imports ok')"` 已通过。
+
+**下一轮计划：**
+- 暂缓继续拆 `mapping_widget.py` 的捕获循环，因为会触及 screen_capture、tracker、recognizer、stitcher 的时序和 fallback 行为；下一步更稳妥的是转向 dialog 层，先审 `gui/dialogs/color_picker_dialog.py` 或 `advanced_settings_dialog.py` 中可纯拆的预设/参数映射。
+
+## [REFACTOR] 2026-05-23 - Advanced settings params adapter split batch 8
+### A. 变更范围声明（执行前）
+**触发任务：** 转向 dialog 层低风险拆分，先处理高级参数弹窗中纯参数控件映射逻辑。
+
+**直接计划变更文件：**
+- `gui/dialogs/advanced_settings_dialog.py`
+- `gui/dialogs/advanced_settings/__init__.py`
+- `gui/dialogs/advanced_settings/params_adapter.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出高级参数弹窗的当前参数写入控件、控件采集成 dict、重置默认值、加载参数文件后回填控件、预设参数写入控件逻辑。
+- 保留 `AdvancedSettingsDialog` 类、`get_params()`、`load_current_params()`、`apply_params()`、`reset_to_default()`、`apply_loaded_params()`、`apply_preset()` 原入口。
+- 不改变默认值、字段名、控件写入顺序、文件 IO、实时应用 recognizer/stitcher 的时机或打印文案。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/dialogs/advanced_settings/` helper 包。
+- (verified) 新增 `params_adapter.py`，承接当前参数加载到控件、控件采集为参数 dict、默认重置、已加载参数回填和预设写入。
+- (verified) `AdvancedSettingsDialog.load_current_params()`、`apply_params()`、`reset_to_default()`、`apply_loaded_params()`、`apply_preset()` 原入口保留，改为委托 helper。
+- (verified) 文件保存/加载、JSON 格式、状态栏文案、`current_params` 更新、recognizer/stitcher 实时应用和 print 文案仍留在原 dialog 类。
+- (verified) 修正 helper 设计，`reset_widgets_to_default()` 不额外写旧实现没有写的 `blur_strength_spin`；`load_params_to_widgets()` 仍保持旧加载当前参数时写 `blur_strength_spin=3`。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构说明：`gui/dialogs/advanced_settings_dialog.py`、`gui/dialogs/advanced_settings/__init__.py`、`gui/dialogs/advanced_settings/params_adapter.py`。
+- 新增模块详解：高级参数弹窗主类和 params adapter。
+- 新增函数索引：`collect_params_from_widgets()`、`load_params_to_widgets()`、`apply_preset_to_widgets()`。
+- 更新结构审计快照，记录第八批 dialog 层拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/dialogs/advanced_settings_dialog.py` | (partial) | (partial) | 2 | 本轮重读参数加载/应用/默认/预设/文件加载回填区域并改为 helper 委托；UI 构造仍未拆。 |
+| `gui/dialogs/advanced_settings/__init__.py` | PENDING | 深度完整 | 1 | 新增空包入口，确认无业务逻辑。 |
+| `gui/dialogs/advanced_settings/params_adapter.py` | PENDING | 深度完整 | 1 | 新增高级参数控件映射 helper，不做文件 IO、不调用 recognizer/stitcher。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\dialogs\advanced_settings_dialog.py gui\dialogs\advanced_settings\__init__.py gui\dialogs\advanced_settings\params_adapter.py` 已通过。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.dialogs.advanced_settings_dialog import AdvancedSettingsDialog; from gui.dialogs.advanced_settings.params_adapter import collect_params_from_widgets, load_params_to_widgets; print('advanced settings imports ok')"` 已通过。
+
+**下一轮计划：**
+- 继续 dialog 层审计但暂缓大拆 UI 构造；`color_picker_dialog.py` 的 HSV range 计算、预览渲染和 debug 输出可作为下一批候选，但要避免改变采样结果和日志文件。
+
+## [REFACTOR] 2026-05-23 - Color picker helper split batch 9
+### A. 变更范围声明（执行前）
+**触发任务：** 继续 dialog 层低风险拆分，处理颜色选择弹窗中可复用的 HSV range 计算和图像转换 helper。
+
+**直接计划变更文件：**
+- `gui/dialogs/color_picker_dialog.py`
+- `gui/dialogs/color_picker/__init__.py`
+- `gui/dialogs/color_picker/hsv_ranges.py`
+- `gui/dialogs/color_picker/image_renderer.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 移出 HSV 样本范围计算和 BGR/灰度图像到 QPixmap 的转换。
+- 保留 `ColorPickerDialog.calculate_hsv_ranges()`、`_calculate_range()`、`_show_image()` 原入口。
+- 不改变采样点记录、推荐关闭饱和度过滤的阈值、结果文案、preview 逻辑或 debug 文件输出。
+
+### C. 变更结果
+**实际变更：**
+- (verified) 新增 `gui/dialogs/color_picker/` helper 包。
+- (verified) 新增 `hsv_ranges.py`，承接 BGR->HSV 转换、采样点 HSV 提取、HSV 范围计算和平均饱和度计算。
+- (verified) 新增 `image_renderer.py`，承接 OpenCV 图像转 QPixmap 和墙体/人物采样 marker 绘制。
+- (verified) `ColorPickerDialog.calculate_hsv_ranges()`、`_calculate_range()`、`_show_image()` 原入口保留，改为委托 helper。
+- (verified) `update_preview()` 保持在 dialog 内，mask、形态学、debug png/txt 输出和日志内容未迁移。
+- (verified) 保留原图像转换语义：颜色选择弹窗仍使用 `QPixmap.fromImage(q_img)`，未引入 `.copy()` 行为差异。
+
+**CODEBASE.md 更新内容：**
+- 新增目录结构说明：`gui/dialogs/color_picker_dialog.py`、`gui/dialogs/color_picker/__init__.py`、`hsv_ranges.py`、`image_renderer.py`。
+- 新增模块详解：颜色选择弹窗主类和两个 helper。
+- 新增函数索引：`calculate_hsv_range()`、`pixmap_from_image()`、`draw_sample_markers()`。
+- 更新结构审计快照，记录第九批 dialog 层拆分结果。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/dialogs/color_picker_dialog.py` | (partial) | (partial) | 2 | 本轮重读 HSV 范围计算和图像显示区域并改为 helper 委托；preview debug 输出仍保留原类内。 |
+| `gui/dialogs/color_picker/__init__.py` | PENDING | 深度完整 | 1 | 新增空包入口，确认无业务逻辑。 |
+| `gui/dialogs/color_picker/hsv_ranges.py` | PENDING | 深度完整 | 1 | 新增 HSV 采样/范围计算 helper，保持旧容差和边界算法。 |
+| `gui/dialogs/color_picker/image_renderer.py` | PENDING | 深度完整 | 1 | 新增图像转 pixmap 和采样点 marker 绘制 helper，保持旧颜色/半径/缩放公式。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\dialogs\color_picker_dialog.py gui\dialogs\color_picker\__init__.py gui\dialogs\color_picker\hsv_ranges.py gui\dialogs\color_picker\image_renderer.py` 已通过。
+- `D:\ACloud\.venv\Scripts\python.exe -c "from gui.dialogs.color_picker_dialog import ColorPickerDialog; from gui.dialogs.color_picker.hsv_ranges import calculate_hsv_range; from gui.dialogs.color_picker.image_renderer import pixmap_from_image; print('color picker imports ok')"` 已通过。
+
+**下一轮计划：**
+- 本阶段已覆盖导航、绘图、advanced settings、color picker 的低风险 GUI 拆分；后续建议暂停大改，先由用户做一次 GUI smoke test。下一阶段可审 `nav_params_dialog.py` 字段映射或转向 core/stitching，但风险明显高于本批。
+## [BUGFIX] 2026-05-23 - Event dialog live refresh scope
+### A. SYNC 范围声明
+**触发任务：** 修复传送门事件窗口可见时导航循环每帧完整刷新，导致刷新按钮/测试按钮交互被持续 UI 重建干扰的问题。
+**直接计划变更文件：**
+- `gui/dialogs/event_manager_dialog.py`
+- `gui/modes/navigation_mode.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 保留 `EventManagerDialog.refresh()` 作为完整刷新入口，供手动刷新、上下文切换、配置变化、保存后使用。
+- 新增任务表轻量刷新入口，导航循环只更新任务状态表，不重建事件列表、复选框、参数控件或测试按钮。
+- 不修改事件检测、传送门测试开停逻辑、默认配置或任务调度行为。
+### C. SYNC 结果
+**根因确认：**
+- (verified) `NavigationModeWidget.navigation_loop()` 在事件窗口可见时，每次 `EventCoordinator.update()` 后都调用 `event_dialog.refresh()`。
+- (verified) `EventManagerDialog.refresh()` 会调用 `_refresh_events()`，清空并重建事件表、事件复选框、参数面板，再刷新任务表。
+- (inferred) 高频完整刷新会在鼠标交互期间反复重建控件，使刷新/测试按钮表现为持续被选中或点击难以稳定注册。
+
+**实际变更：**
+- (verified) `EventManagerDialog.refresh()` 保持完整刷新语义不变。
+- (verified) 新增 `EventManagerDialog.refresh_tasks()`，仅委托 `_refresh_tasks()` 更新任务表和状态摘要。
+- (verified) `NavigationModeWidget.navigation_loop()` 的两个事件窗口实时刷新调用改为 `refresh_tasks()`，不再每帧重建事件选配表和参数控件。
+- (verified) 未修改事件检测、传送门测试开停、事件配置保存、默认参数或地图数据。
+
+**CODEBASE.md 更新内容：**
+- 更新 `gui/dialogs/event_manager_dialog.py` 模块说明，区分完整刷新和运行中轻量任务刷新。
+- 更新 `gui/modes/navigation_mode.py` 注意事项，说明导航循环只调用 `refresh_tasks()`。
+- 新增 `EventManagerDialog.refresh_tasks(self) -> None` 函数索引，并修订事件管理 UI Flow。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | 2 | 本轮重读 `refresh()`、`_refresh_events()`、`_refresh_tasks()`、测试按钮信号，新增轻量任务刷新入口。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 6 | 本轮重读导航循环事件 coordinator 更新分支，将可见事件窗口的高频刷新改为任务表刷新。 |
+## [BUGFIX] 2026-05-23 - Portal bounce caused by duplicate GUI instances
+### A. SYNC 范围声明
+**触发任务：** 排查用户点击“测试传送门”后在两个传送门之间反复传送的问题。
+**直接变更文件：**
+- `main.py`
+- `core/events/debug.py`
+- `core/events/runner.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- Windows 启动路径增加单实例保护，避免旧/新两个 GUI 进程同时控制游戏。
+- 事件日志增加 PID，后续可直接判断是否多进程混写。
+- 事件 runner 增加终态任务保护，不允许 completed/ignored task 被再次启动或继续执行。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) `logs/event_runtime.log` 同一会话内出现 `portal:1 seen=258 state=running` 后又出现 `task created id=portal:1`，单个 `EventCoordinator` 不可能让 `_next_id` 回绕。
+- (verified) 本机同时存在两组 `pythonw.exe` GUI 进程，每组都有一个主窗口进程，说明多个程序实例在同一时间识别和操作游戏。
+- (inferred) 两个实例同时写入同一个事件日志并向游戏发送按键，表现为一个实例完成入口传送后，另一个实例继续接管出口/入口任务，导致来回传送。
+
+**实际变更：**
+- (verified) `main.py` 新增基于项目路径 hash 的 Win32 mutex 单实例锁；同项目第二个实例启动时直接退出。
+- (verified) `main.py` 新增已有主窗口扫描，用于拦截已经运行但没有 mutex 的旧构建实例。
+- (verified) `core/events/debug.py` 的 `event_log()` 输出加入 `pid=<pid>`，用于识别多进程日志交错。
+- (verified) `core/events/runner.py` 在 `update()` 和 `_start_task()` 两处拒绝 `COMPLETED/IGNORED` 终态任务。
+
+**CODEBASE.md 更新内容：**
+- 更新 Windows 启动外部集成说明，记录管理员提权后的单实例锁和主窗口检测。
+- 更新事件日志诊断说明，记录 PID 输出。
+- 更新传送门事件当前行为，记录 runner 终态任务防护。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `main.py` | (partial) | (partial) | 2 | 本轮重读管理员提权和 GUI 启动前置路径，新增单实例锁和已有窗口检测。|
+| `core/events/debug.py` | (partial) | (partial) | 2 | 本轮重读事件日志写入路径，新增 PID 字段以定位多进程混写。|
+| `core/events/runner.py` | (partial) | (partial) | 2 | 本轮重读 handler 生命周期，新增终态任务拒绝保护。|
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile main.py core\events\debug.py core\events\runner.py` 已通过。
+
+## [FEATURE] 2026-05-23 - Portal teleport session completion
+### A. SYNC 范围声明
+**触发任务：** 用户确认传送门事件完成标准：一次传送成功后，传入门和传出门都应标记完成，不需要反复传送；同时要覆盖出口在独立地图、未提前识别到出口门的情况。
+**直接变更文件：**
+- `core/events/types/portal/handler.py`
+- `core/events/runner.py`
+- `core/events/memory.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 传送门 COMPLETE action 从“单 task 完成”扩展为“teleport session 完成”。
+- 入口 task 和出口 task 共享 `teleport_session_id`，后续不再进入调度。
+- 出口门没提前识别时创建 synthetic completed exit task，用于独立地图传送完成闭环和冷却。
+
+### C. SYNC 结果
+**关键发现：**
+- (verified) `PortalEventHandler` 原完成标准只返回 `entry_pos/exit_pos`，语义是当前 task 完成。
+- (verified) `EventRunner` 原逻辑用 `mark_related_completed()` 根据 `exit_pos` 完成一个附近 task，但没有会话 ID，也会把已有出口 task 坐标改成人物落点。
+- (verified) `EventScheduler` 只按 running/pending 选任务，不理解入口/出口属于同一次传送。
+
+**实际变更：**
+- (verified) `PortalEventHandler` 在 COMPLETE metadata 中加入 `completion_kind="teleport"` 和 `entry_task_id`。
+- (verified) `EventRunner` 收到 teleport complete 后调用 `EventMemory.complete_teleport_session()`；非 teleport complete 保留原单 task 完成路径。
+- (verified) `EventMemory.complete_teleport_session()` 生成 `teleport_session_id`，把入口标记 `teleport_role=entry` 并 completed。
+- (verified) `EventMemory.complete_teleport_session()` 优先用传送后人物落点附近已有 active portal task 作为出口并 completed；找不到时创建 synthetic completed exit task。
+- (verified) 完成 session 后分别对入口和出口调用 `suppress_nearby_pending()`，避免同一对门继续进入调度。
+
+**CODEBASE.md 更新内容：**
+- 更新 Portal Event Current Behavior，记录 teleport session 完成语义、entry/exit metadata、synthetic exit、冷却作为二级防护。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 3 | 本轮重读 wait_result 完成分支，新增 teleport completion metadata。|
+| `core/events/runner.py` | (partial) | (partial) | 3 | 本轮重读 COMPLETE 分支，改为按 `completion_kind` 分派到 teleport session 或普通完成。|
+| `core/events/memory.py` | (partial) | (partial) | 3 | 本轮重读 task lifecycle/cooldown，新增 `complete_teleport_session()` 和出口 task 查找。|
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\types\portal\handler.py core\events\runner.py core\events\memory.py` 已通过。
+
+## [BUGFIX] 2026-05-23 - Close paired portal completion detection
+### A. SYNC 范围声明
+**触发任务：** 用户反馈按 `D` 后角色位置已经改变到另一个传送门附近，但传送门事件仍保持处理中并继续来回传送。
+**直接变更文件：**
+- `core/events/models.py`
+- `core/events/coordinator.py`
+- `core/events/types/portal/handler.py`
+- `core/events/runner.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- `EventTick` 增加当前事件任务快照，handler 可在不直接依赖 memory 的情况下判断其它已知事件点。
+- 传送门完成判定除大位移和环境变化外，增加“落在另一个已知 portal 附近且明显更接近出口”的分支。
+- 修正 `EventRunner` COMPLETE 分支缩进，保证 teleport complete 后才清理 runner，FAIL 分支保持独立。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) `logs/event_runtime.log` 显示 `portal:1` 按 `D` 前玩家约在 `(3462,2278)`，之后约在 `(3526,2334)`，位移约 84px，低于 `teleport_min_distance=180`。
+- (verified) 同一批日志里已提前识别出 `portal:2`，其位置约 `(3513,2326)`，传送后玩家离它约 16px，说明传送实际已经成功。
+- (verified) 原 `PortalEventHandler._teleport_completed()` 只接受大位移或小地图环境差异，没有利用已知出口 task，因此近距离双门会超时失败并调度另一个门。
+
+**实际变更：**
+- (verified) `EventTick` 新增 `event_tasks` 字段，作为 coordinator 写入的 memory 快照。
+- (verified) `EventCoordinator.update()` 在 `memory.merge_observations()` 之后写入 `tick.event_tasks = self.memory.tasks()`，确保 handler 看到本帧合并后的最新双门任务。
+- (verified) `PortalEventHandler._teleport_completed()` 在小位移情况下调用 `_near_known_exit_portal()`，当玩家落在另一个 active portal 的 `exit_complete_radius` 内且明显比入口更近时直接完成传送。
+- (verified) `_near_known_exit_portal()` 排除当前入口 task、completed/ignored task 和非 portal task，避免误把入口或终态任务当出口。
+- (verified) `EventRunner.update()` 修正 COMPLETE/FAIL 分支缩进，避免 `_clear()` 脱离 COMPLETE 块造成语法错误或生命周期错乱。
+
+**CODEBASE.md 更新内容：**
+- 更新 `core/events/*` 注意事项，记录 `tick.event_tasks` 的写入时机。
+- 更新 `build_event_tick()`、事件管理 flow、`exit_complete_radius`、Portal Event Current Behavior 和 Event Localization Contract。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/models.py` | (partial) | (partial) | 2 | 本轮重读 `EventTick` 契约，新增 `event_tasks` 运行时任务快照字段。 |
+| `core/events/coordinator.py` | (partial) | (partial) | 2 | 本轮重读事件 detect/localize/memory/scheduler 顺序，确认快照应在 memory 合并后写入。 |
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 4 | 本轮重读 wait_result 和传送完成判定，新增已知出口门完成分支和入口距离防误判。 |
+| `core/events/runner.py` | (partial) | (partial) | 4 | 本轮重读 COMPLETE/FAIL 生命周期，修正缩进并保留 terminal/requeue 保护。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\runner.py core\events\models.py core\events\coordinator.py core\events\types\portal\handler.py core\events\memory.py` 已通过。
+
+## [FEATURE] 2026-05-23 - Portal auto-navigation integration and reset button
+### A. SYNC 范围声明
+**触发任务：** 用户确认传送门事件基本可用，要求接入自动导航，并在事件管理中增加按钮刷新传送门状态，方便反复测试。
+**直接变更文件：**
+- `gui/dialogs/event_manager_dialog.py`
+- `gui/modes/navigation_mode.py`
+- `core/events/coordinator.py`
+- `core/events/memory.py`
+- `core/events/position_stabilizer.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 自动导航开启时，传送门事件与手动测试走同一套 detect/localize/schedule/MOVE_TO/PRESS_KEY/COMPLETE pipeline。
+- 事件终态 action 也由导航循环消费，避免 COMPLETE/FAIL 帧同时推进普通路线导航。
+- 新增 portal 运行时重置入口，清空任务和定位聚类但不改事件配置。
+
+### C. SYNC 结果
+**关键发现：**
+- (verified) `navigation_loop()` 已用 `auto_navigation_enabled or portal_test_controller.active` 控制 `EventCoordinator.update(..., run_handlers=...)`，所以自动导航已有 handler 推进入口。
+- (verified) 原逻辑只把 `MOVE_TO/CLICK_SCREEN/PRESS_KEY/WAIT` 视为事件接管；`COMPLETE/FAIL` 不进入事件执行分支，手动测试终态停止和自动导航收口不稳定。
+- (verified) 事件窗口只有完整刷新和测试传送门按钮，没有运行时清空已完成/忽略 portal 任务和定位聚类的入口，导致同一对门反复测试需要重启或等待冷却。
+
+**实际变更：**
+- (verified) `NavigationModeWidget.navigation_loop()` 将事件 `COMPLETE/FAIL` 也纳入本帧事件占用，先由 `EventActionExecutor` 消费终态并清理 event path overlay；自动导航从下一帧恢复普通路线。
+- (verified) `EventManagerDialog` 新增 `reset_portal_requested` 信号和“刷新传送门状态”按钮。
+- (verified) `NavigationModeWidget._reset_portal_event_state()` 接收按钮事件，停止手动 portal 测试、调用 coordinator reset、清 overlay、刷新任务表并打印 `portal event state reset` 日志。
+- (verified) `EventCoordinator.reset_event_type()` 清理当前同类型 handler、memory tasks、position clusters、last detections/observations、last selected task 和 last action。
+- (verified) `EventMemory.clear_event_type()` 清空指定事件类型的任务和对应节流日志；`EventPositionStabilizer.clear_event_type()` 清空指定事件类型定位聚类。
+
+**CODEBASE.md 更新内容：**
+- 更新 `EventManagerDialog` 和 `NavigationModeWidget` 注意事项。
+- 更新 `core/events/*` 运行时 reset 入口说明。
+- 更新事件管理 UI Flow，加入“刷新传送门状态”和事件终态 action 收口。
+- 更新 Event Manager UI 说明，记录“刷新传送门状态”按钮语义。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | 3 | 本轮重读 footer 按钮和信号，新增 portal 状态重置信号和按钮。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 7 | 本轮重读自动导航事件接管和终态分支，接入 portal reset 并让 COMPLETE/FAIL 占用事件帧。 |
+| `core/events/coordinator.py` | (partial) | (partial) | 3 | 本轮新增按事件类型清理 coordinator 运行时状态的入口。 |
+| `core/events/memory.py` | (partial) | (partial) | 4 | 本轮新增指定事件类型任务清理入口，用于反复测试清除 completed/ignored 冷却状态。 |
+| `core/events/position_stabilizer.py` | (partial) | (partial) | 2 | 本轮新增指定事件类型定位聚类清理入口，避免刷新后复用旧 portal 定位样本。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\dialogs\event_manager_dialog.py gui\modes\navigation_mode.py core\events\coordinator.py core\events\memory.py core\events\position_stabilizer.py` 已通过。
+
+## [BUGFIX] 2026-05-23 - Portal pre-interaction mapped point click
+### A. SYNC 范围声明
+**触发任务：** 用户反馈传送门事件有时已经进入交互半径但游戏没有触发交互，需要降低交互半径下限，并在按 `D` 前点击一次映射的传送门点。
+
+**直接变更文件：**
+- `core/motion_controller.py`
+- `core/events/config.py`
+- `core/events/types/portal/config.py`
+- `core/events/types/portal/definition.py`
+- `core/events/types/portal/handler.py`
+- `core/events/models.py`
+- `core/events/action_executor.py`
+- `gui/modes/navigation_mode.py`
+- `gui/dialogs/event_manager_dialog.py`
+- `map_data/A1/event_config.json`
+- `map_data/Aa/event_config.json`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 事件管理页允许把 `interact_radius` 调到 1，用于推迟按 `D` 直到更贴近传送门。
+- 传送门 handler 进入交互阶段后先发出一次带 metadata 的强制映射点点击，再等待 `portal_point_click_wait_ms` 后按 `D`。
+- 强制点击走事件专用映射，不使用正常移动的最小点击半径，避免把“点传送门”放大成“朝传送门方向走一步”。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) `PortalEventDefinition.config_schema()` 原 `interact_radius` 下限为 5，无法继续缩小按 `D` 的距离阈值。
+- (verified) `MotionController.move_to_map_target()` 在目标距离极近时会返回 `None`，且正常移动映射会应用 `movement_min_click_radius`，不适合作为“点击映射传送门点”。
+- (verified) 事件 `MOVE_TO` 原本只传目标点，不能表达“这是一次强制交互点点击，不是寻路移动点击”。
+
+**实际变更：**
+- (verified) `PortalEventDefinition.config_schema()` 将 `interact_radius` 下限降到 1，并新增可配置 `portal_point_click_wait_ms`。
+- (verified) `PortalEventConfig` 与默认事件配置新增 `portal_point_click_wait_ms=350`。
+- (verified) `PortalEventHandler` 在进入 `interact_radius` 后先返回 `EventAction.move_to(..., metadata={"force_click_target": True})`，随后等待 `portal_point_click_wait_ms`，再发送 `D`。
+- (verified) `EventAction.move_to()` 支持 metadata，`EventActionExecutor` 将 metadata 传给 GUI move callback。
+- (verified) `NavigationModeWidget._execute_event_move_to()` 对 `force_click_target` 调用 `MotionController.click_map_target_once()`，并记录 `event forced target click` 日志。
+- (verified) `MotionController.click_map_target_once()` 用地图距离和 `movement_scale_factor` 精确映射目标点，不应用 `movement_min_click_radius`；玩家与传送门重叠时点击 `game_screen_center`。
+- (verified) A1/Aa 的 `event_config.json` 写入 `portal_point_click_wait_ms=350`，事件管理页摘要显示该参数。
+
+**CODEBASE.md 更新内容：**
+- 更新 Input Control Current Notes，记录 `click_map_target_once()` 的事件专用语义。
+- 更新 Event Manager UI，记录 `interact_radius` 下限和 `portal_point_click_wait_ms`。
+- 更新 Portal Event Current Behavior，记录“强制映射点点击 -> 等待 -> 按 D”的传送门交互顺序。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/motion_controller.py` | (partial) | (partial) | 2 | 本轮重读 map-to-screen 点击链路，新增事件专用映射点点击，避免正常移动最小半径影响交互点点击。 |
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 5 | 本轮重读进入交互半径后的状态机，新增 mapped point click 和点击后等待。 |
+| `core/events/types/portal/definition.py` | (partial) | (partial) | 2 | 本轮重读 schema，降低 `interact_radius` 下限并新增等待参数。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 8 | 本轮重读事件 move callback，新增 metadata 分支以区分事件交互点击和普通事件寻路移动。 |
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | 4 | 本轮重读参数摘要字段，加入 `portal_point_click_wait_ms`。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\motion_controller.py core\events\config.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\handler.py gui\modes\navigation_mode.py gui\dialogs\event_manager_dialog.py` 已通过。
+
+## [BUGFIX] 2026-05-23 - Portal final approach repeat click
+### A. SYNC 范围声明
+**触发任务：** 用户反馈 20:34 之后传送门测试到达附近但不会按 `D`；进一步确认当前距离仍大于 `interact_radius`，正确行为应继续点击进入目标点，而不是直接兜底按 `D`。
+
+**直接变更文件：**
+- `core/events/path_mover.py`
+- `core/events/types/portal/handler.py`
+- `gui/modes/navigation_mode.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 保留 `interact_radius` 的严格语义：只有 `distance <= interact_radius` 才进入“点击映射传送门点 -> 按 D”。
+- 只在 portal 最终靠近阶段允许同 subgoal 重复真实点击，避免停在 7px 但不再点击。
+- 移除中断前临时写入的 `interact_stall_radius/interact_stall_ms`，不引入额外半径兜底判断。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) 日志显示目标 `(3401,2248)`，玩家最终停在 `(3398.22,2254.47)`，距离 `7.04`。
+- (verified) 当时 `interact_radius=1`，因此 `PortalEventHandler` 正确地没有进入按 `D` 分支，而是持续返回 `approach portal interact radius`。
+- (verified) `EventPathMover.step()` 旧逻辑要求 cooldown 到期且 subgoal 改变至少 8px、或偏差超过 48px 才继续点击；最终阶段 subgoal 仍是 `(3401,2248)`，所以 action 被执行但没有真实 `event move click`。
+
+**实际变更：**
+- (verified) 删除临时 `interact_stall_radius/interact_stall_ms` 配置、schema 和解析字段，避免和严格交互半径语义冲突。
+- (verified) `EventPathMover.step()` 新增 `force_repeat_click=False` 参数；为 True 时保留 260ms 冷却，但绕过 subgoal 变化阈值。
+- (verified) `PortalEventHandler` 在 `distance > interact_radius` 的最终靠近 action 上附加 `metadata={"force_repeat_click": True}`。
+- (verified) `NavigationModeWidget._execute_event_move_to()` 将 metadata 转交给 `EventPathMover.step()`。
+
+**CODEBASE.md 更新内容：**
+- 更新 Portal Event Current Behavior，记录最终靠近阶段会重复同 subgoal 点击直到进入 `interact_radius`。
+- 新增 Event Move Repeat Click 说明，明确该能力只绕过 subgoal 变化阈值，不绕过点击冷却，也不改变按 `D` 条件。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/path_mover.py` | (partial) | (partial) | 2 | 本轮重读 `step()` 点击节流条件，新增 `force_repeat_click` 以解决最终目标不变导致不再真实点击。 |
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 6 | 本轮重读最终靠近分支，保留严格 `interact_radius`，只给移动 action 标记重复点击。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 9 | 本轮重读事件 move callback，转发 `force_repeat_click` metadata 到 EventPathMover。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\path_mover.py core\events\models.py core\events\action_executor.py core\events\config.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\handler.py core\motion_controller.py gui\modes\navigation_mode.py gui\dialogs\event_manager_dialog.py` 已通过。

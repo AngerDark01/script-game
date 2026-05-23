@@ -13,15 +13,20 @@
 """
 
 import ctypes
+import hashlib
 import os
 from pathlib import Path
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 
 
 DEBUG_CONSOLE_ENV = "MINIMAP_DEBUG_CONSOLE"
 _RUNTIME_LOG_HANDLE = None
+_SINGLE_INSTANCE_MUTEX_HANDLE = None
+ERROR_ALREADY_EXISTS = 183
+MAIN_WINDOW_TITLE = "\u5b9e\u65f6\u5c0f\u5730\u56fe\u62fc\u63a5\u7cfb\u7edf"
 
 
 class _OutputTee:
@@ -166,6 +171,83 @@ def _gui_python_executable():
     return sys.executable
 
 
+def _single_instance_mutex_name():
+    project_path = str(Path(__file__).resolve().parent).lower()
+    digest = hashlib.sha1(project_path.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return f"Local\\MinimapStitcher_{digest}"
+
+
+def acquire_single_instance_lock():
+    """Prevent two GUI instances from driving the game and event system at once."""
+    global _SINGLE_INSTANCE_MUTEX_HANDLE
+    if os.name != "nt":
+        return True
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.CreateMutexW(None, False, _single_instance_mutex_name())
+        if not handle:
+            print("Single-instance lock unavailable; continuing without lock.")
+            return True
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            print("Another minimap_stitcher instance is already running; exiting this instance.")
+            return False
+        _SINGLE_INSTANCE_MUTEX_HANDLE = handle
+        print(f"Single-instance lock acquired: {_single_instance_mutex_name()}")
+        return True
+    except Exception as exc:
+        print(f"Single-instance lock failed: {type(exc).__name__}: {exc}")
+        return True
+
+
+def has_existing_main_window() -> bool:
+    """Detect already-running old builds that do not own the mutex lock."""
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        current_pid = os.getpid()
+        found = ctypes.c_bool(False)
+
+        enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows.argtypes = (enum_windows_proc, wintypes.LPARAM)
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = (wintypes.HWND,)
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+        user32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+        user32.GetWindowTextW.restype = ctypes.c_int
+
+        def callback(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if int(pid.value) == current_pid:
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            if MAIN_WINDOW_TITLE in buffer.value:
+                found.value = True
+                return False
+            return True
+
+        user32.EnumWindows(enum_windows_proc(callback), 0)
+        return bool(found.value)
+    except Exception as exc:
+        print(f"Existing-window check failed: {type(exc).__name__}: {exc}")
+        return False
+
+
 DPI_AWARENESS_RESULT = set_process_dpi_awareness()
 
 
@@ -175,6 +257,13 @@ if os.name == "nt" and not is_running_as_admin():
         sys.exit(0)
     print("管理员提权失败或被取消，程序退出。")
     sys.exit(1)
+
+if not acquire_single_instance_lock():
+    sys.exit(0)
+
+if has_existing_main_window():
+    print("Another minimap_stitcher window is already running; exiting this instance.")
+    sys.exit(0)
 
 from PySide6.QtWidgets import QApplication
 from gui import MainWindow

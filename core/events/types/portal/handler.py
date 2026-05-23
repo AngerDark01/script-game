@@ -19,6 +19,7 @@ class PortalEventHandler(EventHandler):
         self.last_interact_ms = None
         self.interact_pos = None
         self.interact_signature = None
+        self.portal_point_click_ms = None
         self._last_state = None
         self._last_log_ms = 0
 
@@ -28,6 +29,7 @@ class PortalEventHandler(EventHandler):
         self.last_interact_ms = None
         self.interact_pos = None
         self.interact_signature = None
+        self.portal_point_click_ms = None
         self._last_state = None
         self._last_log_ms = 0
         event_log(
@@ -59,6 +61,8 @@ class PortalEventHandler(EventHandler):
                     player=tick.player_global_pos,
                 )
                 metadata = {"entry_pos": task.global_pos}
+                metadata["entry_task_id"] = task.id
+                metadata["completion_kind"] = "teleport"
                 if tick.player_global_pos is not None:
                     metadata["exit_pos"] = (
                         int(tick.player_global_pos[0]),
@@ -115,7 +119,11 @@ class PortalEventHandler(EventHandler):
                 target=task.global_pos,
                 player=tick.player_global_pos,
             )
-            return EventAction.move_to(task.global_pos, reason="approach portal interact radius")
+            return EventAction.move_to(
+                task.global_pos,
+                reason="approach portal interact radius",
+                metadata={"force_repeat_click": True},
+            )
 
         if self.config.interaction != "key":
             self._log_throttled(
@@ -128,6 +136,33 @@ class PortalEventHandler(EventHandler):
         if self.last_interact_ms is not None and tick.now_ms - self.last_interact_ms < int(self.config.post_interact_wait_ms):
             self.state = "wait_result"
             return EventAction.wait(200, reason="portal interaction cooldown")
+
+        if self.portal_point_click_ms is None:
+            self.state = "align_on_portal"
+            self.portal_point_click_ms = tick.now_ms
+            event_log(
+                "portal point click before interaction",
+                id=task.id,
+                target=task.global_pos,
+                player=tick.player_global_pos,
+                distance=float(distance),
+            )
+            return EventAction.move_to(
+                task.global_pos,
+                reason="click portal map point before interact",
+                metadata={
+                    "force_click_target": True,
+                    "reason": "portal_point_click_before_interact",
+                },
+            )
+
+        click_elapsed_ms = tick.now_ms - int(self.portal_point_click_ms)
+        if click_elapsed_ms < int(self.config.portal_point_click_wait_ms):
+            self.state = "align_on_portal"
+            return EventAction.wait(
+                min(200, int(self.config.portal_point_click_wait_ms) - click_elapsed_ms),
+                reason="portal waiting after point click",
+            )
 
         if self.state != "wait_result":
             self.state = "interact"
@@ -152,6 +187,7 @@ class PortalEventHandler(EventHandler):
         self.last_interact_ms = None
         self.interact_pos = None
         self.interact_signature = None
+        self.portal_point_click_ms = None
         self._last_state = None
         self._last_log_ms = 0
 
@@ -169,6 +205,18 @@ class PortalEventHandler(EventHandler):
                 )
                 return True
 
+            exit_task, exit_distance = self._near_known_exit_portal(tick)
+            if exit_task is not None:
+                event_log(
+                    "portal teleport known exit reached",
+                    exit_id=getattr(exit_task, "id", None),
+                    exit_pos=getattr(exit_task, "global_pos", None),
+                    distance=float(distance),
+                    exit_distance=float(exit_distance),
+                    radius=int(self.config.exit_complete_radius),
+                )
+                return True
+
         current_signature = _minimap_environment_signature(tick.raw_minimap_frame, tick.player_local_minimap_pos)
         if self.interact_signature is not None and current_signature is not None:
             diff = _signature_difference(self.interact_signature, current_signature)
@@ -180,6 +228,41 @@ class PortalEventHandler(EventHandler):
                 )
                 return True
         return False
+
+    def _near_known_exit_portal(self, tick):
+        if tick.player_global_pos is None:
+            return None, 0.0
+        radius = float(getattr(self.config, "exit_complete_radius", 120))
+        best_task = None
+        best_distance = None
+        for task in getattr(tick, "event_tasks", []) or []:
+            if getattr(task, "event_type", None) != self.event_type:
+                continue
+            if self.task is not None and task is self.task:
+                continue
+            state_value = getattr(getattr(task, "state", None), "value", getattr(task, "state", None))
+            if str(state_value).lower() in {"completed", "ignored"}:
+                continue
+            global_pos = getattr(task, "global_pos", None)
+            if global_pos is None:
+                continue
+            distance = math.hypot(
+                float(global_pos[0]) - float(tick.player_global_pos[0]),
+                float(global_pos[1]) - float(tick.player_global_pos[1]),
+            )
+            entry_distance = 0.0
+            if self.task is not None and getattr(self.task, "global_pos", None) is not None:
+                entry_distance = math.hypot(
+                    float(self.task.global_pos[0]) - float(tick.player_global_pos[0]),
+                    float(self.task.global_pos[1]) - float(tick.player_global_pos[1]),
+                )
+            closer_margin = max(8.0, float(getattr(self.config, "interact_radius", 36)))
+            if entry_distance > 0.0 and distance + closer_margin >= entry_distance:
+                continue
+            if distance <= radius and (best_distance is None or distance < best_distance):
+                best_task = task
+                best_distance = distance
+        return best_task, float(best_distance or 0.0)
 
     def _log_state(self, task, tick) -> None:
         if self.state == self._last_state:

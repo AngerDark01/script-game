@@ -49,6 +49,7 @@ class EventPathMover:
         explored_map,
         now_ms: int,
         lookahead_distance: float,
+        force_repeat_click: bool = False,
     ) -> EventMoveStep | None:
         current = (float(current_pos[0]), float(current_pos[1]))
         target = (float(target_pos[0]), float(target_pos[1]))
@@ -86,10 +87,10 @@ class EventPathMover:
             if self.last_click_target is None
             else point_distance(self.last_click_target, self.subgoal)
         )
-        should_click = (
-            self.last_click_ms == 0
-            or int(now_ms) - self.last_click_ms >= 260
-        ) and (
+        cooldown_ready = self.last_click_ms == 0 or int(now_ms) - self.last_click_ms >= 260
+        should_click = cooldown_ready and (
+            bool(force_repeat_click)
+            or
             self.last_click_target is None
             or target_delta >= 8.0
             or deviation >= 48.0

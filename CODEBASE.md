@@ -11,9 +11,26 @@ gui/main_window.py - 创建绘图/导航两个模式并共享 AppContext。
 gui/navigation_params.py - 定义 NavConfig、RecognizerParams、NavPreferences，并负责 config.json 序列化契约。
 gui/dialogs/nav_params_dialog.py - 导航参数 UI，使用 widget_map 将控件变化写回 NavConfig。
 gui/dialogs/event_manager_dialog.py - 独立事件管理窗口，展示完整事件选配和运行中事件任务状态。
+gui/dialogs/advanced_settings_dialog.py - 高级参数弹窗主类，组合图像预处理、特征、参数管理和拼接算法 tabs。
+gui/dialogs/advanced_settings/__init__.py - 高级参数弹窗 helper 包入口。
+gui/dialogs/advanced_settings/params_adapter.py - 高级参数弹窗控件与参数 dict/预设之间的映射 helper。
+gui/dialogs/color_picker_dialog.py - 交互式 HSV 颜色采样弹窗，负责采样点交互、预览和 debug 输出。
+gui/dialogs/color_picker/__init__.py - 颜色选择弹窗 helper 包入口。
+gui/dialogs/color_picker/hsv_ranges.py - 颜色选择弹窗 HSV 转换、采样值提取和范围计算 helper。
+gui/dialogs/color_picker/image_renderer.py - 颜色选择弹窗 OpenCV 图像转 QPixmap 和采样点 marker 绘制 helper。
 gui/modes/navigation_mode.py - 导航模式主 UI、地图加载、定位循环、路线编辑、自动导航、事件动作接入和范围框显示。
+gui/modes/navigation/__init__.py - 导航模式拆分 helper 包入口。
+gui/modes/navigation/event_adapter.py - 导航模式与事件系统之间的轻量桥接 helper。
+gui/modes/navigation/event_overlay.py - 导航地图上的事件 marker 绘制和事件 overlay item 清理。
+gui/modes/navigation/map_runtime.py - 导航地图目录、配置读写和截图几何计算 helper。
+gui/modes/navigation/route_overlay.py - 导航路线、出口、必经点、途经点、当前路径和子目标 overlay 绘制。
+gui/modes/navigation/viewport_overlay.py - 导航屏幕幕布、监控绿框、真实主画面橙框的矩形计算 helper。
 gui/modes/event_test_controller.py - 手动事件测试按钮状态控制，避免测试 UI 状态散落在导航主文件。
-gui/modes/mapping_widget.py - 绘图模式，保存 map_data.npz 和地图 config.json。
+gui/modes/mapping_widget.py - 绘图模式主 UI、截图建图循环、地图显示和参数控件同步。
+gui/modes/mapping/__init__.py - 绘图模式拆分 helper 包入口。
+gui/modes/mapping/map_renderer.py - 绘图模式 BGR/QPixmap 转换和全局地图 overlay 绘制 helper。
+gui/modes/mapping/params_adapter.py - 绘图模式参数控件与 recognizer/stitcher 运行时参数之间的桥接 helper。
+gui/modes/mapping/save_load.py - 绘图模式项目路径、map_data 目录和 config.json 读写 helper。
 core/navigation_core.py - 导航定位核心，将实时小地图截图匹配到全局地图坐标。
 core/stitcher_core.py - 建图拼接核心，维护 wall_layer/explored_map/current_pos。
 core/pathfinder.py - A* 寻路，输入输出地图全局坐标。
@@ -113,13 +130,110 @@ Level 3: navigation click path
 职责：独立事件管理窗口，用于测试和运行时观察事件系统。
 关键导出：`EventManagerDialog`。
 对外依赖：`core.events.config.build_tui_event_options`。
-注意事项：事件选配表只展示完整事件包，例如 `portal`；不会暴露 minimap detector、main-view confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。选中事件行后，参数面板根据该事件的 `config_schema()` 自动生成控件，参数变化只更新内存态配置并发出 `config_changed`，点击保存才写入当前地图 `event_config.json`。`test_portal_button.clicked` 通过 lambda 丢弃 Qt 的 checked 参数后再发出无参 `test_portal_requested`，避免信号参数污染导航层槽函数。
+注意事项：事件选配表只展示完整事件包，例如 `portal`；不会暴露 minimap detector、main-view confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。完整 `refresh()` 会重建事件表和参数控件；运行中高频更新使用 `refresh_tasks()` 只刷新任务表，避免导航循环反复重建按钮和参数控件。选中事件行后，参数面板根据该事件的 `config_schema()` 自动生成控件，参数变化只更新内存态配置并发出 `config_changed`，点击保存才写入当前地图 `event_config.json`。`test_portal_button.clicked` 通过 lambda 丢弃 Qt 的 checked 参数后再发出无参 `test_portal_requested`，避免信号参数污染导航层槽函数。`reset_portal_button` 发出 `reset_portal_requested`，由导航页清空 portal 运行时任务和定位聚类，方便同一地图反复测试。
+
+### `gui/dialogs/advanced_settings_dialog.py`
+职责：高级参数弹窗主类，负责 tab 构建、按钮/文件对话框连接、参数文件读写和 recognizer/stitcher 实时应用时机。
+关键导出：`AdvancedSettingsDialog`。
+对外依赖：`gui.dialogs.advanced_settings.params_adapter`。
+注意事项：`load_current_params()`、`apply_params()`、`reset_to_default()`、`apply_loaded_params()`、`apply_preset()` 原入口保留，内部委托参数映射 helper。文件保存/加载路径、JSON 格式、状态文案和应用到 recognizer/stitcher 的顺序仍由本类维护；helper 不做文件 IO，也不弹窗。
+
+### `gui/dialogs/advanced_settings/__init__.py`
+职责：高级参数弹窗 helper 包标识。
+关键导出：无。
+对外依赖：无。
+注意事项：空包入口只服务内部模块命名空间，不承载业务逻辑。
+
+### `gui/dialogs/advanced_settings/params_adapter.py`
+职责：封装高级参数弹窗控件与参数 dict/预设之间的双向映射。
+关键导出：`load_params_to_widgets`、`collect_params_from_widgets`、`reset_widgets_to_default`、`apply_loaded_params_to_widgets`、`apply_preset_to_widgets`。
+对外依赖：无内部业务模块依赖；只操作传入 dialog 的已存在控件。
+注意事项：该模块不保存参数文件、不读取 JSON、不调用 recognizer/stitcher。`reset_widgets_to_default()` 保持旧 reset 字段集合，不额外写 `blur_strength_spin`；`load_params_to_widgets()` 仍写入 `blur_strength_spin=3`，保持旧加载当前参数行为。
+
+### `gui/dialogs/color_picker_dialog.py`
+职责：交互式颜色选择弹窗，负责采样点交互、模式切换、HSV 计算流程、预览刷新、debug 图片/日志输出和结果返回。
+关键导出：`ColorPickerDialog`。
+对外依赖：`core.recognizer_optimized.HSVRecognizer`、`gui.widgets.clickable_label.ClickableImageLabel`、`gui.dialogs.color_picker.hsv_ranges`、`gui.dialogs.color_picker.image_renderer`。
+注意事项：`calculate_hsv_ranges()`、`_calculate_range()`、`_show_image()` 原入口保留，内部委托 helper。`update_preview()` 仍在本类内维护 mask、形态学、debug png/txt 输出，避免改变调试文件内容和生成时机。
+
+### `gui/dialogs/color_picker/__init__.py`
+职责：颜色选择弹窗 helper 包标识。
+关键导出：无。
+对外依赖：无。
+注意事项：空包入口只服务内部模块命名空间，不承载业务逻辑。
+
+### `gui/dialogs/color_picker/hsv_ranges.py`
+职责：封装颜色选择弹窗中的 BGR->HSV 转换、采样点 HSV 提取、HSV 范围计算和平均饱和度计算。
+关键导出：`bgr_to_hsv`、`hsv_values_at_points`、`calculate_hsv_range`、`mean_saturation`。
+对外依赖：无内部业务模块依赖；只使用 OpenCV/Numpy。
+注意事项：`calculate_hsv_range()` 保持旧算法：均值、标准差、`max(std*2, [5,20,20])` 容差、HSV 边界 `[0,0,0]` 到 `[179,255,255]`。
+
+### `gui/dialogs/color_picker/image_renderer.py`
+职责：封装颜色选择弹窗中的 OpenCV 图像转 QPixmap 和采样 marker 绘制。
+关键导出：`pixmap_from_image`、`draw_sample_markers`。
+对外依赖：无内部业务模块依赖；只使用 OpenCV 和 PySide6 图像绘制类。
+注意事项：灰度图仍使用 `QImage.Format_Grayscale8`，彩色图仍 BGR 转 RGB；marker 颜色、半径、缩放公式和 label 固定尺寸逻辑保持原 `_show_image()` 行为。
 
 ### `gui/modes/navigation_mode.py`
 职责：导航模式 UI 与运行循环，包含地图加载、定位、路线编辑、自动导航动作消费、绿色定位框和橙色真实可见框绘制。
 关键导出：`NavigationModeWidget`。
-对外依赖：`NavigationCore`、`MotionController`、`AutoNavigator`、`RouteManager`、`EventCoordinator`、`EventPathMover`、`ManualEventTestController`。
-注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`guide_points` 构成可被 A* 逐段追踪的路线骨架，`required_points` 是必须按顺序完成的阶段门，状态机按路线进度判断当前应追普通点还是必经点，并通过 `target_kind` 控制覆盖层只高亮真正当前目标。加载地图时初始化事件 registry/config/coordinator；导航循环每帧构造 `EventTick`，事件动作在自动导航开启或手动事件测试开启时优先于普通 auto move 执行。事件 MOVE_TO 不再在本文件内维护路径细节，而是委托 `EventPathMover`；传送门测试按钮文本/选中状态由 `ManualEventTestController` 维护。事件管理按钮打开 `EventManagerDialog`，地图上的事件标记来自 `EventCoordinator.overlays()`；全局关闭事件系统或关闭单个事件时，禁用事件不会再显示活动 marker。本文件不再打印每帧“当前位置/位置来源”调试块，事件操作过程应走 `event_log()`。
+对外依赖：`NavigationCore`、`MotionController`、`AutoNavigator`、`RouteManager`、`EventCoordinator`、`EventPathMover`、`ManualEventTestController`、`navigation.event_adapter`、`navigation.route_overlay`、`navigation.event_overlay`。
+注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`guide_points` 构成可被 A* 逐段追踪的路线骨架，`required_points` 是必须按顺序完成的阶段门，状态机按路线进度判断当前应追普通点还是必经点，并通过 `target_kind` 控制覆盖层只高亮真正当前目标。加载地图时初始化事件 registry/config/coordinator；导航循环每帧通过 `navigation.event_adapter.build_event_tick()` 构造 `EventTick`，事件动作在自动导航开启或手动事件测试开启时优先于普通 auto move 执行。事件 MOVE_TO 不再在本文件内维护路径细节，而是委托 `EventPathMover`；传送门测试按钮文本/选中状态由 `ManualEventTestController` 维护。自动导航开启时会持续运行事件 handler；事件 `MOVE_TO/WAIT/PRESS_KEY/CLICK_SCREEN/COMPLETE/FAIL` 占用当前帧，普通路线导航从下一帧恢复，避免传送门完成帧同时推进主路线。事件管理窗口可见时，导航循环只调用 `EventManagerDialog.refresh_tasks()` 更新任务表，完整 `refresh()` 留给手动刷新、上下文切换和配置变化。路线 overlay 与事件 overlay 的 QGraphicsItem 创建/清理由 `gui/modes/navigation/route_overlay.py` 和 `event_overlay.py` 承担，`NavigationModeWidget` 保留原 `_render_*`/`_clear_*` 方法作为兼容委托入口。事件 registry 默认创建、配置摘要、窗口查找、action 接管判定和事件状态文案由 `event_adapter.py` 承担。本文件不再打印每帧“当前位置/位置来源”调试块，事件操作过程应走 `event_log()`。
+### `gui/modes/navigation/event_adapter.py`
+职责：封装导航模式和事件系统之间的轻量桥接，不推进事件状态机。
+关键导出：`create_default_event_registry`、`event_config_summary`、`find_default_game_window_rect`、`build_event_tick`、`should_event_action_take_control`、`is_terminal_event_action`、`event_status_text`。
+对外依赖：`core.events.models.EventTick/EventActionType`、`core.events.registry.EventRegistry`、`core.events.types.portal.PortalEventDefinition`、`core.events.window_finder.find_game_window`。
+注意事项：该模块只组装事件系统需要的输入或判断 action 类型；`EventCoordinator.update()`、handler 生命周期和真实输入执行仍由原有模块/页面调用方负责。
+### `gui/modes/navigation/event_overlay.py`
+职责：封装导航地图事件 marker 的 QGraphics 绘制和清理。
+关键导出：`clear_event_overlay`、`global_to_scene`、`render_event_overlay`。
+对外依赖：无内部业务模块依赖；只接收调用方传入的 `scene/nav_core/event_coordinator/items`。
+注意事项：该模块只移动原 `NavigationModeWidget` 中的绘制细节，不决定事件启用、调度或状态；事件过滤仍由 `EventCoordinator.overlays()` 完成。
+### `gui/modes/navigation/map_runtime.py`
+职责：封装导航模式地图目录解析、地图列表读取、导航配置读写和截图几何计算。
+关键导出：`MISSING_MAP_DATA_LABEL`、`project_root_from_file`、`map_data_dir`、`list_map_names`、`resolve_map_folder`、`load_nav_config`、`save_nav_config`、`physical_center_from_logical`、`build_capture_geometry`。
+对外依赖：`gui.navigation_params.NavConfig`。
+注意事项：该模块不弹窗、不改按钮、不初始化 `NavigationCore`；调用方仍负责 UI 状态和异常提示。`build_capture_geometry()` 保留旧契约：显式 `monitor_region` 返回矩形且 player_pos 为 `None`，中心点模式返回正方形截图矩形和截图中心 player_pos。
+### `gui/modes/navigation/route_overlay.py`
+职责：封装导航路线 overlay 的 QGraphics 绘制，包括出口、必经点、途经点、当前路径和 subgoal。
+关键导出：`clear_route_overlay`、`render_route_overlay`。
+对外依赖：`gui.modes.navigation.event_overlay.global_to_scene`。
+注意事项：该模块只渲染调用方传入的 `route_data/current_path/current_subgoal/current_*_index/current_target_kind`，不读取或写入 `route.json`，不推进自动导航状态机。
+### `gui/modes/navigation/viewport_overlay.py`
+职责：封装导航相关矩形几何计算，避免页面主类直接维护屏幕幕布/监控框/真实主画面框公式。
+关键导出：`screen_overlay_geometry`、`monitor_scene_rect`、`game_view_scene_rect`。
+对外依赖：无内部业务模块依赖；只使用传入的 `capture_rect/nav_config/nav_core/player_pos/player_local_pos`。
+注意事项：该模块只返回矩形数据，不创建/删除 Qt item，不决定 overlay 是否显示；主类仍负责 `OverlayWindow` 和 QGraphicsRectItem 的 hide/show。
+
+### `gui/modes/mapping_widget.py`
+职责：绘图模式主界面，仍负责控件组合、区域/中心选择、实时截图建图、调用地图显示 helper、路径点击入口、参数控件同步和状态栏更新。
+关键导出：`MappingWidget`。
+对外依赖：`TransparentOverlay`、`CenterPointSelector`、`ColorPickerDialog`、`ScalableMapWidget`、`CollapsibleMapGroup`、`AdvancedSettingsDialog`、`gui.modes.mapping.save_load`、`gui.modes.mapping.map_renderer`、`gui.modes.mapping.params_adapter`。
+注意事项：`save_map()`、`save_config()`、`load_saved_params()` 作为外部兼容入口保留，但路径解析、目录创建、JSON 读写和配置 dict 构造已委托 `mapping/save_load.py`。`update_displays()` 和 `_show_image()` 入口保留，但图像转换、全局地图着色、路径线、视野框和当前位置圆点绘制已委托 `mapping/map_renderer.py`。HSV/feature/merge 参数控件读取和已加载参数回填已委托 `mapping/params_adapter.py`；本类仍决定何时调用 `recognizer.set_params()`、`stitcher.set_params()` 和 `save_config()`，以保持原副作用顺序。
+
+### `gui/modes/mapping/__init__.py`
+职责：绘图模式 helper 包标识。
+关键导出：无。
+对外依赖：无。
+注意事项：空包入口只服务内部模块命名空间，不承载业务逻辑。
+
+### `gui/modes/mapping/map_renderer.py`
+职责：封装绘图模式图像展示相关转换和 OpenCV overlay 绘制。
+关键导出：`pixmap_from_bgr`、`unpack_enhanced_map_result`、`render_global_map_pixmap`。
+对外依赖：无内部业务模块依赖；只使用 OpenCV/Numpy/PySide6 图像类型。
+注意事项：该模块不读取 `app_context`、不调用 stitcher、不设置 Qt 控件；调用方传入已取出的地图图像、裁剪偏移、路径、当前位置、draw_scale、player_pos 和 capture_size。颜色、线宽和 fallback 解包逻辑保持原 `MappingWidget.update_displays()` 行为。
+
+### `gui/modes/mapping/params_adapter.py`
+职责：封装绘图模式参数控件到 recognizer/stitcher 参数字段的轻量映射。
+关键导出：`apply_hsv_toggles`、`feature_params_from_widgets`、`apply_merge_weight`、`sync_recognizer_widgets`、`sync_stitcher_widgets`。
+对外依赖：无内部业务模块依赖；只使用传入的控件和 recognizer/stitcher 对象。
+注意事项：该模块不保存配置、不弹窗、不创建控件、不阻断 Qt 信号。`sync_recognizer_widgets()` 和 `sync_stitcher_widgets()` 保持原 `setChecked()`/`setValue()` 写回顺序和默认值，因此仍可能触发既有信号副作用；这是为保持行为不变而刻意保留。
+
+### `gui/modes/mapping/save_load.py`
+职责：封装绘图模式项目根目录解析、`map_data` 目录定位、地图目录创建、根级/地图级 `config.json` 读写和配置 dict 构造。
+关键导出：`project_root_from_file`、`map_data_dir`、`map_folder_for_name`、`ensure_map_folder`、`root_config_path`、`build_mapping_config`、`save_json_config`、`load_json_config`、`save_root_config`、`load_root_config`、`save_map_config`。
+对外依赖：无内部业务模块依赖；通过传入的 `app_context` 读取当前 recognizer/stitcher 参数。
+注意事项：该模块不弹窗、不写 Qt 控件、不调用 `stitcher.save_map_package()`；`json.dump(..., indent=4)` 保持旧保存格式，未设置 `ensure_ascii=False` 以避免改变现有输出行为。
 
 ### `gui/modes/event_test_controller.py`
 职责：把手动事件测试按钮的 active 状态、checked 状态和显示文案封装到独立小模块，避免导航主文件同时承担 UI 状态同步细节。
@@ -173,7 +287,8 @@ Level 3: navigation click path
 职责：事件系统核心层。`EventCoordinator` 是导航模式唯一入口；`EventRegistry` 只注册完整事件包；`EventMemory` 管理事件实例生命周期；`EventRunner` 调用具体事件 handler；`EventActionExecutor` 执行动作。
 关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`、`EventActionExecutor`、`EventPathMover`。
 对外依赖：标准库；视觉工具依赖 OpenCV/NumPy。
-注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventPositionStabilizer` 会按同一帧隔离聚类，避免一帧内两个相近事件图标被合并成一个跳动 marker；`EventMemory.merge_observations()` 还会避免同一帧多个 observation 复用同一个刚更新的 task，近距离双传送门依赖 `dedupe_radius` 小于两门间距来稳定显示两个 marker。
+注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventPositionStabilizer` 会按同一帧隔离聚类，避免一帧内两个相近事件图标被合并成一个跳动 marker；`EventMemory.merge_observations()` 还会避免同一帧多个 observation 复用同一个刚更新的 task，近距离双传送门依赖 `dedupe_radius` 小于两门间距来稳定显示两个 marker。`EventCoordinator.update()` 会在合并本帧 observation 之后把 `tick.event_tasks` 更新为当前 memory 快照，供 handler 在同一帧判断“另一个已知事件任务”。
+`EventCoordinator.reset_event_type(event_type, now_ms)` 是事件管理 UI 的运行时重置入口；它清理同类型 active handler、memory tasks、position clusters、last detections/observations 和 selected task，不改 `event_config.json`，用于同一地图反复识别/执行某类事件。
 
 ### `core/events/path_mover.py`
 职责：为事件动作中的地图坐标 `MOVE_TO` 提供可复用移动路径规划，不让传送门或未来事件各自复制 A*、lookahead 和点击节流逻辑。
@@ -249,17 +364,43 @@ Level 3: navigation click path
 ### `NavigationModeWidget._render_event_overlay(self)`
 行为：在导航地图上绘制已识别事件任务 marker。
 算法：
-1. 若 scene/nav_core/coordinator 任一不可用，清空旧事件 marker 后返回。
-2. 从 `EventCoordinator.overlays()` 读取当前启用事件的 overlay 模型。
-3. 用 `nav_core.crop_offset` 将全局地图坐标转换为当前裁剪场景坐标。
-4. 按 overlay 颜色绘制圆点；`running` 状态半径更大。
-5. 在圆点旁绘制事件名称和状态文本。
+1. 调用 `render_event_overlay(scene, nav_core, event_coordinator, event_overlay_items)`。
+2. helper 若 scene/nav_core/coordinator 任一不可用，会清空旧事件 marker 后返回空列表。
+3. helper 从 `EventCoordinator.overlays()` 读取当前启用事件的 overlay 模型。
+4. helper 用 `nav_core.crop_offset` 将全局地图坐标转换为当前裁剪场景坐标。
+5. helper 按 overlay 颜色绘制圆点；`running` 状态半径更大，并在圆点旁绘制事件名称和状态文本。
 副作用：清空并重建 `event_overlay_items` 中的 QGraphicsItem。
 失败行为：坐标为空或无法映射时跳过该 marker。
 调用关系：called by `navigation_loop()` and `_render_route_overlay()`。
 
+### `render_route_overlay(scene, nav_core, route_data, items: list, current_path=None, current_subgoal=None, current_required_index=None, current_guide_index=None, current_target_kind=None)`
+行为：根据现有路线数据和自动导航运行态绘制出口、必经点、途经点、当前路径和子目标。
+算法：
+1. 清空传入的旧 route overlay items。
+2. 从 `route_data["routes"]["main"]` 读取 `exit_region`、`required_points`、`guide_points`。
+3. 使用 `global_to_scene()` 将全局坐标减去 `nav_core.crop_offset` 得到场景坐标。
+4. 绘制出口橙色圆、必经点紫色/灰色 marker、途经点青色/灰色 marker，并按当前 target kind 加粗当前目标。
+5. 如传入 `current_path`，构造 `QPainterPath` 绘制黄色路径线。
+6. 如传入 `current_subgoal`，绘制洋红色子目标点。
+7. 返回新的 item 列表和 route path item。
+副作用：向 QGraphicsScene 添加/移除 QGraphicsItem。
+失败行为：scene/nav_core 不可用时由调用方早退；单点无法映射时跳过该点。
+调用关系：called by `NavigationModeWidget._render_route_overlay()`。
+
+### `render_event_overlay(scene, nav_core, event_coordinator, items: list) -> list`
+行为：根据事件系统 overlay 模型绘制事件 marker。
+算法：
+1. scene/nav_core/event_coordinator 任一不可用时清空旧事件 items 并返回空列表。
+2. 清空旧事件 items。
+3. 遍历 `event_coordinator.overlays()`，读取每个 overlay 的 `global_pos/color/state/label`。
+4. 调用 `global_to_scene()` 转换坐标。
+5. 绘制事件圆点和文本 label，running 状态使用更大半径。
+副作用：向 QGraphicsScene 添加/移除事件 QGraphicsItem。
+失败行为：单个 overlay 坐标无法映射时跳过。
+调用关系：called by `NavigationModeWidget._render_event_overlay()`。
+
 ### `EventManagerDialog.refresh(self) -> None`
-行为：刷新事件选配表和事件任务表。
+行为：执行完整刷新，重建事件选配表、参数面板和事件任务表。
 算法：
 1. 调用 `_refresh_events()` 重建完整事件选配表。
 2. 调用 `_refresh_tasks()` 从 coordinator 读取当前任务列表。
@@ -268,7 +409,17 @@ Level 3: navigation click path
 5. 保存按钮只发出 `save_requested`，实际路径由导航模式写入当前地图目录。
 副作用：重建 QTableWidget 行和状态文案。
 失败行为：coordinator 查询异常时 `_current_tasks()` 降级为空列表。
-调用关系：called by `NavigationModeWidget.toggle_event_dialog()` and `navigation_loop()`。
+调用关系：called by `EventManagerDialog.set_context()`、刷新按钮、配置勾选变化。
+
+### `EventManagerDialog.refresh_tasks(self) -> None`
+行为：只刷新事件任务表和状态摘要，不重建事件选配表、参数面板或按钮。
+算法：
+1. 调用 `_refresh_tasks()` 从 coordinator 读取当前任务列表。
+2. 用现有任务行数据更新 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。
+3. 当 config 存在时更新底部状态摘要。
+副作用：重写任务 QTableWidget 行和状态文案；不修改事件选配控件和参数控件。
+失败行为：coordinator 查询异常时 `_current_tasks()` 降级为空列表。
+调用关系：called by `NavigationModeWidget.navigation_loop()` while the event dialog is visible.
 
 ### `ManualEventTestController._sync_button(self) -> None`
 行为：使手动事件测试按钮的文字和选中状态与 `active` 一致。
@@ -291,6 +442,231 @@ Level 3: navigation click path
 副作用：可启动导航循环、启用游戏输入、更新按钮/状态栏并记录事件日志。
 失败行为：先决条件缺失时只警告并保持测试未启动。
 调用关系：called by `EventManagerDialog.test_portal_requested` signal。
+
+### `build_event_tick(*, now_ms, frame, player_pos, localized_pos, confidence, nav_core, nav_config, map_name: str, capture_provider) -> EventTick`
+行为：把导航循环当前帧状态包装成事件系统统一输入。
+算法：
+1. 接收导航循环已捕获的 raw minimap frame、玩家局部坐标、定位结果和置信度。
+2. 从 `nav_core.draw_scale` 读取当前地图缩放；`nav_core` 不存在时回退 `nav_config.draw_scale`。
+3. 从 `nav_core.last_frame_registration` 读取当前帧墙体配准契约；`nav_core` 不存在时为 `None`。
+4. 组装 `EventTick`，保留 `capture_provider` 供事件 handler 需要主画面截图时使用；`event_tasks` 初始为空，进入 `EventCoordinator.update()` 后由 coordinator 写入当前 memory 任务快照。
+副作用：无。
+失败行为：不验证图像或定位是否有效；由 `EventCoordinator` 和后续模块按字段值决定是否运行。
+调用关系：called by `NavigationModeWidget._build_event_tick()`。
+
+### `should_event_action_take_control(event_action) -> bool`
+行为：判断事件 action 是否应优先于普通自动导航移动。
+算法：
+1. 空 action 返回 `False`。
+2. `MOVE_TO`、`CLICK_SCREEN`、`PRESS_KEY`、`WAIT` 返回 `True`，表示事件正在接管本帧行为。
+3. `COMPLETE`/`FAIL` 不在此函数中视为接管动作；它们由调用方单独处理手动测试停止。
+副作用：无。
+失败行为：未知 action type 返回 `False`。
+调用关系：called by `NavigationModeWidget._should_event_action_take_control()`。
+
+### `map_runtime.build_capture_geometry(nav_config: NavConfig | None, capture_center_physical)`
+行为：根据导航配置生成真实屏幕截图矩形和玩家在截图中的局部坐标。
+算法：
+1. 配置为空时返回 `(None, None, capture_center_physical)`。
+2. 若存在 `monitor_region`，将 `left/top/width/height` 转为 int 后返回，player_pos 为 `None`。
+3. 若没有 `monitor_logical_center` 或物理中心尚不可用，返回空几何。
+4. 中心点模式下用 `monitor_size // 2` 从物理中心计算正方形截图 rect。
+5. 返回 player_pos 为截图中心 `(width // 2, height // 2)`。
+副作用：无。
+失败行为：缺少中心或配置不完整时返回空几何，由调用方决定是否隐藏 overlay 或跳过导航循环。
+调用关系：called by `NavigationModeWidget._build_capture_geometry()`。
+
+### `viewport_overlay.monitor_scene_rect(player_pos, capture_rect, player_local_pos, nav_core)`
+行为：计算绿色小地图截图范围框在导航地图场景中的矩形。
+算法：
+1. 校验 player_pos、capture_rect、player_local_pos 和 nav_core。
+2. 读取 `nav_core.crop_offset` 和 `draw_scale`。
+3. 将截图宽高乘以 draw_scale 得到地图坐标尺寸。
+4. 将玩家局部截图坐标乘以 draw_scale，作为从玩家全局位置回推截图左上角的偏移。
+5. 返回 `(rect_x, rect_y, rect_w, rect_h)`。
+副作用：无。
+失败行为：输入不完整时返回 `None`。
+调用关系：called by `NavigationModeWidget._update_monitor_rect()`。
+
+### `viewport_overlay.game_view_scene_rect(player_pos, nav_core, nav_config)`
+行为：计算橙色真实主画面可见/可交互范围框在导航地图场景中的矩形。
+算法：
+1. 校验 player_pos、nav_core、nav_config。
+2. 读取 `nav_config.game_view_map_size`；小于等于 0 时返回 `None`。
+3. 用 `nav_core.crop_offset` 将玩家全局位置转换到当前地图场景。
+4. 以玩家位置为中心，返回边长为 `game_view_map_size` 的正方形矩形。
+副作用：无。
+失败行为：输入不完整或尺寸无效时返回 `None`，调用方隐藏橙色框。
+调用关系：called by `NavigationModeWidget._update_game_view_rect()`。
+
+### `build_mapping_config(app_context, fps: int, *, include_draw_scale: bool = False) -> dict`
+行为：把绘图模式当前运行态序列化为旧版 `config.json` 字段字典。
+算法：
+1. 从 `app_context.monitor_logical_center`、`monitor_size`、`monitor_region` 读取截图配置。
+2. 使用传入 `fps` 写入帧率字段，避免 helper 依赖 Qt spinbox。
+3. 调用 `app_context.recognizer.get_params()` 和 `app_context.stitcher.get_params()` 获取算法参数。
+4. 当 `include_draw_scale=True` 时，在字典前部加入 `draw_scale`，用于地图级配置；根级配置保持旧字段集合。
+副作用：读取 recognizer/stitcher 参数，不写文件。
+失败行为：若 `app_context` 缺少 recognizer 或 stitcher 参数接口，会按原调用路径抛出异常。
+调用关系：called by `MappingWidget.save_map()` and `MappingWidget.save_config()`。
+
+### `ensure_map_folder(file_path: str | Path, map_name: str) -> Path`
+行为：根据当前源码文件定位项目 `map_data/<map_name>` 目录并确保存在。
+算法：
+1. 将 `file_path` resolve 为绝对路径。
+2. 取 `parents[2]` 作为项目根目录，与原 `dirname(dirname(dirname(__file__)))` 保持一致。
+3. 拼接 `map_data/map_name`。
+4. 调用 `mkdir(parents=True, exist_ok=True)` 创建目录。
+副作用：可能创建 `map_data/<map_name>` 目录。
+失败行为：文件系统权限或非法地图名导致 `OSError` 向上传播，保持原保存失败路径不吞异常。
+调用关系：called by `MappingWidget.save_map()`。
+
+### `save_root_config(file_path: str | Path, config: dict) -> Path`
+行为：把绘图模式全局配置写入项目根目录 `config.json`。
+算法：
+1. 通过 `root_config_path(file_path)` 定位项目根目录配置文件。
+2. 调用 `save_json_config()` 以 UTF-8 和 `indent=4` 写入 JSON。
+3. 返回写入路径供调用方需要时使用。
+副作用：覆盖项目根目录 `config.json`。
+失败行为：JSON 序列化或文件写入异常向上传播。
+调用关系：called by `MappingWidget.save_config()`。
+
+### `load_root_config(file_path: str | Path) -> dict | None`
+行为：读取项目根目录 `config.json`，不存在时保持旧行为直接返回空。
+算法：
+1. 通过 `root_config_path(file_path)` 定位配置文件。
+2. 若文件不存在，返回 `None`。
+3. 文件存在时调用 `load_json_config()` 读取 dict。
+副作用：读取项目根目录 `config.json`。
+失败行为：JSON 格式错误会抛出 `json.JSONDecodeError`，由 `MappingWidget.load_saved_params()` 原有 except 处理。
+调用关系：called by `MappingWidget.load_saved_params()`。
+
+### `render_global_map_pixmap(*, global_map, crop_x1: int, crop_y1: int, nav_path, current_position, draw_scale: float, player_pos=None, capture_size=None) -> QPixmap | None`
+行为：将 `MapStitcher.get_enhanced_map()` 返回的全局地图图像绘制成可显示的 Qt pixmap。
+算法：
+1. 空地图直接返回 `None`。
+2. 灰度图先转换为 BGR，彩色图复制一份，避免修改原地图数据。
+3. 若存在 `nav_path`，将全局路径点减去裁剪偏移，点数超过 1 时用黄色 polyline 绘制。
+4. 将 `current_position` 减去裁剪偏移得到当前人物场景坐标。
+5. 若 `capture_size` 和 `player_pos` 存在，用 `draw_scale` 计算小地图视野框宽高和人物在截图中的偏移，并绘制绿色矩形。
+6. 绘制当前位置绿色实心圆和红色外圈。
+7. 调用 `pixmap_from_bgr()` 转为 `QPixmap` 返回。
+副作用：无文件或 UI 副作用；只在内部副本上绘制。
+失败行为：输入图像 shape 不符合 OpenCV BGR/GRAY 预期时由 OpenCV/PySide 抛错。
+调用关系：called by `MappingWidget.update_displays()`。
+
+### `pixmap_from_bgr(image) -> QPixmap | None`
+行为：把 OpenCV BGR 图像转换为 Qt `QPixmap`。
+算法：
+1. 输入为空时返回 `None`。
+2. 用 `cv2.cvtColor(..., COLOR_BGR2RGB)` 转为 RGB。
+3. 用图像宽高和 `channels * width` 构造 `QImage`。
+4. 对 `QImage` copy 后创建 `QPixmap`，避免引用临时 numpy buffer。
+副作用：创建 Qt 图像对象。
+失败行为：非三通道 BGR 输入会由 OpenCV 或 QImage 构造抛错；当前调用方只传预处理截图或已转为 BGR 的全局图。
+调用关系：called by `MappingWidget._show_image()` and `render_global_map_pixmap()`。
+
+### `feature_params_from_widgets(*, clahe_check, deepen_check, wall_weight_spin, edge_weight_spin, gray_weight_spin, canny_low_spin, canny_high_spin) -> dict`
+行为：从绘图页 feature 控件读取 recognizer 参数 dict。
+算法：
+1. 从 CLAHE 和颜色深化复选框读取布尔值。
+2. 从墙体、边缘、灰度权重 spinbox 读取整数权重。
+3. 从 Canny low/high spinbox 读取边缘阈值。
+4. 返回字段名与原 `recognizer.set_params()` 契约一致的 dict。
+副作用：无；只读取控件。
+失败行为：控件对象缺少 `isChecked()` 或 `value()` 时向上传播 `AttributeError`。
+调用关系：called by `MappingWidget.update_feature_params()`。
+
+### `sync_recognizer_widgets(params: dict, *, clahe_check, deepen_check, wall_weight_spin, edge_weight_spin, gray_weight_spin, canny_low_spin, canny_high_spin) -> None`
+行为：将已加载 recognizer 参数按旧默认值和旧顺序写回绘图页控件。
+算法：
+1. 用 `clahe_enabled=True`、`deepen_enabled=True` 写回复选框默认值。
+2. 用 `wall_weight=50`、`edge_weight=30`、`gray_weight=20` 写回权重控件默认值。
+3. 用 `edge_low=50`、`edge_high=150` 写回 Canny 阈值控件默认值。
+4. 不阻断 Qt 信号，保留旧加载配置时可能触发 `update_feature_params()` 的副作用。
+副作用：写入 Qt 控件状态，可能触发既有信号。
+失败行为：缺少参数键时使用旧默认值；控件写入失败向上传播。
+调用关系：called by `MappingWidget.load_saved_params()`。
+
+### `apply_hsv_toggles(recognizer, wall_check, fog_check) -> None`
+行为：将绘图页 HSV 开关同步到 recognizer 运行时对象。
+算法：
+1. 读取墙体识别复选框状态并写入 `recognizer.enable_wall`。
+2. 读取迷雾识别复选框状态并写入 `recognizer.enable_fog`。
+副作用：修改 recognizer 运行时字段。
+失败行为：recognizer 或控件缺少对应属性/方法时向上传播异常。
+调用关系：called by `MappingWidget.update_hsv_params()`。
+
+### `collect_params_from_widgets(dialog) -> dict`
+行为：从高级参数弹窗全部参数控件采集 recognizer/stitcher 参数 dict。
+算法：
+1. 读取预处理控件：颜色深化、对比、蓝色增强、Gamma、Tophat、CLAHE。
+2. 读取特征控件：Canny 阈值、墙体/边缘/灰度权重。
+3. 读取透明模式和饱和度过滤控件。
+4. 若拼接器控件存在，读取 `conf_thresh/keyframe_thresh/weight_add/weight_cap`；不存在时使用旧 fallback 默认值。
+5. 返回字段名与旧 `AdvancedSettingsDialog.apply_params()` 构造的 dict 一致。
+副作用：无；只读取控件。
+失败行为：控件不存在或类型不匹配时抛出 `AttributeError`，保持旧直接访问失败路径。
+调用关系：called by `AdvancedSettingsDialog.apply_params()`。
+
+### `load_params_to_widgets(dialog, params: dict) -> None`
+行为：将当前高级参数 dict 写入弹窗控件。
+算法：
+1. 固定写入 `blur_strength_spin=3`，保持旧加载当前参数行为。
+2. 用各字段旧默认值写入预处理、特征、透明模式、饱和度过滤控件。
+3. 若拼接器控件存在，写入拼接器参数默认值。
+副作用：写入 Qt 控件状态。
+失败行为：缺失参数键使用旧默认值；控件写入异常向上传播。
+调用关系：called by `AdvancedSettingsDialog.load_current_params()`。
+
+### `apply_preset_to_widgets(dialog, preset: str) -> bool`
+行为：根据高级参数弹窗预设名称写入对应控件值。
+算法：
+1. `"默认参数"` 调用 `reset_widgets_to_default()`。
+2. `"流放之路优化"` 写入对比、蓝色增强、边缘阈值和权重预设。
+3. `"火炬之光优化"` 写入另一组对比、蓝色增强、边缘阈值和权重预设。
+4. `"高对比度模式"` / `"低对比度模式"` 只写入旧实现中的对比、蓝色增强和 CLAHE clip。
+5. 未识别预设返回 `False`，调用方当前不使用返回值。
+副作用：写入 Qt 控件状态。
+失败行为：控件缺失时抛出 `AttributeError`。
+调用关系：called by `AdvancedSettingsDialog.apply_preset()`。
+
+### `calculate_hsv_range(hsv_values) -> tuple`
+行为：根据颜色选择弹窗采样的 HSV 值计算推荐 HSV 最小/最大范围。
+算法：
+1. 将采样值列表转换为 numpy array。
+2. 沿采样点维度计算 HSV 均值和标准差。
+3. 计算容差 `maximum(std * 2, [5, 20, 20])`。
+4. 用均值减/加容差得到初始范围。
+5. 将范围 clamp 到 HSV 合法边界 `[0,0,0]` 和 `[179,255,255]`。
+6. 返回均值、int 最小 HSV、int 最大 HSV。
+副作用：无。
+失败行为：空采样列表会产生 numpy warning/NaN；调用方仍在 `calculate_hsv_ranges()` 入口检查至少有采样点。
+调用关系：called by `ColorPickerDialog._calculate_range()`。
+
+### `pixmap_from_image(image, fallback_image=None) -> QPixmap`
+行为：把颜色选择弹窗中的 OpenCV 图像转换为 Qt pixmap。
+算法：
+1. `image` 不为空时使用它，否则使用 fallback image。
+2. 灰度图按 `QImage.Format_Grayscale8` 构造。
+3. BGR 彩色图先转 RGB，再按 `QImage.Format_RGB888` 构造。
+4. 返回 `QPixmap.fromImage(q_image)`，保持旧实现未 copy 的行为。
+副作用：创建 Qt 图像对象。
+失败行为：image 和 fallback 都为空或 shape 非预期时抛出异常。
+调用关系：called by `ColorPickerDialog._show_image()`。
+
+### `draw_sample_markers(pixmap: QPixmap, *, original_width: int, original_height: int, zoom: float, wall_points, player_points) -> QPixmap`
+行为：在缩放后的颜色选择图像上绘制墙体/人物采样 marker。
+算法：
+1. 按原图宽高和 zoom 计算目标 pixmap 尺寸。
+2. 使用 `Qt.KeepAspectRatio` 和 `Qt.SmoothTransformation` 缩放。
+3. 计算缩放后显示宽高相对原图的 scale_x/scale_y。
+4. 墙体点使用蓝色 pen/brush 绘制外圈半径 5、内点半径 2。
+5. 人物点使用绿色 pen/brush 绘制同样尺寸 marker。
+6. 结束 painter 并返回缩放后的 pixmap。
+副作用：修改缩放后的 pixmap 副本。
+失败行为：原图尺寸为 0 会除零；调用方初始化时已来自截图尺寸。
+调用关系：called by `ColorPickerDialog._show_image()`。
 
 ### `NavigationModeWidget._execute_event_move_to(self, target_global_pos)`
 行为：消费事件 handler 返回的地图目标点，通过可复用路径移动器执行靠近事件的移动点击。
@@ -537,6 +913,14 @@ Level 3: navigation click path
 6. 同步调用 `AutoNavigator.configure()` 应用自动点击冷却和目标变化阈值。
 7. 用户保存时 `_save_nav_config()` 调用 `NavConfig.to_dict()` 写回地图配置文件，并再次刷新橙色框。
 
+### Flow: 绘图模式地图保存和根配置加载
+1. 用户点击绘图页保存地图时，`MappingWidget.save_map()` 读取地图名并调用 `ensure_map_folder(__file__, map_name)` 创建 `map_data/<map_name>`。
+2. `MappingWidget.save_map()` 调用 `app_context.stitcher.save_map_package(str(map_folder))` 保存地图包，保持原 `MapStitcher` 持久化路径。
+3. `build_mapping_config(app_context, fps, include_draw_scale=True)` 读取截图配置、FPS、recognizer 参数、stitcher 参数和 draw_scale。
+4. `save_map_config(map_folder, config_data)` 写入 `map_data/<map_name>/config.json`。
+5. 绘图页参数变化或区域变化触发 `MappingWidget.save_config()`，它通过 `build_mapping_config(..., include_draw_scale=False)` 构造根配置并由 `save_root_config(__file__, config)` 写入项目根目录 `config.json`。
+6. `MappingWidget.load_saved_params()` 启动时调用 `load_root_config(__file__)`；不存在时直接返回，存在时回填 `app_context`、Qt 控件和 recognizer/stitcher 参数。
+
 ### Flow: 点击半径诊断
 1. `MotionController._calculate_target_screen_position()` 记录 `raw_screen_radius` 和夹紧后的 `screen_radius`。
 2. `NavigationModeWidget.navigation_loop()` 在实际点击后追加显示 `click r:<screen_radius>/raw:<raw_screen_radius>`。
@@ -560,17 +944,19 @@ Level 3: navigation click path
 ### Flow: 事件管理 UI 和地图标记
 1. `NavigationModeWidget.load_map()` 成功后调用 `_initialize_event_system()`，读取当前地图 `event_config.json`，创建 `EventCoordinator` 和 `GameWindowCaptureProvider`。
 2. 用户点击“事件管理”按钮时，`toggle_event_dialog()` 调用 `_refresh_event_dialog()`，把 registry/config/coordinator/map_name 传给 `EventManagerDialog.set_context()`。
-3. `EventManagerDialog.refresh()` 调用 `build_tui_event_options()` 枚举完整事件包，并从 `EventCoordinator.tasks()` 读取运行时任务。
+3. `EventManagerDialog.refresh()` 调用 `build_tui_event_options()` 枚举完整事件包，并从 `EventCoordinator.tasks()` 读取运行时任务；导航循环中的实时更新改走 `refresh_tasks()`，只读取运行时任务。
 4. 用户勾选全局/单个事件时，dialog 更新 `EventSystemConfig` 内存态并发出 `config_changed`。
 5. `NavigationModeWidget._on_event_config_changed()` 将配置写回 coordinator，清空旧事件 marker，并打印事件配置日志。
 6. 用户点击“测试传送门”时，`EventManagerDialog.test_portal_requested` 触发 `NavigationModeWidget._run_portal_manual_test()`；按钮状态由 `ManualEventTestController` 同步，导航循环未运行时先启动定位循环。
-7. 导航循环定位成功后构造 `EventTick`，`EventCoordinator.update()` 检测 raw minimap 图标、合并 memory、选择任务；只有自动导航或手动事件测试开启时才推进 handler。
-8. 事件 handler 返回 `MOVE_TO` 时，`EventActionExecutor` 调用 `NavigationModeWidget._execute_event_move_to()`；该函数委托 `EventPathMover.step()` 规划事件路径和 subgoal，再由 `MotionController.move_to_map_target()` 真实点击。
-9. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；事件 path/subgoal 也会复用路线 overlay 绘制。
-10. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
+7. 用户点击“刷新传送门状态”时，`EventManagerDialog.reset_portal_requested` 触发 `NavigationModeWidget._reset_portal_event_state()`；该函数停止手动 portal 测试、调用 `EventCoordinator.reset_event_type("portal")` 清空 portal 任务/聚类/冷却状态，并刷新任务表和地图 marker。
+8. 导航循环定位成功后构造 `EventTick`，`EventCoordinator.update()` 检测 raw minimap 图标、合并 memory、把最新任务快照写入 `tick.event_tasks`、选择任务；自动导航开启或手动事件测试开启时推进 handler。
+9. 事件 handler 返回 `MOVE_TO` 时，`EventActionExecutor` 调用 `NavigationModeWidget._execute_event_move_to()`；该函数委托 `EventPathMover.step()` 规划事件路径和 subgoal，再由 `MotionController.move_to_map_target()` 真实点击。
+10. 事件 handler 返回 `COMPLETE/FAIL` 时，导航循环仍由 `EventActionExecutor` 消费终态 action，清理 event path overlay；若是手动传送门测试则自动停止测试按钮，若是自动导航则普通路线从下一帧继续。
+11. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；事件 path/subgoal 也会复用路线 overlay 绘制。
+12. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
 
 ## 7. 外部集成详情
-`main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
+`main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。管理员进程启动后会获取基于项目路径的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口；如果已有实例存在，新实例直接退出，防止多个 GUI 同时识别事件并向游戏发送移动/按键。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
 `logs/runtime.log` 每次进程启动都会重建，不再把旧会话定位刷屏追加到新会话后面；事件系统另有专用 `logs/event_runtime.log`，用于测试传送门时只看事件链路。
 
 `InputDriver.click(x, y)`：由 `MotionController._execute_click()` 的 `win32_mouse_event` 后端调用，执行 `SetCursorPos(x, y)` 后用 Win32 `mouse_event` 分开发送 left-down/left-up。该路径来自旧脚本 `t2.py` 的可用实现，当前是游戏点击主后端。
@@ -617,10 +1003,12 @@ Level 3: navigation click path
 `confirm_frames: int` - 需要连续/累计识别多少帧后进入 pending。
 `dedupe_radius: int` - memory 合并同类事件任务的半径；A1 传送门默认 32，用于把相距约 69px 的双门拆成两个任务。
 `arrival_radius: int` - 玩家距离事件点多少地图像素内开始主画面确认。
+`interact_radius: int` - 玩家距离传送门地图点多少地图像素内才进入交互阶段；事件管理页下限为 1。
+`portal_point_click_wait_ms: int` - 进入交互阶段后，先点击一次映射传送门点，再等待多少毫秒按 `D`。
 `retry_limit: int` - 失败后的重试次数。
 `cooldown_ms: int` - 完成后的同位置冷却时间。
 `cooldown_radius: int` - 完成后屏蔽附近同类传送门的地图半径，防止成对传送门来回触发。
-`exit_complete_radius: int` - 传送成功后，将角色新位置附近多少地图像素内的同类传送门标记为出口 completed。
+`exit_complete_radius: int` - 传送成功后，将角色新位置附近多少地图像素内的同类传送门标记为出口 completed；handler 也用它判断是否已落在另一个已知传送门附近。
 `type_cooldown_ms: int` - 完成后短时间屏蔽所有同类传送门新观察，用于跨门瞬间的稳定期。
 `post_interact_wait_ms: int` - 按 D/点击后等待画面稳定的最短时间。
 `teleport_timeout_ms: int` - 等待传送完成的最长时间。
@@ -641,6 +1029,8 @@ P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观�
 
 `core/motion_controller.py` still owns only map-direction to screen-click conversion. The main project backend is `win32_mouse_event`: `MotionController._send_click()` calls `InputDriver.click(x, y, button="primary", hold_seconds=0.05, move_delay=0.02)`. `pydirectinput.click(x, y)` is only used as a fallback if the primary backend raises.
 
+`MotionController.click_map_target_once()` is an event-interaction helper, not normal movement guidance. It maps the target map point to screen space with `movement_scale_factor` and `movement_max_click_radius`, but deliberately does not apply `movement_min_click_radius`; if the player and target overlap, it clicks `game_screen_center`. Portal uses this for the pre-`D` mapped portal-point click.
+
 `core/auto_navigator.py` now defaults back to planning-first guidance. User-defined guide points and exit region still define major route intent, but each segment is planned with `PathFinder` on a thinned wall map constrained by `explored_map`. Direct full-segment guidance is retained only as explicit `prefer_direct_guidance=True`; A* failure uses a short local fallback probe near the player and then re-plans. Default automatic click cadence is `auto_click_cooldown_ms=260` and `auto_min_click_target_delta=8.0`, both exposed in the navigation parameter dialog.
 
 `bottom_click_guard_pixels` protects the game's bottom UI/hotbar/chat region without changing the normal movement mapping. If a computed click lands below the safe line, `MotionController` projects that point back along the same center-to-target vector, effectively clicking slightly closer to the character in the same direction.
@@ -655,6 +1045,9 @@ The stable movement baseline is the original `pydirectinput.click(x, y)` call. D
 ### 2026-05-20 Click Diagnostics
 `MotionController._execute_click()` logs the requested coordinate, final coordinate, whether clamping changed it, `pydirectinput.size()`, pydirectinput cursor position before/after, Win32 cursor position before/after, target window information, foreground window information, current `ClipCursor` rectangle, focus HWND, and confirmation-click state. This is intended to separate coordinate mapping failures from Unreal/Windows mouse capture or "click reached the wrong window" failures during real-game testing.
 
+### Event Move Repeat Click
+`EventPathMover.step(..., force_repeat_click=True)` keeps the normal 260ms click cooldown but bypasses the "subgoal must change by 8px" gate. Portal uses it only for final approach before `interact_radius`, so repeated same-subgoal clicks continue pushing the character into the exact portal point without weakening the later `D`-press distance check.
+
 ### 2026-05-20 Standalone Input Probe
 `utils/input_probe.py` is a standalone manual probe for testing real game input before changing `MotionController`. It supports `pydi_click_xy`, `pydi_move_click`, `pydi_hold_xy`, `setcursor_pydi_click`, `setcursor_pydi_hold`, and `setcursor_win32_click`. It is diagnostic-only unless launched with `--execute`.
 
@@ -662,7 +1055,7 @@ The stable movement baseline is the original `pydirectinput.click(x, y)` call. D
 Runtime probe on the user's machine showed `pydirectinput.size() == (1707, 1067)`, `GetSystemMetrics(0/1) == (1707, 1067)`, and Qt `devicePixelRatio() == 1.5`. Therefore screenshot capture can still require physical coordinates, but `MotionController` should feed `pydirectinput` input coordinates consistently. `_clamp_screen_pos()` is now disabled by default; enabling it can still rewrite targets such as `(1987, 569)` or `(1559, 1469)` to screen-edge points, so it should only be used after the coordinate system is proven.
 
 ## 11. Event Runtime Diagnostics
-`core/events/debug.py` is the shared logging utility for the event system. It provides `event_log()`, `describe_action()`, and `describe_task()` so event modules print consistent `[Event HH:MM:SS.mmm] ...` lines instead of ad-hoc debug strings. `event_log()` writes to both the normal runtime output and the dedicated `logs/event_runtime.log`, which is the preferred file for portal/event testing.
+`core/events/debug.py` is the shared logging utility for the event system. It provides `event_log()`, `describe_action()`, and `describe_task()` so event modules print consistent `[Event HH:MM:SS.mmm pid=<pid>] ...` lines instead of ad-hoc debug strings. `event_log()` writes to both the normal runtime output and the dedicated `logs/event_runtime.log`, which is the preferred file for portal/event testing. The PID is intentionally included because multiple GUI processes can otherwise interleave event lines and make a portal bounce look like a single state-machine bug.
 
 `EventMonitor`, `EventMemory`, `EventCoordinator`, `EventRunner`, and `EventActionExecutor` now log detector initialization, observation counts, task creation/confirmation, scheduler selection, handler start, action output, action execution, completion, failure, retry, and ignored states. Repeating frame-level logs are throttled, while click/key/complete/fail actions print immediately.
 
@@ -673,7 +1066,7 @@ Runtime probe on the user's machine showed `pydirectinput.size() == (1707, 1067)
 Event detection and memory updates may run while normal navigation localization is active, but `EventCoordinator.update(..., run_handlers=False)` prevents handlers from advancing unless auto navigation or manual event test mode is enabled. This avoids a misleading state where an event task could log completion without the executor being allowed to move or click.
 
 ## 12. Event Manager UI
-`gui/dialogs/event_manager_dialog.py` is the independent event-management surface. It is intentionally package-level: the table lists complete events such as `portal`, not the internal minimap detector, main-view confirmer, or handler. The global checkbox toggles `EventSystemConfig.enabled`; each row checkbox toggles `config.events[event_type]["enabled"]`. Selecting a row renders editable controls from the event definition schema; for portal this includes `interact_radius`, which controls how close the player must be before pressing `D`.
+`gui/dialogs/event_manager_dialog.py` is the independent event-management surface. It is intentionally package-level: the table lists complete events such as `portal`, not the internal minimap detector, main-view confirmer, or handler. The global checkbox toggles `EventSystemConfig.enabled`; each row checkbox toggles `config.events[event_type]["enabled"]`. Selecting a row renders editable controls from the event definition schema; for portal this includes `interact_radius`, which controls how close the player must be before pressing `D` and can now be lowered to 1, plus `portal_point_click_wait_ms`, which controls the pause between the mapped portal-point click and pressing `D`.
 
 The runtime task table reads from `EventCoordinator.tasks()` and shows task ID, event type, state, seen count, confidence, global map position, attempts, and last-seen timestamp. This gives live feedback when a minimap icon is detected even before auto navigation executes the event.
 
@@ -683,16 +1076,20 @@ The save button writes only the current map's `event_config.json`. This keeps pe
 
 The “测试传送门” button is not a one-off movement probe. It toggles `ManualEventTestController`, enables handler execution in the normal navigation loop, and runs the same portal `detect -> localize -> schedule -> MOVE_TO -> PRESS_KEY -> COMPLETE/FAIL` pipeline used by automatic navigation. The button text changes to “停止传送门测试” while that pipeline is active.
 
+The “刷新传送门状态” button is a runtime-only reset for repeated portal testing. It clears current `portal` tasks, completed/ignored cooldown state, and portal localization clusters through `EventCoordinator.reset_event_type("portal")`; it does not edit the event configuration file or disable portal detection.
+
 ## 13. Portal Event Current Behavior
 The current portal event is minimap-first. `PortalMinimapDetector` detects the portal icon in the raw minimap frame with multi-template/multi-scale matching, then rejects a hit unless the matched patch contains enough blue/cyan portal-icon pixels. The detector now emits only `EventDetection` local minimap candidates; it never creates a trusted global coordinate.
 
 `NavigationCore.localize()` stores `last_frame_registration` whenever player localization succeeds. `EventCoordinator` passes local detections and that registration to `EventPositionStabilizer`, which projects each candidate with `frame_origin_global + local_minimap_pos * draw_scale`, clusters samples by event type and map distance, and emits an `EventObservation` only after `stable_frames` samples stay within `stable_variance`. `EventMemory` only creates/updates tasks from these stable global observations.
 
-When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. `MOVE_TO` is executed through `EventPathMover`, which uses A* where available and short local fallback probes instead of direct long-line clicks. With default `interaction="key"`, the handler then sends `D` through `MotionController.press_key()` and enters `wait_result`; it does not require main-view blue-glow confirmation. With `interaction="click"`, it uses `PortalMainViewConfirmer` to find the blue/purple portal entity in the game window and clicks its screen center.
+When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. `MOVE_TO` is executed through `EventPathMover`, which uses A* where available and short local fallback probes instead of direct long-line clicks. During the final approach where `distance > interact_radius`, the handler marks the action with `metadata.force_repeat_click=True`; `EventPathMover.step()` then allows another real click after the normal click cooldown even if the subgoal has not changed, preventing a near-target stall such as staying 7px away from a 1px interaction radius. Once the player is within `interact_radius`, the handler first emits one forced mapped portal-point click (`metadata.force_click_target=True`), waits `portal_point_click_wait_ms`, then sends `D` through `MotionController.press_key()` and enters `wait_result`. The forced click goes through `MotionController.click_map_target_once()` so it targets the mapped portal point rather than using movement minimum radius. With `interaction="click"`, it uses `PortalMainViewConfirmer` to find the blue/purple portal entity in the game window and clicks its screen center.
 
-After interaction, completion is not a fixed timer. The handler waits at least `post_interact_wait_ms`, then marks the task complete only if the player's global position changes by at least `teleport_min_distance` or the raw minimap patch around the player differs from the pre-interaction patch by at least `environment_change_threshold`. If neither happens before `teleport_timeout_ms`, the task fails and may retry.
+After interaction, completion is not a fixed timer. The handler waits at least `post_interact_wait_ms`, then returns a teleport completion if the player's global position changes by at least `teleport_min_distance`, if the raw minimap patch around the player differs from the pre-interaction patch by at least `environment_change_threshold`, or if the player has landed within `exit_complete_radius` of another active known portal task and is clearly closer to that task than to the entry portal. The last branch is required for close paired portals where the real teleport distance can be far below `teleport_min_distance`. If none of these checks pass before `teleport_timeout_ms`, the task fails and may retry.
 
-To prevent paired nearby portals from bouncing the character back, `EventMemory` uses `cooldown_radius` for completed or ignored portal observations and `type_cooldown_ms` as a short global same-type cooldown. When a portal task completes, `EventRunner` also calls `suppress_nearby_pending()` so already-created nearby portal tasks are marked ignored with a cooldown timestamp. Cooldown skips are logged with the matched task, cooldown kind, remaining time, and position distance when relevant.
+To prevent paired nearby portals from bouncing the character back, `PortalEventHandler` includes `completion_kind="teleport"`, `entry_task_id`, `entry_pos`, and `exit_pos` metadata in the COMPLETE action. `EventRunner` passes that to `EventMemory.complete_teleport_session()`, which creates a `teleport_session_id`, marks the interacted portal as the entry, finds an already-known portal task near the post-teleport player position as the exit, and marks both as completed. If no exit task exists, memory creates a synthetic completed exit task at the post-teleport player position so independent-map teleports still close the session. `EventRunner` refuses to start or continue tasks that are already `completed` or `ignored`, which protects the lifecycle boundary if a caller accidentally passes a terminal task back into the runner.
+
+Cooldown still remains as a secondary guard: `EventMemory` uses `cooldown_radius` for completed or ignored portal observations and `type_cooldown_ms` as a short global same-type cooldown. When a teleport session completes, `EventMemory.complete_teleport_session()` suppresses nearby active tasks around both entry and exit, so future minimap observations of the same portal pair are skipped rather than scheduled again. Cooldown skips are logged with the matched task, cooldown kind, remaining time, and position distance when relevant.
 
 ## 14. Event Localization Contract
 `core/events/models.py::FrameRegistration` records the wall-registration result for one minimap frame: validity, confidence, global origin of the raw minimap frame, draw scale, player global position, player local minimap position, source (`f2f` or `template_match`), frame size, and debug metadata.
@@ -701,4 +1098,39 @@ To prevent paired nearby portals from bouncing the character back, `EventMemory`
 
 `core/events/models.py::EventObservation` is stable/global: event type, confidence, observation time, global map position, optional latest local minimap position, source, sample count, variance, and stabilization metadata. `EventMemory.merge_observations()` treats this as already localized and stable.
 
+`core/events/models.py::EventTick.event_tasks` is a runtime memory snapshot, not detector output. `build_event_tick()` leaves it empty; `EventCoordinator.update()` fills it after `EventMemory.merge_observations()`. Handlers use this to compare against already-known tasks without importing memory or scheduler internals.
+
 `core/events/position_stabilizer.py::EventPositionStabilizer.update()` is the shared localization stage for all future event types. It rejects detections when no valid frame registration exists, projects candidates through the same wall alignment used for player localization, clusters nearby samples, expires stale clusters, and emits stable observations only after the configured sample and variance gates pass.
+
+## 15. Structural Audit Snapshot
+`gui/modes/navigation_mode.py` is the current highest-risk responsibility hotspot. It owns the navigation page UI, signal wiring, route persistence commands, route overlay drawing, event overlay drawing, map loading, event config bridge, event tick creation, event action callbacks, capture geometry, debug overlay window updates, input-window topmost/lower behavior, calibration, click-mode state, and the navigation loop. The stable external entry remains `gui.modes.navigation_mode.NavigationModeWidget`; refactors should keep this module as a facade/re-export while moving behavior into `gui/modes/navigation/*`.
+
+After the first split, route/event QGraphics overlay item construction lives in `gui/modes/navigation/route_overlay.py` and `gui/modes/navigation/event_overlay.py`. `NavigationModeWidget` still owns when overlays refresh and still exposes the original private methods, but no longer contains the long per-item drawing loops for route and event markers.
+
+After the second split, `gui/modes/navigation/event_adapter.py` owns event registry bootstrapping, config summary strings, default game-window lookup, `EventTick` construction, event-action control checks, terminal event-action checks, and coordinator status text. `NavigationModeWidget` still owns when to initialize the event system, when to call coordinator updates, and how to respond with UI/input side effects.
+
+After the third split, `gui/modes/navigation/map_runtime.py` owns project/map path resolution, map-name listing, `NavConfig` JSON load/save, logical-to-physical center conversion, and capture geometry calculation. `NavigationModeWidget` still owns user feedback, `NavigationCore` construction, button enabling, and applying loaded config to runtime services.
+
+After the fourth split, `gui/modes/navigation/viewport_overlay.py` owns screen overlay geometry, monitor green-rectangle geometry, and game-view orange-rectangle geometry. `NavigationModeWidget` still owns actual Qt item creation and visibility updates.
+
+After the fifth split, `gui/modes/mapping/save_load.py` owns mapping project-root resolution, `map_data` folder creation, root/map `config.json` read/write, and mapping config dict construction. `MappingWidget` still owns dialogs, UI control synchronization, `stitcher.save_map_package()`, recognizer/stitcher parameter application, live capture, rendering orchestration, and topmost state.
+
+After the sixth split, `gui/modes/mapping/map_renderer.py` owns BGR-to-QPixmap conversion, enhanced-map fallback unpacking, global map coloring, path polyline drawing, green viewport rectangle drawing, and current-position marker drawing. `MappingWidget` still decides when to fetch maps from stitcher and when to set Qt widgets.
+
+After the seventh split, `gui/modes/mapping/params_adapter.py` owns feature-parameter dict construction, HSV toggle application, merge-weight application, and loaded recognizer/stitcher parameter widget sync. `MappingWidget` still decides when to apply runtime params and when to persist config, preserving old side-effect order.
+
+`gui/modes/mapping_widget.py` remains the second GUI page hotspot. It owns capture-region selection, center-point selection, live capture, player fallback detection, recognizer/stitcher frame calls, path preview on map click, advanced settings dialog orchestration, and topmost state. The next mapping split should target capture-region/center-selection geometry or capture loop orchestration only if small checks can cover it.
+
+Dialog hotspots are `gui/dialogs/advanced_settings_dialog.py`, `gui/dialogs/nav_params_dialog.py`, and `gui/dialogs/color_picker_dialog.py`. `AdvancedSettingsDialog` combines tab construction, presets, file IO, runtime recognizer/stitcher application, and default parameter dictionaries. `NavParametersDialog` combines large widget construction, field mapping, config mutation, screen-bound radius estimation, and UI synchronization. `ColorPickerDialog` combines color sampling, HSV range calculation, preview rendering, marker drawing, and debug file output. These are mostly low-to-medium risk because they can be split behind unchanged dialog classes.
+
+After the eighth split, `gui/dialogs/advanced_settings/params_adapter.py` owns advanced-settings widget-to-dict collection, current-param widget loading, default reset values, loaded-param widget sync, and preset widget writes. `AdvancedSettingsDialog` still owns tab layout, file dialogs, JSON save/load, status labels, print messages, and recognizer/stitcher application timing.
+
+After the ninth split, `gui/dialogs/color_picker/hsv_ranges.py` owns HSV conversion/sample/range math and saturation averaging, while `gui/dialogs/color_picker/image_renderer.py` owns OpenCV-to-QPixmap conversion and sample marker drawing. `ColorPickerDialog` still owns point collection, preview mask generation, morphology, debug file output, result text, and accept/reject flow.
+
+Core hotspots are algorithmically sensitive and should be split later. `core/stitcher_core.py` mixes registration, keyframe policy, weighted fusion, map package persistence, statistics, and display-map generation. `core/navigation_core.py` mixes map package loading, F2F tracking, template relocalization, frame-registration contract creation, and display-map rendering. `core/auto_navigator.py` is a large but cohesive state machine; route-progress helpers and fallback probe helpers are reusable candidates, but the state transitions should not be moved until covered by targeted import/behavior checks. `core/motion_controller.py` is the input-control boundary and combines map-to-screen conversion, bottom-click guard, Win32 backend access, pydirectinput fallback, keyboard presses, and click diagnostics.
+
+The event system has comparatively clear module boundaries: `EventCoordinator` orchestrates, `EventMonitor` runs detectors, `EventPositionStabilizer` localizes detections, `EventMemory` owns task lifecycle/cooldown, `EventScheduler` selects work, `EventRunner` owns handler lifecycle, and `EventActionExecutor` bridges actions to GUI-owned callbacks. The main unclear boundary is currently in `NavigationModeWidget`, which still builds `EventTick`, executes event MOVE_TO through GUI state, and draws event overlays.
+
+Reusable capabilities already present: `EventPathMover` is reusable A* lookahead movement for event actions; `path_utils` is reusable route math; `core/events/detectors/template_matcher.py` is reusable template matching; `core/events/window_finder.py` and `core/input_driver.py` are reusable Windows input/window primitives; `NavConfig` and `EventSystemConfig` are separate runtime configuration contracts. Reusable capabilities now extracted from GUI include route overlay rendering, event overlay rendering, navigation capture geometry, navigation viewport geometry, mapping save/load config IO, mapping display rendering, mapping parameter control adapters, advanced-settings parameter mapping, color-picker HSV range math, and color-picker image marker rendering. Reusable capabilities still trapped in GUI include nav-params dialog field mapping and mapping capture-loop orchestration.
+
+Recommended refactor order is: first split navigation GUI helpers with compatibility imports; then split mapping save/load/render helpers; then split dialog schema/helper modules; then isolate motion input backend/diagnostics; then split core navigation/stitching algorithms only after the GUI layer no longer obscures call sites.

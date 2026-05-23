@@ -55,6 +55,23 @@ class EventPositionStabilizer:
         self._clusters: list[_PositionCluster] = []
         self._last_log_ms: dict[str, int] = {}
 
+    def clear_event_type(self, event_type: str, now_ms: int | None = None) -> int:
+        before = len(self._clusters)
+        self._clusters = [cluster for cluster in self._clusters if cluster.event_type != event_type]
+        removed = before - len(self._clusters)
+        self._last_log_ms = {
+            key: value
+            for key, value in self._last_log_ms.items()
+            if f":{event_type}" not in key
+        }
+        event_log(
+            "event localization clusters cleared",
+            event=event_type,
+            removed=removed,
+            now_ms=int(now_ms or 0),
+        )
+        return removed
+
     def update(
         self,
         detections: Iterable[EventDetection],

@@ -48,6 +48,7 @@ class EventTick:
     map_name: str = ""
     capture_provider: Any = None
     frame_registration: FrameRegistration | None = None
+    event_tasks: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -131,8 +132,18 @@ class EventAction:
         return cls(type=EventActionType.NONE, reason=reason)
 
     @classmethod
-    def move_to(cls, target_global_pos: tuple[int, int], reason: str = "") -> "EventAction":
-        return cls(type=EventActionType.MOVE_TO, target_global_pos=(int(target_global_pos[0]), int(target_global_pos[1])), reason=reason)
+    def move_to(
+        cls,
+        target_global_pos: tuple[int, int],
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> "EventAction":
+        return cls(
+            type=EventActionType.MOVE_TO,
+            target_global_pos=(int(target_global_pos[0]), int(target_global_pos[1])),
+            reason=reason,
+            metadata=dict(metadata or {}),
+        )
 
     @classmethod
     def click_screen(cls, screen_pos: tuple[int, int], reason: str = "") -> "EventAction":

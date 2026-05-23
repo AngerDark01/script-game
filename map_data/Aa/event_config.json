@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "profile": "default",
+  "events": {
+    "portal": {
+      "enabled": true,
+      "priority": 100,
+      "interaction": "key",
+      "minimap_threshold": 0.74,
+      "max_candidates": 2,
+      "min_blue_ratio": 0.08,
+      "stable_frames": 3,
+      "localization_cluster_radius": 56,
+      "stable_variance": 1600,
+      "dedupe_radius": 32,
+      "localization_max_samples": 12,
+      "localization_cluster_ttl_ms": 12000,
+      "memory_confirm_frames": 1,
+      "arrival_radius": 80,
+      "interact_radius": 6,
+      "retry_limit": 2,
+      "cooldown_ms": 120000,
+      "cooldown_radius": 260,
+      "exit_complete_radius": 120,
+      "type_cooldown_ms": 10000,
+      "portal_point_click_wait_ms": 350,
+      "post_interact_wait_ms": 800,
+      "teleport_timeout_ms": 6000,
+      "teleport_min_distance": 180,
+      "environment_change_threshold": 0.18
+    }
+  }
+}

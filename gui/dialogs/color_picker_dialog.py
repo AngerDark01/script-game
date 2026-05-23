@@ -10,10 +10,17 @@ from PySide6.QtWidgets import (
     QLabel, QGroupBox, QTextEdit, QScrollArea, QSlider
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QImage, QPixmap, QMouseEvent, QPainter, QColor, QPen
+from PySide6.QtGui import QMouseEvent
 
 from core.recognizer_optimized import HSVRecognizer
 from ..widgets.clickable_label import ClickableImageLabel
+from .color_picker.hsv_ranges import (
+    bgr_to_hsv,
+    calculate_hsv_range,
+    hsv_values_at_points,
+    mean_saturation,
+)
+from .color_picker.image_renderer import draw_sample_markers, pixmap_from_image
 
 
 class ColorPickerDialog(QDialog):
@@ -241,15 +248,15 @@ class ColorPickerDialog(QDialog):
         self.result_text.append("[ZOOM] 开始计算HSV范围...")
         
         # 转HSV (使用预处理后的图像)
-        hsv = cv2.cvtColor(self.processed_screenshot, cv2.COLOR_BGR2HSV)
+        hsv = bgr_to_hsv(self.processed_screenshot)
         
         # 计算墙体HSV范围
         if len(self.wall_points) > 0:
-            wall_hsv_values = [hsv[y, x] for x, y in self.wall_points]
+            wall_hsv_values = hsv_values_at_points(hsv, self.wall_points)
             self.wall_hsv_range = self._calculate_range(wall_hsv_values, "墙体")
             
             # 智能检测：如果墙体饱和度较高，建议关闭饱和度过滤
-            mean_s = np.mean([v[1] for v in wall_hsv_values])
+            mean_s = mean_saturation(wall_hsv_values)
             if mean_s > 30:
                 self.recommend_sat_filter_off = True
                 self.result_text.append("\n⚠️ 检测到墙体饱和度较高（彩色墙体）")
@@ -260,7 +267,7 @@ class ColorPickerDialog(QDialog):
         
         # 计算人物HSV范围
         if len(self.player_points) > 0:
-            player_hsv_values = [hsv[y, x] for x, y in self.player_points]
+            player_hsv_values = hsv_values_at_points(hsv, self.player_points)
             self.player_hsv_range = self._calculate_range(player_hsv_values, "人物")
         
         # 更新预览
@@ -282,25 +289,14 @@ class ColorPickerDialog(QDialog):
         Returns:
             (min_hsv, max_hsv)
         """
-        hsv_array = np.array(hsv_values)
-        
-        # 计算均值和标准差
-        mean_hsv = np.mean(hsv_array, axis=0)
-        std_hsv = np.std(hsv_array, axis=0)
-        
-        # 设置容差（2倍标准差，至少保留一定范围）
-        tolerance = np.maximum(std_hsv * 2, [5, 20, 20])
-        
-        # 计算范围
-        min_hsv = np.maximum(mean_hsv - tolerance, [0, 0, 0])
-        max_hsv = np.minimum(mean_hsv + tolerance, [179, 255, 255])
+        mean_hsv, min_hsv, max_hsv = calculate_hsv_range(hsv_values)
         
         # 显示结果
         self.result_text.append(f"\n📊 {label}颜色（采样{len(hsv_values)}点）：")
         self.result_text.append(f"  均值: {mean_hsv.astype(int)}")
         self.result_text.append(f"  范围: {min_hsv.astype(int)} ~ {max_hsv.astype(int)}")
         
-        return (min_hsv.astype(int), max_hsv.astype(int))
+        return (min_hsv, max_hsv)
     
     def update_preview(self):
         """更新预览"""
@@ -396,57 +392,17 @@ class ColorPickerDialog(QDialog):
     
     def _show_image(self, label, img):
         """在QLabel上显示OpenCV图像"""
-        if img is not None:
-            if len(img.shape) == 2:
-                h, w = img.shape
-                q_img = QImage(img.data, w, h, w, QImage.Format_Grayscale8)
-            else:
-                rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb.shape
-                bytes_per_line = ch * w
-                q_img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(q_img)
-        else:
-            rgb = cv2.cvtColor(self.screenshot, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb.shape
-            bytes_per_line = ch * w
-            q_img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(q_img)
+        pixmap = pixmap_from_image(img, fallback_image=self.screenshot)
         
         if isinstance(label, ClickableImageLabel):
-            target_w = int(self.original_width * self.zoom)
-            target_h = int(self.original_height * self.zoom)
-            scaled_pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            # 在缩放后的pixmap上绘制标记（固定屏幕大小）
-            painter = QPainter(scaled_pixmap)
-            pen_wall = QPen(QColor(52, 152, 219), 2)   # 蓝色
-            pen_player = QPen(QColor(46, 204, 113), 2) # 绿色
-            radius_outer = 5
-            radius_inner = 2
-            # 计算坐标缩放
-            disp_w = scaled_pixmap.width()
-            disp_h = scaled_pixmap.height()
-            scale_x = disp_w / self.original_width
-            scale_y = disp_h / self.original_height
-            # 绘制墙体标记
-            painter.setPen(pen_wall)
-            for x, y in self.wall_points:
-                dx = int(x * scale_x)
-                dy = int(y * scale_y)
-                painter.drawEllipse(dx - radius_outer, dy - radius_outer, radius_outer*2, radius_outer*2)
-                painter.setBrush(QColor(52, 152, 219))
-                painter.drawEllipse(dx - radius_inner, dy - radius_inner, radius_inner*2, radius_inner*2)
-                painter.setBrush(Qt.NoBrush)
-            # 绘制人物标记
-            painter.setPen(pen_player)
-            for x, y in self.player_points:
-                dx = int(x * scale_x)
-                dy = int(y * scale_y)
-                painter.drawEllipse(dx - radius_outer, dy - radius_outer, radius_outer*2, radius_outer*2)
-                painter.setBrush(QColor(46, 204, 113))
-                painter.drawEllipse(dx - radius_inner, dy - radius_inner, radius_inner*2, radius_inner*2)
-                painter.setBrush(Qt.NoBrush)
-            painter.end()
+            scaled_pixmap = draw_sample_markers(
+                pixmap,
+                original_width=self.original_width,
+                original_height=self.original_height,
+                zoom=self.zoom,
+                wall_points=self.wall_points,
+                player_points=self.player_points,
+            )
             label.setPixmap(scaled_pixmap)
             label.setFixedSize(scaled_pixmap.size())
             label.set_displayed_size(scaled_pixmap.width(), scaled_pixmap.height())
