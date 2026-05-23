@@ -21,10 +21,10 @@ class PortalEventConfig:
     arrival_radius: int = 80
     interact_radius: int = 36
     retry_limit: int = 2
-    cooldown_ms: int = 15000
+    cooldown_ms: int = 120000
     cooldown_radius: int = 260
     exit_complete_radius: int = 120
-    type_cooldown_ms: int = 6000
+    type_cooldown_ms: int = 10000
     click_wait_ms: int = 1200
     confirm_timeout_ms: int = 2500
     post_interact_wait_ms: int = 800
@@ -52,10 +52,10 @@ class PortalEventConfig:
             arrival_radius=int(values.get("arrival_radius", 80)),
             interact_radius=int(values.get("interact_radius", 36)),
             retry_limit=int(values.get("retry_limit", 2)),
-            cooldown_ms=int(values.get("cooldown_ms", 15000)),
+            cooldown_ms=int(values.get("cooldown_ms", 120000)),
             cooldown_radius=int(values.get("cooldown_radius", 260)),
             exit_complete_radius=int(values.get("exit_complete_radius", 120)),
-            type_cooldown_ms=int(values.get("type_cooldown_ms", 6000)),
+            type_cooldown_ms=int(values.get("type_cooldown_ms", 10000)),
             click_wait_ms=int(values.get("click_wait_ms", 1200)),
             confirm_timeout_ms=int(values.get("confirm_timeout_ms", 2500)),
             post_interact_wait_ms=int(values.get("post_interact_wait_ms", 800)),

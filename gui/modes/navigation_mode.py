@@ -21,13 +21,6 @@ from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QPain
 from core.auto_navigator import AutoNavigator
 from core.navigation_core import NavigationCore
 from core.motion_controller import MotionController
-from core.path_utils import (
-    build_cumulative_lengths,
-    interpolate_by_distance,
-    point_distance,
-    project_point_onto_path,
-    remove_collinear_points,
-)
 from core.route_manager import RouteManager
 from core.events.debug import event_log
 from core.events.action_executor import EventActionExecutor
@@ -35,6 +28,7 @@ from core.events.capture_provider import GameWindowCaptureProvider
 from core.events.config import load_event_config, save_event_config
 from core.events.coordinator import EventCoordinator
 from core.events.models import EventActionType, EventTick
+from core.events.path_mover import EventPathMover
 from core.events.registry import EventRegistry
 from core.events.types.portal import PortalEventDefinition
 from core.events.window_finder import find_game_window
@@ -43,6 +37,7 @@ from ..selection.center_selector import CenterPointSelector
 from ..dialogs.event_manager_dialog import EventManagerDialog
 from ..dialogs.nav_params_dialog import NavParametersDialog
 from ..navigation_params import NavConfig
+from .event_test_controller import ManualEventTestController
 
 class NavigationModeWidget(QWidget):
     """
@@ -123,16 +118,12 @@ class NavigationModeWidget(QWidget):
         )
         self.event_capture_provider = None
         self.event_overlay_items = []
-        self._event_move_path = []
-        self._event_move_path_lengths = []
-        self._event_move_target = None
-        self._event_move_subgoal = None
-        self._event_move_path_kind = "none"
-        self._event_move_last_plan_ms = 0
-        self._event_move_last_click_ms = 0
-        self._event_move_last_click_target = None
-        self._event_move_probe_index = 0
-        self._portal_manual_test_active = False
+        self.event_path_mover = EventPathMover()
+        self.portal_test_controller = ManualEventTestController(
+            self.event_dialog.test_portal_button,
+            "测试传送门",
+            "停止传送门测试",
+        )
 
     def init_ui(self):
         """
@@ -851,15 +842,7 @@ class NavigationModeWidget(QWidget):
         )
 
     def _reset_event_move_runtime(self):
-        self._event_move_path = []
-        self._event_move_path_lengths = []
-        self._event_move_target = None
-        self._event_move_subgoal = None
-        self._event_move_path_kind = "none"
-        self._event_move_last_plan_ms = 0
-        self._event_move_last_click_ms = 0
-        self._event_move_last_click_target = None
-        self._event_move_probe_index = 0
+        self.event_path_mover.reset()
 
     def _event_move_lookahead_distance(self) -> float:
         capture_width = 0
@@ -869,96 +852,6 @@ class NavigationModeWidget(QWidget):
         if capture_width <= 0:
             return 72.0
         return max(36.0, min(float(capture_width) * draw_scale * 0.18, 120.0))
-
-    def _event_move_local_probe(self, current_pos, target_global_pos):
-        distance = point_distance(current_pos, target_global_pos)
-        if distance <= 1e-6:
-            return (float(target_global_pos[0]), float(target_global_pos[1]))
-
-        dx = float(target_global_pos[0]) - float(current_pos[0])
-        dy = float(target_global_pos[1]) - float(current_pos[1])
-        ux = dx / distance
-        uy = dy / distance
-        px = -uy
-        py = ux
-        side_pattern = (0.0, -1.0, 1.0)
-        side = side_pattern[self._event_move_probe_index % len(side_pattern)]
-        self._event_move_probe_index += 1
-        forward = min(distance, 84.0)
-        lateral = 44.0 if side else 0.0
-        return (
-            float(current_pos[0]) + ux * forward + px * side * lateral,
-            float(current_pos[1]) + uy * forward + py * side * lateral,
-        )
-
-    def _plan_event_move_path(self, current_pos, target_global_pos):
-        current = (int(round(current_pos[0])), int(round(current_pos[1])))
-        target = (int(round(target_global_pos[0])), int(round(target_global_pos[1])))
-        raw_path = None
-        wall_map = self.nav_core.wall_layer if self.nav_core else None
-        pathfinder = getattr(self.app_context, "path_finder", None)
-        explored_map = getattr(self.nav_core, "explored_map", None) if self.nav_core else None
-        if wall_map is not None and pathfinder is not None:
-            raw_path = pathfinder.find_path(
-                wall_map,
-                current,
-                target,
-                explored_map=explored_map,
-            )
-
-        if raw_path:
-            path = [tuple(map(float, point)) for point in remove_collinear_points(raw_path)]
-            if len(path) == 1:
-                path.append((float(target_global_pos[0]), float(target_global_pos[1])))
-            return path, build_cumulative_lengths(path), "planned"
-
-        probe = self._event_move_local_probe(current_pos, target_global_pos)
-        path = [
-            (float(current_pos[0]), float(current_pos[1])),
-            (float(probe[0]), float(probe[1])),
-        ]
-        return path, build_cumulative_lengths(path), "fallback"
-
-    def _ensure_event_move_path(self, current_pos, target_global_pos, now_ms: int):
-        target = (float(target_global_pos[0]), float(target_global_pos[1]))
-        needs_plan = False
-        target_changed = (
-            self._event_move_target is None
-            or point_distance(self._event_move_target, target) > 12.0
-        )
-        if target_changed or not self._event_move_path or len(self._event_move_path) < 2:
-            needs_plan = True
-        else:
-            projection = project_point_onto_path(
-                current_pos,
-                self._event_move_path,
-                self._event_move_path_lengths,
-            )
-            if projection is None or float(projection["distance_to_path"]) > 96.0:
-                needs_plan = True
-            elif self._event_move_path_kind == "fallback" and now_ms - self._event_move_last_plan_ms >= 650:
-                needs_plan = True
-
-        if not needs_plan:
-            return
-
-        if not target_changed and self._event_move_last_plan_ms and now_ms - self._event_move_last_plan_ms < 280:
-            return
-
-        path, lengths, path_kind = self._plan_event_move_path(current_pos, target)
-        self._event_move_path = path
-        self._event_move_path_lengths = lengths
-        self._event_move_target = target
-        self._event_move_path_kind = path_kind
-        self._event_move_last_plan_ms = int(now_ms)
-        self._event_move_subgoal = None
-        event_log(
-            "event path planned",
-            target=(int(round(target[0])), int(round(target[1]))),
-            path_kind=path_kind,
-            path_points=len(path),
-            player=(int(round(current_pos[0])), int(round(current_pos[1]))),
-        )
 
     def _execute_event_move_to(self, target_global_pos):
         if not self.nav_core or not self.nav_core.current_pos or not target_global_pos:
@@ -982,67 +875,26 @@ class NavigationModeWidget(QWidget):
         now_ms = int(time.monotonic() * 1000.0)
         self._set_game_input_window_mode(True)
         self.motion_controller.set_control_enabled(True)
-        self._ensure_event_move_path(current_pos, target, now_ms)
-        if not self._event_move_path or len(self._event_move_path) < 2:
-            event_log(
-                "event move path unavailable",
-                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
-                target=(int(round(target[0])), int(round(target[1]))),
-            )
+        move_step = self.event_path_mover.step(
+            current_pos=current_pos,
+            target_pos=target,
+            wall_map=self.nav_core.wall_layer,
+            pathfinder=getattr(self.app_context, "path_finder", None),
+            explored_map=getattr(self.nav_core, "explored_map", None),
+            now_ms=now_ms,
+            lookahead_distance=self._event_move_lookahead_distance(),
+        )
+        if not move_step or not move_step.should_click or not move_step.subgoal:
             return None
 
-        projection = project_point_onto_path(
-            current_pos,
-            self._event_move_path,
-            self._event_move_path_lengths,
-        )
-        if projection is None:
-            self._event_move_last_plan_ms = 0
-            event_log(
-                "event move projection failed",
-                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
-                target=(int(round(target[0])), int(round(target[1]))),
-            )
-            return None
-
-        subgoal = interpolate_by_distance(
-            self._event_move_path,
-            self._event_move_path_lengths,
-            float(projection["distance"]) + self._event_move_lookahead_distance(),
-        )
-        if subgoal is None:
-            subgoal = self._event_move_path[-1]
-        self._event_move_subgoal = (float(subgoal[0]), float(subgoal[1]))
-
-        deviation = float(projection["distance_to_path"])
-        target_delta = (
-            float("inf")
-            if self._event_move_last_click_target is None
-            else point_distance(self._event_move_last_click_target, self._event_move_subgoal)
-        )
-        should_click = (
-            self._event_move_last_click_ms == 0
-            or now_ms - self._event_move_last_click_ms >= 260
-        ) and (
-            self._event_move_last_click_target is None
-            or target_delta >= 8.0
-            or deviation >= 48.0
-        )
-        if not should_click:
-            return None
-
-        click_info = self.motion_controller.move_to_map_target(current_pos, self._event_move_subgoal)
+        click_info = self.motion_controller.move_to_map_target(current_pos, move_step.subgoal)
         if click_info:
-            self._event_move_last_click_ms = int(now_ms)
-            self._event_move_last_click_target = self._event_move_subgoal
-            event_log(
-                "event move click",
-                player=(int(round(current_pos[0])), int(round(current_pos[1]))),
-                target=(int(round(target[0])), int(round(target[1]))),
-                subgoal=(int(round(self._event_move_subgoal[0])), int(round(self._event_move_subgoal[1]))),
-                path_kind=self._event_move_path_kind,
-                deviation=round(deviation, 2),
-                path_points=len(self._event_move_path),
+            self.event_path_mover.record_click(
+                now_ms=now_ms,
+                current_pos=current_pos,
+                target_pos=target,
+                subgoal=move_step.subgoal,
+                deviation=move_step.deviation,
             )
         return click_info
 
@@ -1063,66 +915,42 @@ class NavigationModeWidget(QWidget):
         self.motion_controller.press_key(key, reason="event_key")
 
     def _run_portal_manual_test(self):
-        if self._portal_manual_test_active:
+        if self.portal_test_controller.active:
             self._set_portal_manual_test_active(False, reason="button stop")
             return
 
         if not self.event_coordinator or not self.nav_core:
-            self._set_event_test_button_checked(False)
+            self.portal_test_controller.reset_button()
             QMessageBox.warning(self, "事件管理", "请先加载地图并初始化事件系统。")
             return
         if not self.nav_config.game_screen_center:
-            self._set_event_test_button_checked(False)
+            self.portal_test_controller.reset_button()
             QMessageBox.warning(self, "事件管理", "请先校准屏幕中心。")
             return
         if not self.nav_timer.isActive():
             self.btn_start.setChecked(True)
             self.toggle_navigation()
             if not self.nav_timer.isActive():
-                self._set_event_test_button_checked(False)
+                self.portal_test_controller.reset_button()
                 return
 
         self._set_portal_manual_test_active(True, reason="button start")
 
-    def _set_event_test_button_checked(self, checked: bool) -> None:
-        button = getattr(self.event_dialog, "test_portal_button", None)
-        if button is not None and button.isChecked() != checked:
-            button.setChecked(checked)
-
     def _set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
-        self._portal_manual_test_active = bool(active)
-        self._set_event_test_button_checked(bool(active))
-        button = getattr(self.event_dialog, "test_portal_button", None)
-        if button is not None:
-            button.setText("停止传送门测试" if active else "测试传送门")
         if active:
+            self.portal_test_controller.start()
             self._set_game_input_window_mode(True)
             self.motion_controller.set_control_enabled(True)
             event_log("portal manual event test started", reason=reason)
             self.status_label.setText("传送门测试已启动：使用正式事件流程执行")
             return
 
+        self.portal_test_controller.stop()
         self._reset_event_move_runtime()
         if not self.auto_navigation_enabled:
             self._set_game_input_window_mode(False)
         event_log("portal manual event test stopped", reason=reason)
         self.status_label.setText("传送门测试已停止")
-
-    def _nearest_portal_task(self):
-        if not self.event_coordinator or not self.nav_core or not self.nav_core.current_pos:
-            return None
-        player_pos = self.nav_core.current_pos
-        portal_tasks = [
-            task
-            for task in self.event_coordinator.tasks()
-            if task.event_type == "portal" and getattr(task.state, "value", str(task.state)) in {"observed", "pending", "running"}
-        ]
-        if not portal_tasks:
-            return None
-        return min(
-            portal_tasks,
-            key=lambda task: float(np.hypot(task.global_pos[0] - player_pos[0], task.global_pos[1] - player_pos[1])),
-        )
 
     def _render_map(self):
         """
@@ -1841,7 +1669,7 @@ class NavigationModeWidget(QWidget):
             if self.nav_core:
                 self.nav_core.is_first_frame_localized = False
             self.auto_navigation_enabled = False
-            if self._portal_manual_test_active:
+            if self.portal_test_controller.active:
                 self._set_portal_manual_test_active(False, reason="navigation stopped")
             self.auto_navigator.stop()
             self._set_game_input_window_mode(False)
@@ -1891,7 +1719,7 @@ class NavigationModeWidget(QWidget):
         localized_pos = None if global_x is None or global_y is None else (global_x, global_y)
         auto_action = None
         event_action = None
-        event_run_enabled = bool(self.auto_navigation_enabled or self._portal_manual_test_active)
+        event_run_enabled = bool(self.auto_navigation_enabled or self.portal_test_controller.active)
 
         if self.event_coordinator and localized_pos is not None:
             event_tick = self._build_event_tick(now_ms, frame, player_pos, localized_pos, conf)
@@ -1972,11 +1800,11 @@ class NavigationModeWidget(QWidget):
         if event_run_enabled and self._should_event_action_take_control(event_action):
             self.event_action_executor.execute(event_action)
             self._render_route_overlay(
-                current_path=self._event_move_path,
-                current_subgoal=self._event_move_subgoal,
+                current_path=self.event_path_mover.path,
+                current_subgoal=self.event_path_mover.subgoal,
                 current_target_kind="event",
             )
-            if event_action.type in {EventActionType.COMPLETE, EventActionType.FAIL} and self._portal_manual_test_active:
+            if event_action.type in {EventActionType.COMPLETE, EventActionType.FAIL} and self.portal_test_controller.active:
                 self._set_portal_manual_test_active(False, reason=f"event {event_action.type.value}")
         elif auto_action:
             self._render_route_overlay(

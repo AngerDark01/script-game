@@ -44,13 +44,15 @@ class EventMemory:
                         conf=float(observation.confidence),
                     )
                 continue
-            if self._is_in_completed_cooldown(observation, event_config, now_ms):
+            cooldown_info = self._completed_cooldown_info(observation, event_config, now_ms)
+            if cooldown_info is not None:
                 if self._should_log(f"cooldown:{observation.event_type}", now_ms, 3000):
                     event_log(
                         "observation skipped cooldown",
                         event=observation.event_type,
                         global_pos=observation.global_pos,
                         conf=float(observation.confidence),
+                        **cooldown_info,
                     )
                 continue
 
@@ -178,6 +180,8 @@ class EventMemory:
             distance = _distance(task.global_pos, completed_task.global_pos)
             if distance > radius:
                 continue
+            task.last_seen_ms = int(now_ms)
+            task.completed_at_ms = int(now_ms)
             task.mark_ignored()
             event_log(
                 "nearby task suppressed after completion",
@@ -194,6 +198,8 @@ class EventMemory:
         event_config = config.event(task.event_type) if hasattr(config, "event") else {}
         retry_limit = int(event_config.get("retry_limit", 0))
         if task.attempts >= retry_limit:
+            task.last_seen_ms = int(now_ms)
+            task.completed_at_ms = int(now_ms)
             task.mark_ignored()
             event_log(
                 "task failed ignored",
@@ -253,25 +259,41 @@ class EventMemory:
                 best_distance = distance
         return best
 
-    def _is_in_completed_cooldown(self, observation: EventObservation, event_config: dict, now_ms: int) -> bool:
+    def _completed_cooldown_info(self, observation: EventObservation, event_config: dict, now_ms: int) -> dict | None:
         cooldown_ms = int(event_config.get("cooldown_ms", 0))
         type_cooldown_ms = int(event_config.get("type_cooldown_ms", 0))
         if observation.global_pos is None:
-            return False
+            return None
         for task in self._tasks:
             if task.event_type != observation.event_type:
                 continue
-            if task.completed_at_ms is None:
+            completed_at_ms = task.completed_at_ms
+            if completed_at_ms is None and task.state == EventTaskState.IGNORED:
+                completed_at_ms = task.last_seen_ms
+            if completed_at_ms is None:
                 continue
-            elapsed_ms = now_ms - task.completed_at_ms
+            elapsed_ms = now_ms - int(completed_at_ms)
             if type_cooldown_ms > 0 and elapsed_ms <= type_cooldown_ms:
-                return True
+                return {
+                    "matched_task": task.id,
+                    "matched_state": task.state,
+                    "cooldown_kind": "type",
+                    "remaining_ms": max(0, type_cooldown_ms - elapsed_ms),
+                }
             if cooldown_ms <= 0 or elapsed_ms > cooldown_ms:
                 continue
             cooldown_radius = float(event_config.get("cooldown_radius", self.dedupe_radius))
-            if _distance(task.global_pos, observation.global_pos) <= cooldown_radius:
-                return True
-        return False
+            distance = _distance(task.global_pos, observation.global_pos)
+            if distance <= cooldown_radius:
+                return {
+                    "matched_task": task.id,
+                    "matched_state": task.state,
+                    "cooldown_kind": "position",
+                    "distance": round(float(distance), 2),
+                    "radius": float(cooldown_radius),
+                    "remaining_ms": max(0, cooldown_ms - elapsed_ms),
+                }
+        return None
 
     def _should_log(self, key: str, now_ms: int, interval_ms: int) -> bool:
         last_ms = self._last_log_ms.get(key)

@@ -892,3 +892,69 @@
 **Root cause refinement:** Runtime logs showed detector and stabilizer already produced two stable portal positions, approximately `(3466,2275)` and `(3512,2327)`. The jump happened in `EventMemory._find_matching_task()` because the default dedupe radius was 80 and the two portals are roughly 69px apart.
 **Fix:** Added portal `dedupe_radius=32` defaults and A1 config. `EventMemory.merge_observations()` now tracks task IDs touched during the current frame, so two observations from one frame cannot both merge into the same task.
 **Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\memory.py core\events\config.py core\events\types\portal\config.py` passed. No logic/unit tests were run per user preference.
+
+## [SYNC] 2026-05-23 15:14 - Portal test pipeline refactor and quiet navigation logs
+### A. SYNC scope
+**Trigger:** User asked to remove noisy per-frame navigation localization prints, keep portal event operation logs, save a git baseline before refactor, and refactor portal manual test logic so test mode and real navigation use the same event movement pipeline.
+
+**Direct files changed:**
+- `gui/modes/navigation_mode.py`
+- `gui/dialogs/event_manager_dialog.py`
+- `core/events/path_mover.py`
+- `gui/modes/event_test_controller.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**Expected impact:** Runtime logs should no longer be flooded by every-frame localization position/source output. Clicking the portal test button should enable the same portal event handler/action pipeline used during automatic navigation, while event-specific A* movement is owned by a reusable module instead of being embedded in `navigation_mode.py`.
+
+### C. SYNC result
+**Carryover files reviewed:** `gui/modes/navigation_mode.py`, `gui/dialogs/event_manager_dialog.py`, `core/events/path_mover.py`, `gui/modes/event_test_controller.py`.
+
+**CODEBASE.md updated:** Added directory and module entries for `core/events/path_mover.py` and `gui/modes/event_test_controller.py`; updated `navigation_mode.py` and event-manager descriptions; added function index entries for manual portal test startup, event MOVE_TO execution, `EventPathMover.step()`, and `EventPathMover._plan_path()`; updated the event-management flow to state that manual portal testing runs the same event pipeline as automatic navigation.
+
+**Coverage update:** `navigation_mode.py` now delegates event movement planning to `EventPathMover` and manual test button state to `ManualEventTestController`. `event_manager_dialog.py` now drops the Qt checked argument before emitting `test_portal_requested`. The removed per-frame navigation position/source print block is intentionally not replaced; portal/event operation logs remain through `event_log()`.
+
+**Baseline commit:** `86046ce Save event navigation baseline before refactor` was created before this refactor.
+
+**Verification:** Pending compile/import checks after documentation sync. No logic/unit tests will be run per user preference.
+
+## [SYNC] 2026-05-23 15:55 - Separate event logs and harden portal cooldown
+### A. SYNC scope
+**Trigger:** User reported that `logs/runtime.log` is still flooded by localization-position lines and portal test event logs are hard to see; also showed a completed paired portal area creating a new portal task nearby.
+
+**Direct files changed:**
+- `main.py`
+- `core/events/debug.py`
+- `core/events/memory.py`
+- `core/events/config.py`
+- `map_data/A1/event_config.json`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**Expected impact:** Each GUI start rewrites `runtime.log` instead of appending old sessions; event diagnostics are also written to a dedicated `logs/event_runtime.log`. Completed/ignored nearby portal tasks participate in cooldown suppression, so icons detected near a just-handled portal pair should not immediately become new actionable tasks.
+
+### C. SYNC result
+**Root cause evidence:** Current `gui/modes/navigation_mode.py` no longer contains the per-frame `当前定位/位置来源/本帧定位位置` print block, while `runtime.log` still contained millions of bytes from earlier sessions. `[Event ...]` lines were present but buried inside the combined runtime log.
+
+**Fix:** `main.py` now opens `logs/runtime.log` with `w` mode per process session. `core/events/debug.py::event_log()` writes every event diagnostic to `logs/event_runtime.log` and still mirrors to runtime output. `EventMemory` now gives ignored/suppressed tasks a cooldown timestamp and logs cooldown details (`matched_task`, cooldown kind, distance/radius, remaining_ms). Portal default and A1 cooldown are extended to `cooldown_ms=120000` and `type_cooldown_ms=10000`.
+
+**Verification:** Pending compile/import checks. No logic/unit tests will be run per user preference.
+
+## [SYNC] 2026-05-23 - Event manager editable portal parameters
+### A. SYNC scope
+**Trigger:** User reported portal manual test presses `D` before the in-game portal interaction prompt is available, and requested the range threshold be configurable and saved from the event manager UI.
+
+**Direct files changed:**
+- `gui/dialogs/event_manager_dialog.py`
+- `core/events/types/portal/definition.py`
+- `core/events/types/portal/config.py`
+- `docs/plans/2026-05-23-event-config-panel-plan.md`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**Expected impact:** The event manager shows a schema-driven parameter editor for the selected complete event. For `portal`, `interact_radius` is now editable and saved to the current map's `event_config.json`; lowering it delays pressing `D` until the character is closer to the portal.
+
+### C. SYNC result
+**Fix:** Rebuilt `EventManagerDialog` with a parameter panel driven by each event's `config_schema()`. Parameter changes update the in-memory `EventSystemConfig` and the existing save button persists them through `NavigationModeWidget._save_event_config()`. `PortalEventDefinition.config_schema()` now exposes `interact_radius`, `cooldown_ms`, and `type_cooldown_ms`; `PortalEventConfig` defaults match the current longer cooldown values.
+
+**Verification:** Pending final compile/import checks. No logic/unit tests will be run per user preference.

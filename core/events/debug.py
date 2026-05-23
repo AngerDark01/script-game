@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import time
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
+_EVENT_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "event_runtime.log"
+_EVENT_SESSION_STARTED = False
 
 
 def event_log(message: str, **fields: Any) -> None:
-    """Print one compact event-system diagnostic line."""
+    """Write one compact event diagnostic to the event file and runtime output."""
+    global _EVENT_SESSION_STARTED
     suffix = _format_fields(fields)
     timestamp = time.strftime("%H:%M:%S")
     millis = int((time.time() % 1) * 1000)
-    print(f"[Event {timestamp}.{millis:03d}] {message}{suffix}", flush=True)
+    line = f"[Event {timestamp}.{millis:03d}] {message}{suffix}"
+    _EVENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if _EVENT_SESSION_STARTED else "w"
+    with _EVENT_LOG_PATH.open(mode, encoding="utf-8") as handle:
+        if not _EVENT_SESSION_STARTED:
+            handle.write(f"=== event session {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            _EVENT_SESSION_STARTED = True
+        handle.write(line + "\n")
+    print(line, flush=True)
 
 
 def describe_action(action) -> str:

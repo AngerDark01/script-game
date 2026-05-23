@@ -11,7 +11,8 @@ gui/main_window.py - 创建绘图/导航两个模式并共享 AppContext。
 gui/navigation_params.py - 定义 NavConfig、RecognizerParams、NavPreferences，并负责 config.json 序列化契约。
 gui/dialogs/nav_params_dialog.py - 导航参数 UI，使用 widget_map 将控件变化写回 NavConfig。
 gui/dialogs/event_manager_dialog.py - 独立事件管理窗口，展示完整事件选配和运行中事件任务状态。
-gui/modes/navigation_mode.py - 导航模式主 UI、地图加载、定位循环、路线编辑、自动导航和范围框显示。
+gui/modes/navigation_mode.py - 导航模式主 UI、地图加载、定位循环、路线编辑、自动导航、事件动作接入和范围框显示。
+gui/modes/event_test_controller.py - 手动事件测试按钮状态控制，避免测试 UI 状态散落在导航主文件。
 gui/modes/mapping_widget.py - 绘图模式，保存 map_data.npz 和地图 config.json。
 core/navigation_core.py - 导航定位核心，将实时小地图截图匹配到全局地图坐标。
 core/stitcher_core.py - 建图拼接核心，维护 wall_layer/explored_map/current_pos。
@@ -28,6 +29,7 @@ core/events/monitor.py - 调用启用事件的 detector，并缓存 detector 避
 core/events/scheduler.py - 在 pending/running 事件中选择当前处理任务。
 core/events/runner.py - 启动事件 handler 并根据 COMPLETE/FAIL 更新 memory。
 core/events/position_stabilizer.py - 通过当前帧墙体配准把事件局部候选投影到全局地图，并用多帧聚类输出稳定事件坐标。
+core/events/path_mover.py - 事件 MOVE_TO 动作专用 A* 路径、lookahead 子目标和点击节流模块。
 core/events/capture_provider.py - 为事件 handler 提供小地图/主画面截图来源。
 core/events/action_executor.py - 执行事件返回的 MOVE_TO/CLICK_SCREEN/PRESS_KEY/WAIT 等通用动作。
 core/events/window_finder.py - Windows 游戏窗口枚举、DPI awareness 和窗口矩形获取。
@@ -111,13 +113,19 @@ Level 3: navigation click path
 职责：独立事件管理窗口，用于测试和运行时观察事件系统。
 关键导出：`EventManagerDialog`。
 对外依赖：`core.events.config.build_tui_event_options`。
-注意事项：事件选配表只展示完整事件包，例如 `portal`；不会暴露 minimap detector、main-view confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。勾选变化只更新内存态配置并发出 `config_changed`，点击保存才写入当前地图 `event_config.json`。
+注意事项：事件选配表只展示完整事件包，例如 `portal`；不会暴露 minimap detector、main-view confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。选中事件行后，参数面板根据该事件的 `config_schema()` 自动生成控件，参数变化只更新内存态配置并发出 `config_changed`，点击保存才写入当前地图 `event_config.json`。`test_portal_button.clicked` 通过 lambda 丢弃 Qt 的 checked 参数后再发出无参 `test_portal_requested`，避免信号参数污染导航层槽函数。
 
 ### `gui/modes/navigation_mode.py`
 职责：导航模式 UI 与运行循环，包含地图加载、定位、路线编辑、自动导航动作消费、绿色定位框和橙色真实可见框绘制。
 关键导出：`NavigationModeWidget`。
-对外依赖：`NavigationCore`、`MotionController`、`AutoNavigator`、`RouteManager`、`EventCoordinator`。
-注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`guide_points` 构成可被 A* 逐段追踪的路线骨架，`required_points` 是必须按顺序完成的阶段门，状态机按路线进度判断当前应追普通点还是必经点，并通过 `target_kind` 控制覆盖层只高亮真正当前目标。加载地图时初始化事件 registry/config/coordinator；导航循环每帧构造 `EventTick`，事件动作在自动导航开启时优先于普通 auto move 执行。事件管理按钮打开 `EventManagerDialog`，地图上的事件标记来自 `EventCoordinator.overlays()`；全局关闭事件系统或关闭单个事件时，禁用事件不会再显示活动 marker。
+对外依赖：`NavigationCore`、`MotionController`、`AutoNavigator`、`RouteManager`、`EventCoordinator`、`EventPathMover`、`ManualEventTestController`。
+注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`guide_points` 构成可被 A* 逐段追踪的路线骨架，`required_points` 是必须按顺序完成的阶段门，状态机按路线进度判断当前应追普通点还是必经点，并通过 `target_kind` 控制覆盖层只高亮真正当前目标。加载地图时初始化事件 registry/config/coordinator；导航循环每帧构造 `EventTick`，事件动作在自动导航开启或手动事件测试开启时优先于普通 auto move 执行。事件 MOVE_TO 不再在本文件内维护路径细节，而是委托 `EventPathMover`；传送门测试按钮文本/选中状态由 `ManualEventTestController` 维护。事件管理按钮打开 `EventManagerDialog`，地图上的事件标记来自 `EventCoordinator.overlays()`；全局关闭事件系统或关闭单个事件时，禁用事件不会再显示活动 marker。本文件不再打印每帧“当前位置/位置来源”调试块，事件操作过程应走 `event_log()`。
+
+### `gui/modes/event_test_controller.py`
+职责：把手动事件测试按钮的 active 状态、checked 状态和显示文案封装到独立小模块，避免导航主文件同时承担 UI 状态同步细节。
+关键导出：`ManualEventTestController`。
+对外依赖：无内部模块依赖。
+注意事项：该类只同步按钮状态，不决定事件选择、事件执行、导航启动或停止；这些仍由 `NavigationModeWidget` 和事件系统负责。`button` 可为 `None`，此时状态仍可维护但不会触碰 UI。
 
 ### `core/route_manager.py`
 职责：维护每张地图的 `route.json`，持久化出口、必经点、途经点。
@@ -163,9 +171,15 @@ Level 3: navigation click path
 
 ### `core/events/*`
 职责：事件系统核心层。`EventCoordinator` 是导航模式唯一入口；`EventRegistry` 只注册完整事件包；`EventMemory` 管理事件实例生命周期；`EventRunner` 调用具体事件 handler；`EventActionExecutor` 执行动作。
-关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`、`EventActionExecutor`。
+关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`、`EventActionExecutor`、`EventPathMover`。
 对外依赖：标准库；视觉工具依赖 OpenCV/NumPy。
 注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventPositionStabilizer` 会按同一帧隔离聚类，避免一帧内两个相近事件图标被合并成一个跳动 marker；`EventMemory.merge_observations()` 还会避免同一帧多个 observation 复用同一个刚更新的 task，近距离双传送门依赖 `dedupe_radius` 小于两门间距来稳定显示两个 marker。
+
+### `core/events/path_mover.py`
+职责：为事件动作中的地图坐标 `MOVE_TO` 提供可复用移动路径规划，不让传送门或未来事件各自复制 A*、lookahead 和点击节流逻辑。
+关键导出：`EventMoveStep`、`EventPathMover`。
+对外依赖：`core.path_utils`、`core.events.debug.event_log`。
+注意事项：输入和输出均为全局地图坐标；它不执行鼠标点击，只返回 `subgoal/should_click/path_kind`，真正点击仍由 `MotionController.move_to_map_target()` 完成。A* 失败时只生成玩家附近短距离 `fallback` probe，避免事件为了靠近目标直接拉长直线穿墙。
 
 ### `core/events/types/portal/*`
 职责：传送门完整事件包。对外暴露 `PortalEventDefinition`，内部拆分小地图 detector、主画面 confirmer 和 handler。
@@ -255,6 +269,66 @@ Level 3: navigation click path
 副作用：重建 QTableWidget 行和状态文案。
 失败行为：coordinator 查询异常时 `_current_tasks()` 降级为空列表。
 调用关系：called by `NavigationModeWidget.toggle_event_dialog()` and `navigation_loop()`。
+
+### `ManualEventTestController._sync_button(self) -> None`
+行为：使手动事件测试按钮的文字和选中状态与 `active` 一致。
+算法：
+1. 若没有绑定按钮，直接返回，保留纯状态控制能力。
+2. 当 `active=True` 时设置停止文案，否则设置启动文案。
+3. 仅在控件 checked 值与 `active` 不一致时调用 `setChecked()`，避免无意义 UI 反复写入。
+副作用：写入 Qt 按钮文本和 checked 状态。
+失败行为：无绑定按钮时无 UI 副作用且不抛错。
+调用关系：called by `__init__()`、`start()`、`stop()`、`reset_button()`。
+
+### `NavigationModeWidget._run_portal_manual_test(self)`
+行为：响应“测试传送门/停止传送门测试”按钮，以正式事件 pipeline 启停手动传送门执行。
+算法：
+1. 若 `portal_test_controller.active` 已为真，停止手动测试并返回。
+2. 校验事件协调器、地图定位内核和游戏屏幕中心均已就绪；失败时恢复按钮显示并弹出警告。
+3. 若导航定时器未运行，则复用 `toggle_navigation()` 启动定位循环；启动失败时停止继续执行。
+4. 调用 `_set_portal_manual_test_active(True)`，开启游戏输入模式和运动控制。
+5. 后续每帧由 `navigation_loop()` 调用 `EventCoordinator.update(..., run_handlers=True)`，而不是在按钮槽函数中执行一次点击。
+副作用：可启动导航循环、启用游戏输入、更新按钮/状态栏并记录事件日志。
+失败行为：先决条件缺失时只警告并保持测试未启动。
+调用关系：called by `EventManagerDialog.test_portal_requested` signal。
+
+### `NavigationModeWidget._execute_event_move_to(self, target_global_pos)`
+行为：消费事件 handler 返回的地图目标点，通过可复用路径移动器执行靠近事件的移动点击。
+算法：
+1. 校验当前定位位置与目标；不可用时重置 `EventPathMover` 并返回。
+2. 打开游戏输入模式和运动控制，并传入当前墙图、探索图、`PathFinder`、时间戳和 lookahead 距离调用 `EventPathMover.step()`。
+3. 若没有可用移动步或未达到点击节流条件，保持现有 path/subgoal 供 overlay 显示但不点击。
+4. 若应点击，调用 `MotionController.move_to_map_target(current_pos, subgoal)` 映射为真实游戏输入。
+5. 只有点击实际返回诊断信息后，调用 `EventPathMover.record_click()` 更新时间和写入事件操作日志。
+副作用：可能触发真实鼠标点击；更新事件 path overlay 和日志状态。
+失败行为：未定位、无路径、A*/投影暂不可用时不发鼠标输入，下一帧可继续重规划。
+调用关系：called by `EventActionExecutor.execute()` through its MOVE_TO callback。
+
+### `EventPathMover.step(self, *, current_pos, target_pos, wall_map, pathfinder, explored_map, now_ms: int, lookahead_distance: float) -> EventMoveStep | None`
+行为：为事件目标计算或复用地图路径，选出下一次真实点击应追踪的前方子目标。
+算法：
+1. 将当前位置和事件目标标准化为浮点全局地图坐标。
+2. 调用 `_ensure_path()`，按目标变化、离路偏差或 fallback 重试时间决定是否重新规划。
+3. 若无法获得至少两个点的路径，记录 `event move path unavailable` 并返回 `None`。
+4. 将玩家位置投影到当前路径；投影失败时强制下一帧重规划并返回 `None`。
+5. 沿路径累计距离向前插值 `lookahead_distance` 得到 `subgoal`，超过路径终点时使用终点。
+6. 用距上次点击至少 260ms、子目标变化至少 8 像素或离路偏差至少 48 像素作为点击节流条件。
+7. 返回包含 `path/subgoal/path_kind/should_click/deviation` 的 `EventMoveStep`。
+副作用：可更新缓存路径、子目标和重规划时间，并写入事件规划日志。
+失败行为：A* 失败不直接失败；`_plan_path()` 降级为短距离 fallback probe。
+调用关系：called by `NavigationModeWidget._execute_event_move_to()`。
+
+### `EventPathMover._plan_path(self, current_pos, target_pos, wall_map, pathfinder, explored_map)`
+行为：优先 A*，失败时为事件移动生成短距离脱困路径。
+算法：
+1. 将当前位置与目标四舍五入为 `PathFinder` 使用的整数地图点。
+2. 若存在墙图和 pathfinder，则以 `explored_map` 约束调用 `find_path()`。
+3. 若 A* 返回路径，删除共线冗余点；单点路径补入真实目标点；计算累计长度并标记 `planned`。
+4. 若 A* 无结果，调用 `_local_probe()` 只向目标方向前进最多 84 像素，并按失败次数交替加入左右 44 像素侧向偏移。
+5. 返回两点 fallback 路径及累计长度，标记 `fallback`，等待后续重规划。
+副作用：fallback 会推进 `probe_index` 以切换探测方向。
+失败行为：A* 无路时不会生成直达事件点的长直线点击。
+调用关系：called by `EventPathMover._ensure_path()`。
 
 ### `NavParametersDialog._auto_estimate_click_radius(self)`
 行为：根据已校准的角色屏幕中心和物理屏幕边界估算点击半径，避免 2K 屏幕下半径配置过小。
@@ -489,12 +563,15 @@ Level 3: navigation click path
 3. `EventManagerDialog.refresh()` 调用 `build_tui_event_options()` 枚举完整事件包，并从 `EventCoordinator.tasks()` 读取运行时任务。
 4. 用户勾选全局/单个事件时，dialog 更新 `EventSystemConfig` 内存态并发出 `config_changed`。
 5. `NavigationModeWidget._on_event_config_changed()` 将配置写回 coordinator，清空旧事件 marker，并打印事件配置日志。
-6. 导航循环定位成功后构造 `EventTick`，`EventCoordinator.update()` 检测 raw minimap 图标、合并 memory、选择任务；只有自动导航开启时才推进 handler。
-7. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本。
-8. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
+6. 用户点击“测试传送门”时，`EventManagerDialog.test_portal_requested` 触发 `NavigationModeWidget._run_portal_manual_test()`；按钮状态由 `ManualEventTestController` 同步，导航循环未运行时先启动定位循环。
+7. 导航循环定位成功后构造 `EventTick`，`EventCoordinator.update()` 检测 raw minimap 图标、合并 memory、选择任务；只有自动导航或手动事件测试开启时才推进 handler。
+8. 事件 handler 返回 `MOVE_TO` 时，`EventActionExecutor` 调用 `NavigationModeWidget._execute_event_move_to()`；该函数委托 `EventPathMover.step()` 规划事件路径和 subgoal，再由 `MotionController.move_to_map_target()` 真实点击。
+9. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；事件 path/subgoal 也会复用路线 overlay 绘制。
+10. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
 
 ## 7. 外部集成详情
 `main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
+`logs/runtime.log` 每次进程启动都会重建，不再把旧会话定位刷屏追加到新会话后面；事件系统另有专用 `logs/event_runtime.log`，用于测试传送门时只看事件链路。
 
 `InputDriver.click(x, y)`：由 `MotionController._execute_click()` 的 `win32_mouse_event` 后端调用，执行 `SetCursorPos(x, y)` 后用 Win32 `mouse_event` 分开发送 left-down/left-up。该路径来自旧脚本 `t2.py` 的可用实现，当前是游戏点击主后端。
 
@@ -585,18 +662,18 @@ The stable movement baseline is the original `pydirectinput.click(x, y)` call. D
 Runtime probe on the user's machine showed `pydirectinput.size() == (1707, 1067)`, `GetSystemMetrics(0/1) == (1707, 1067)`, and Qt `devicePixelRatio() == 1.5`. Therefore screenshot capture can still require physical coordinates, but `MotionController` should feed `pydirectinput` input coordinates consistently. `_clamp_screen_pos()` is now disabled by default; enabling it can still rewrite targets such as `(1987, 569)` or `(1559, 1469)` to screen-edge points, so it should only be used after the coordinate system is proven.
 
 ## 11. Event Runtime Diagnostics
-`core/events/debug.py` is the shared console logging utility for the event system. It provides `event_log()`, `describe_action()`, and `describe_task()` so event modules print consistent `[Event HH:MM:SS.mmm] ...` lines instead of ad-hoc debug strings.
+`core/events/debug.py` is the shared logging utility for the event system. It provides `event_log()`, `describe_action()`, and `describe_task()` so event modules print consistent `[Event HH:MM:SS.mmm] ...` lines instead of ad-hoc debug strings. `event_log()` writes to both the normal runtime output and the dedicated `logs/event_runtime.log`, which is the preferred file for portal/event testing.
 
 `EventMonitor`, `EventMemory`, `EventCoordinator`, `EventRunner`, and `EventActionExecutor` now log detector initialization, observation counts, task creation/confirmation, scheduler selection, handler start, action output, action execution, completion, failure, retry, and ignored states. Repeating frame-level logs are throttled, while click/key/complete/fail actions print immediately.
 
 `PortalMinimapDetector`, `PortalMainViewConfirmer`, and `PortalEventHandler` now log the portal-specific chain: minimap template hits, task global position, movement distance to the portal, key/click interaction, wait-after-interaction, teleport position/environment completion, and timeout failure. Main-view confirmation only runs when `interaction="click"`; default `interaction="key"` goes directly to pressing `D` after arriving near the minimap-derived portal point.
 
-`NavigationModeWidget` logs event-system initialization and event movement/click callbacks, and the status bar now appends a compact event summary from `EventCoordinator.status_summary()`, for example `event:portal running seen=3 act=move_to`. This is intended for live game testing only; it does not change event matching thresholds or navigation movement semantics.
+`NavigationModeWidget` logs event-system initialization and event movement/click callbacks, and the status bar now appends a compact event summary from `EventCoordinator.status_summary()`, for example `event:portal running seen=3 act=move_to`. This is intended for live game testing only; it does not change event matching thresholds or navigation movement semantics. The old per-frame localization print block (`当前定位` / `位置来源` / `本帧定位位置`) is intentionally removed so portal/event operation logs remain readable in `logs/runtime.log`.
 
-Event detection and memory updates may run while normal navigation localization is active, but `EventCoordinator.update(..., run_handlers=False)` prevents handlers from advancing unless auto navigation is enabled. This avoids a misleading state where an event task could log completion without the executor being allowed to move or click.
+Event detection and memory updates may run while normal navigation localization is active, but `EventCoordinator.update(..., run_handlers=False)` prevents handlers from advancing unless auto navigation or manual event test mode is enabled. This avoids a misleading state where an event task could log completion without the executor being allowed to move or click.
 
 ## 12. Event Manager UI
-`gui/dialogs/event_manager_dialog.py` is the independent event-management surface. It is intentionally package-level: the table lists complete events such as `portal`, not the internal minimap detector, main-view confirmer, or handler. The global checkbox toggles `EventSystemConfig.enabled`; each row checkbox toggles `config.events[event_type]["enabled"]`.
+`gui/dialogs/event_manager_dialog.py` is the independent event-management surface. It is intentionally package-level: the table lists complete events such as `portal`, not the internal minimap detector, main-view confirmer, or handler. The global checkbox toggles `EventSystemConfig.enabled`; each row checkbox toggles `config.events[event_type]["enabled"]`. Selecting a row renders editable controls from the event definition schema; for portal this includes `interact_radius`, which controls how close the player must be before pressing `D`.
 
 The runtime task table reads from `EventCoordinator.tasks()` and shows task ID, event type, state, seen count, confidence, global map position, attempts, and last-seen timestamp. This gives live feedback when a minimap icon is detected even before auto navigation executes the event.
 
@@ -604,16 +681,18 @@ The runtime task table reads from `EventCoordinator.tasks()` and shows task ID, 
 
 The save button writes only the current map's `event_config.json`. This keeps per-map event strategy separate from global code and avoids one map's event settings affecting another map.
 
+The “测试传送门” button is not a one-off movement probe. It toggles `ManualEventTestController`, enables handler execution in the normal navigation loop, and runs the same portal `detect -> localize -> schedule -> MOVE_TO -> PRESS_KEY -> COMPLETE/FAIL` pipeline used by automatic navigation. The button text changes to “停止传送门测试” while that pipeline is active.
+
 ## 13. Portal Event Current Behavior
 The current portal event is minimap-first. `PortalMinimapDetector` detects the portal icon in the raw minimap frame with multi-template/multi-scale matching, then rejects a hit unless the matched patch contains enough blue/cyan portal-icon pixels. The detector now emits only `EventDetection` local minimap candidates; it never creates a trusted global coordinate.
 
 `NavigationCore.localize()` stores `last_frame_registration` whenever player localization succeeds. `EventCoordinator` passes local detections and that registration to `EventPositionStabilizer`, which projects each candidate with `frame_origin_global + local_minimap_pos * draw_scale`, clusters samples by event type and map distance, and emits an `EventObservation` only after `stable_frames` samples stay within `stable_variance`. `EventMemory` only creates/updates tasks from these stable global observations.
 
-When auto navigation is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. With default `interaction="key"`, it then sends `D` through `MotionController.press_key()` and enters `wait_result`; it does not require main-view blue-glow confirmation. With `interaction="click"`, it uses `PortalMainViewConfirmer` to find the blue/purple portal entity in the game window and clicks its screen center.
+When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. `MOVE_TO` is executed through `EventPathMover`, which uses A* where available and short local fallback probes instead of direct long-line clicks. With default `interaction="key"`, the handler then sends `D` through `MotionController.press_key()` and enters `wait_result`; it does not require main-view blue-glow confirmation. With `interaction="click"`, it uses `PortalMainViewConfirmer` to find the blue/purple portal entity in the game window and clicks its screen center.
 
 After interaction, completion is not a fixed timer. The handler waits at least `post_interact_wait_ms`, then marks the task complete only if the player's global position changes by at least `teleport_min_distance` or the raw minimap patch around the player differs from the pre-interaction patch by at least `environment_change_threshold`. If neither happens before `teleport_timeout_ms`, the task fails and may retry.
 
-To prevent paired nearby portals from bouncing the character back, `EventMemory` uses `cooldown_radius` for completed portal observations and `type_cooldown_ms` as a short global same-type cooldown. When a portal task completes, `EventRunner` also calls `suppress_nearby_pending()` so already-created nearby portal tasks are marked ignored.
+To prevent paired nearby portals from bouncing the character back, `EventMemory` uses `cooldown_radius` for completed or ignored portal observations and `type_cooldown_ms` as a short global same-type cooldown. When a portal task completes, `EventRunner` also calls `suppress_nearby_pending()` so already-created nearby portal tasks are marked ignored with a cooldown timestamp. Cooldown skips are logged with the matched task, cooldown kind, remaining time, and position distance when relevant.
 
 ## 14. Event Localization Contract
 `core/events/models.py::FrameRegistration` records the wall-registration result for one minimap frame: validity, confidence, global origin of the raw minimap frame, draw scale, player global position, player local minimap position, source (`f2f` or `template_match`), frame size, and debug metadata.
