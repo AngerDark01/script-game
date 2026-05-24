@@ -24,7 +24,7 @@ class EventCoordinator:
         self.last_selected_task = None
         self._last_log_ms = 0
 
-    def update(self, tick, run_handlers: bool = True):
+    def observe(self, tick) -> None:
         if not getattr(self.config, "enabled", True):
             if self._should_log(tick.now_ms, 3000):
                 event_log("coordinator disabled")
@@ -32,7 +32,7 @@ class EventCoordinator:
                 self.runner.update(None, tick, self.config)
             self.last_action = None
             self.last_selected_task = None
-            return None
+            return
         detections = self.monitor.detect(tick, self.config)
         self.last_detections = detections
         observations = self.position_stabilizer.update(
@@ -58,15 +58,35 @@ class EventCoordinator:
             )
         self.memory.merge_observations(observations, self.config, tick.now_ms)
         tick.event_tasks = self.memory.tasks()
-        task = self.scheduler.pick(self._enabled_active_tasks(), tick.player_global_pos)
-        if task is not self.last_selected_task:
-            event_log("scheduler selected", task=describe_task(task))
-            self.last_selected_task = task
-        if not run_handlers:
+        active_tasks = self._enabled_active_tasks()
+        display_task = self.scheduler.pick(active_tasks, tick.player_global_pos)
+        if display_task is not self.last_selected_task:
+            event_log("scheduler selected", task=describe_task(display_task))
+            self.last_selected_task = display_task
+
+    def run_task(self, task_id: str | None, tick):
+        if not getattr(self.config, "enabled", True):
             if self.runner.active_task is not None:
                 self.runner.update(None, tick, self.config)
             self.last_action = None
             return None
+        if task_id is None:
+            action = self.runner.update(None, tick, self.config)
+            self.last_action = action
+            return action
+        selected = None
+        for task in self._enabled_active_tasks():
+            if str(getattr(task, "id", "")) == str(task_id):
+                selected = task
+                break
+        if selected is None:
+            event_log("coordinator run_task missing", task_id=str(task_id))
+            action = self.runner.update(None, tick, self.config)
+            self.last_action = action
+            return action
+        return self._run_selected_task(selected, tick)
+
+    def _run_selected_task(self, task, tick):
         action = self.runner.update(task, tick, self.config)
         self.last_action = action
         if action is not None and self._should_log(tick.now_ms, 750):

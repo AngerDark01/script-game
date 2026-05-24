@@ -54,3 +54,17 @@ def sync_recognizer_widgets(
 def sync_stitcher_widgets(params: dict, *, weight_spin) -> None:
     weight_spin.setValue(params.get("weight_add", 0.3))
 
+
+def sync_geometry_widgets(
+    recognizer_params: dict,
+    stitcher_params: dict,
+    *,
+    draw_scale_spin,
+    canvas_size_spin,
+    player_clear_radius_spin,
+    wall_close_kernel_spin,
+) -> None:
+    draw_scale_spin.setValue(float(stitcher_params.get("draw_scale", 2.0)))
+    canvas_size_spin.setValue(int(stitcher_params.get("canvas_size", 5000)))
+    player_clear_radius_spin.setValue(int(recognizer_params.get("player_clear_radius", 22)))
+    wall_close_kernel_spin.setValue(int(stitcher_params.get("wall_close_kernel_size", 3)))

@@ -56,6 +56,7 @@ class RecognizerParams:
     trans_wall_thresh: int = 50
     kernel_small_size: int = 3
     kernel_medium_size: int = 5
+    player_clear_radius: int = 22
 
 @dataclass
 class NavConfig:
@@ -72,6 +73,9 @@ class NavConfig:
     auto_click_cooldown_ms: int = 260
     auto_min_click_target_delta: float = 8.0
     bottom_click_guard_pixels: int = 300
+    nav_wall_erode_iterations: int = 1
+    path_start_clear_radius: int = 30
+    path_walkable_snap_radius: int = 18
     nav_preferences: NavPreferences = field(default_factory=NavPreferences)
     recognizer_params: RecognizerParams = field(default_factory=RecognizerParams)
 
@@ -97,6 +101,9 @@ class NavConfig:
             auto_click_cooldown_ms=data.get("auto_click_cooldown_ms", 260),
             auto_min_click_target_delta=data.get("auto_min_click_target_delta", 8.0),
             bottom_click_guard_pixels=data.get("bottom_click_guard_pixels", 300),
+            nav_wall_erode_iterations=data.get("nav_wall_erode_iterations", 1),
+            path_start_clear_radius=data.get("path_start_clear_radius", 30),
+            path_walkable_snap_radius=data.get("path_walkable_snap_radius", 18),
             nav_preferences=NavPreferences(**nav_prefs_data),
             recognizer_params=RecognizerParams(**rec_params_data)
         )
@@ -116,6 +123,9 @@ class NavConfig:
             "auto_click_cooldown_ms": self.auto_click_cooldown_ms,
             "auto_min_click_target_delta": self.auto_min_click_target_delta,
             "bottom_click_guard_pixels": self.bottom_click_guard_pixels,
+            "nav_wall_erode_iterations": self.nav_wall_erode_iterations,
+            "path_start_clear_radius": self.path_start_clear_radius,
+            "path_walkable_snap_radius": self.path_walkable_snap_radius,
             "nav_preferences": self.__dict__['nav_preferences'].__dict__,
             "recognizer_params": self.__dict__['recognizer_params'].__dict__,
         }

@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 from core.events.models import FrameRegistration
+from core.navigation_obstacles import derive_navigation_wall_layer
 from .recognizer_optimized import HSVRecognizer
 
 class NavigationCore:
@@ -10,7 +11,7 @@ class NavigationCore:
     负责地图数据的加载和基于视觉的实时定位
     """
     
-    def __init__(self, map_folder_path, center_offset_y=0):
+    def __init__(self, map_folder_path, center_offset_y=0, nav_wall_erode_iterations=1):
         """
         初始化导航核心
         
@@ -21,6 +22,9 @@ class NavigationCore:
         self.map_folder = map_folder_path
         self.map_data_path = os.path.join(map_folder_path, "map_data.npz")
         self.center_offset_y = center_offset_y
+        self.nav_wall_erode_iterations = max(0, int(nav_wall_erode_iterations))
+        self.draw_scale = 2.0
+        self.last_frame_registration = FrameRegistration(valid=False, draw_scale=self.draw_scale)
         
         if not os.path.exists(self.map_data_path):
             raise FileNotFoundError(f"Map data not found at: {self.map_data_path}")
@@ -68,9 +72,6 @@ class NavigationCore:
         self.manual_offset = (0, 0)
         
         # 绘图缩放比例 (必须与 StitcherCore 保持一致)
-        self.draw_scale = 2.0
-        self.last_frame_registration = FrameRegistration(valid=False, draw_scale=self.draw_scale)
-
     def _clear_frame_registration(self, confidence=0.0, source="failed"):
         self.last_frame_registration = FrameRegistration(
             valid=False,
@@ -111,9 +112,20 @@ class NavigationCore:
             data = np.load(self.map_data_path)
             # 我们主要使用 wall_layer 进行特征匹配，因为它包含了最清晰的静态特征
             self.wall_layer = data['wall_layer']
+            self.nav_wall_layer = (
+                data['nav_wall_layer']
+                if 'nav_wall_layer' in data
+                else derive_navigation_wall_layer(
+                    self.wall_layer,
+                    erode_iterations=self.nav_wall_erode_iterations,
+                )
+            )
             self.explored_map = data['explored_map'] if 'explored_map' in data else None
             self.fog_layer = data['fog_layer'] if 'fog_layer' in data else np.zeros_like(self.wall_layer)
             self.canvas_size = int(data['canvas_size']) if 'canvas_size' in data else 10000
+            if 'draw_scale' in data:
+                self.draw_scale = float(data['draw_scale'])
+                self._clear_frame_registration(0.0, "map_loaded")
 
             # 如果有保存的最后位置，可以作为初始猜测 (可选)
             if 'current_pos' in data:
@@ -127,6 +139,14 @@ class NavigationCore:
             print(f"Map loaded. Size: {self.canvas_size}x{self.canvas_size}")
         except Exception as e:
             raise RuntimeError(f"Failed to load map data: {str(e)}")
+
+    def rebuild_navigation_wall_layer(self, *, erode_iterations=None) -> None:
+        if erode_iterations is not None:
+            self.nav_wall_erode_iterations = max(0, int(erode_iterations))
+        self.nav_wall_layer = derive_navigation_wall_layer(
+            self.wall_layer,
+            erode_iterations=self.nav_wall_erode_iterations,
+        )
 
     def set_initial_hint(self, pos):
         """设置初始位置提示"""

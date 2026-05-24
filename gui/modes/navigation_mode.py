@@ -16,16 +16,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QPointF, QEvent, QPoint
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QPainterPath
 
-from core.auto_navigator import AutoNavigator
+from core.navigation_tasks.controller import NavigationTaskController
+from core.navigation_tasks.models import NavigationIntentType
 from core.navigation_core import NavigationCore
 from core.motion_controller import MotionController
 from core.route_manager import RouteManager
 from core.events.debug import event_log
-from core.events.action_executor import EventActionExecutor
 from core.events.capture_provider import GameWindowCaptureProvider
 from core.events.config import load_event_config, save_event_config
 from core.events.coordinator import EventCoordinator
-from core.events.path_mover import EventPathMover
 from ..selection.indicator_overlay import OverlayWindow
 from ..selection.center_selector import CenterPointSelector
 from ..dialogs.event_manager_dialog import EventManagerDialog
@@ -38,8 +37,6 @@ from .navigation.event_adapter import (
     event_config_summary,
     event_status_text,
     find_default_game_window_rect,
-    is_terminal_event_action,
-    should_event_action_take_control,
 )
 from .navigation.event_overlay import (
     clear_event_overlay,
@@ -122,7 +119,7 @@ class NavigationModeWidget(QWidget):
         self._current_player_local_pos = None
         self.route_manager = RouteManager()
         self.route_data = None
-        self.auto_navigator = AutoNavigator()
+        self.navigation_task_controller = NavigationTaskController()
         self.auto_navigation_enabled = False
         self.map_click_mode = "NONE"
         self.route_overlay_items = []
@@ -133,14 +130,9 @@ class NavigationModeWidget(QWidget):
         self.event_registry = create_default_event_registry()
         self.event_config = None
         self.event_coordinator = None
-        self.event_action_executor = EventActionExecutor(
-            move_to_callback=self._execute_event_move_to,
-            click_screen_callback=self._execute_event_screen_click,
-            press_key_callback=self._execute_event_key_press,
-        )
         self.event_capture_provider = None
         self.event_overlay_items = []
-        self.event_path_mover = EventPathMover()
+        self._event_arbitration_last_log_ms = 0
         self.portal_test_controller = ManualEventTestController(
             self.event_dialog.test_portal_button,
             "测试传送门",
@@ -364,7 +356,7 @@ class NavigationModeWidget(QWidget):
         mode = "ADD_GUIDE_POINT" if self.btn_add_guide.isChecked() else "NONE"
         self._set_map_click_mode(mode)
         if mode == "ADD_GUIDE_POINT":
-            self.status_label.setText("请在地图上依次点击途经点")
+            self.status_label.setText("请在地图上点击A*辅助点；顺序仅用于撤销")
 
     def toggle_required_mode(self):
         if not self.map_folder_path:
@@ -388,8 +380,11 @@ class NavigationModeWidget(QWidget):
     def load_route_data(self):
         if not self.map_folder_path:
             self.route_data = None
+            self.navigation_task_controller.load_route(None)
             return None
         self.route_data = self.route_manager.load_route(self.map_folder_path, force_reload=True)
+        main_route = (self.route_data or {}).get("routes", {}).get("main", {})
+        self.navigation_task_controller.load_route(main_route)
         return self.route_data
 
     def save_route(self):
@@ -519,8 +514,8 @@ class NavigationModeWidget(QWidget):
                 QMessageBox.warning(self, "警告", message)
                 return
             main_route = (self.route_data or {}).get("routes", {}).get("main", {})
-            self.auto_navigator.load_route(main_route)
-            if not self.auto_navigator.start():
+            self.navigation_task_controller.load_route(main_route)
+            if not self.navigation_task_controller.start():
                 self.btn_auto_nav.setChecked(False)
                 QMessageBox.warning(self, "警告", "路线数据无效，无法启动自动导航")
                 return
@@ -528,7 +523,7 @@ class NavigationModeWidget(QWidget):
                 self.btn_start.setChecked(True)
                 self.toggle_navigation()
                 if not self.nav_timer.isActive():
-                    self.auto_navigator.stop()
+                    self.navigation_task_controller.stop()
                     self.auto_navigation_enabled = False
                     self.btn_auto_nav.setChecked(False)
                     return
@@ -537,7 +532,7 @@ class NavigationModeWidget(QWidget):
             self.status_label.setText("自动导航已启动，等待稳定定位")
         else:
             self.auto_navigation_enabled = False
-            self.auto_navigator.stop()
+            self.navigation_task_controller.stop()
             self._set_game_input_window_mode(False)
             self._render_route_overlay()
             self.status_label.setText("自动导航已停止")
@@ -726,100 +721,7 @@ class NavigationModeWidget(QWidget):
         )
 
     def _reset_event_move_runtime(self):
-        self.event_path_mover.reset()
-
-    def _event_move_lookahead_distance(self) -> float:
-        capture_width = 0
-        if self._current_capture_rect:
-            capture_width = int(self._current_capture_rect.get("width", 0))
-        draw_scale = float(self.nav_core.draw_scale if self.nav_core else self.nav_config.draw_scale)
-        if capture_width <= 0:
-            return 72.0
-        return max(36.0, min(float(capture_width) * draw_scale * 0.18, 120.0))
-
-    def _execute_event_move_to(self, target_global_pos, metadata=None):
-        if not self.nav_core or not self.nav_core.current_pos or not target_global_pos:
-            self._reset_event_move_runtime()
-            event_log(
-                "event move skipped",
-                has_nav_core=self.nav_core is not None,
-                current_pos=getattr(self.nav_core, "current_pos", None) if self.nav_core else None,
-                target=target_global_pos,
-            )
-            return None
-
-        current_pos = (
-            float(self.nav_core.current_pos[0]),
-            float(self.nav_core.current_pos[1]),
-        )
-        target = (
-            float(target_global_pos[0]),
-            float(target_global_pos[1]),
-        )
-        now_ms = int(time.monotonic() * 1000.0)
-        self._set_game_input_window_mode(True)
-        self.motion_controller.set_control_enabled(True)
-        if (metadata or {}).get("force_click_target"):
-            click_info = self.motion_controller.click_map_target_once(
-                current_pos,
-                target,
-                reason=(metadata or {}).get("reason", "force_click_target"),
-            )
-            if click_info:
-                self.event_path_mover.record_click(
-                    now_ms=now_ms,
-                    current_pos=current_pos,
-                    target_pos=target,
-                    subgoal=target,
-                    deviation=0.0,
-                )
-                event_log(
-                    "event forced target click",
-                    target=(int(round(target[0])), int(round(target[1]))),
-                    player=(int(round(current_pos[0])), int(round(current_pos[1]))),
-                    reason=(metadata or {}).get("reason", "force_click_target"),
-                    mapped_target=bool(click_info.get("mapped_target_click", False)),
-                )
-            return click_info
-        move_step = self.event_path_mover.step(
-            current_pos=current_pos,
-            target_pos=target,
-            wall_map=self.nav_core.wall_layer,
-            pathfinder=getattr(self.app_context, "path_finder", None),
-            explored_map=getattr(self.nav_core, "explored_map", None),
-            now_ms=now_ms,
-            lookahead_distance=self._event_move_lookahead_distance(),
-            force_repeat_click=bool((metadata or {}).get("force_repeat_click", False)),
-        )
-        if not move_step or not move_step.should_click or not move_step.subgoal:
-            return None
-
-        click_info = self.motion_controller.move_to_map_target(current_pos, move_step.subgoal)
-        if click_info:
-            self.event_path_mover.record_click(
-                now_ms=now_ms,
-                current_pos=current_pos,
-                target_pos=target,
-                subgoal=move_step.subgoal,
-                deviation=move_step.deviation,
-            )
-        return click_info
-
-    def _execute_event_screen_click(self, screen_pos):
-        self._reset_event_move_runtime()
-        if not screen_pos:
-            event_log("event screen click skipped", screen=screen_pos)
-            return
-        event_log("event screen click", screen=screen_pos)
-        self.motion_controller.click_screen_position(screen_pos, reason="event_click")
-
-    def _execute_event_key_press(self, key):
-        self._reset_event_move_runtime()
-        if not key:
-            event_log("event key press skipped", key=key)
-            return
-        event_log("event key press", key=key)
-        self.motion_controller.press_key(key, reason="event_key")
+        self.navigation_task_controller.movement.reset()
 
     def _run_portal_manual_test(self):
         if self.portal_test_controller.active:
@@ -845,6 +747,9 @@ class NavigationModeWidget(QWidget):
 
     def _set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
         if active:
+            main_route = (self.route_data or {}).get("routes", {}).get("main", {})
+            self.navigation_task_controller.load_route(main_route)
+            self.navigation_task_controller.start()
             self.portal_test_controller.start()
             self._set_game_input_window_mode(True)
             self.motion_controller.set_control_enabled(True)
@@ -1082,7 +987,18 @@ class NavigationModeWidget(QWidget):
         rec_params_dict = self.nav_config.recognizer_params.__dict__
         self.nav_core.recognizer.set_params(rec_params_dict)  # 设置识别器参数
         self.nav_core.draw_scale = self.nav_config.draw_scale  # 设置绘制缩放系数
+        self.nav_core.rebuild_navigation_wall_layer(
+            erode_iterations=self.nav_config.nav_wall_erode_iterations,
+        )
         self.nav_core.last_player_local_pos = None
+        self.app_context.path_finder.start_clear_radius = max(0, int(self.nav_config.path_start_clear_radius))
+        self.app_context.path_finder.walkable_snap_radius = max(0, int(self.nav_config.path_walkable_snap_radius))
+        event_log(
+            "navigation obstacle config applied",
+            nav_wall_erode_iterations=self.nav_config.nav_wall_erode_iterations,
+            path_start_clear_radius=self.app_context.path_finder.start_clear_radius,
+            path_walkable_snap_radius=self.app_context.path_finder.walkable_snap_radius,
+        )
         self._capture_center_physical = None
 
         # 2. 更新地图裁剪偏移量
@@ -1100,11 +1016,7 @@ class NavigationModeWidget(QWidget):
                 movement_max_click_radius=self.nav_config.movement_max_click_radius,
                 bottom_click_guard_pixels=self.nav_config.bottom_click_guard_pixels,
             )
-        self.auto_navigator.configure(
-            click_cooldown_ms=self.nav_config.auto_click_cooldown_ms,
-            min_click_target_delta=self.nav_config.auto_min_click_target_delta,
-            prefer_direct_guidance=False,
-        )
+        self._configure_navigation_task_controller()
 
     def _on_parameter_changed(self, new_config: NavConfig):
         """
@@ -1139,15 +1051,16 @@ class NavigationModeWidget(QWidget):
                 movement_max_click_radius=self.nav_config.movement_max_click_radius,
                 bottom_click_guard_pixels=self.nav_config.bottom_click_guard_pixels,
             )
-        self.auto_navigator.configure(
-            click_cooldown_ms=self.nav_config.auto_click_cooldown_ms,
-            min_click_target_delta=self.nav_config.auto_min_click_target_delta,
-            prefer_direct_guidance=False,
-        )
+        self._configure_navigation_task_controller()
         self._refresh_game_view_rect_from_known_position()
 
         # 更新参数对话框的状态标签，提示用户有未保存的修改
         self.params_dialog.nav_status_label.setText("有未保存的修改")
+
+    def _configure_navigation_task_controller(self):
+        movement = self.navigation_task_controller.movement
+        movement.click_cooldown_ms = max(120, int(self.nav_config.auto_click_cooldown_ms))
+        movement.min_click_target_delta = max(0.0, float(self.nav_config.auto_min_click_target_delta))
 
     def _save_nav_config(self):
         """
@@ -1491,6 +1404,7 @@ class NavigationModeWidget(QWidget):
             无直接异常，配置不完整时弹出警告对话框
         """
         if self.btn_start.isChecked():
+            self._use_unified_navigation_loop()
             # --- 启动导航 ---
             print("DEBUG: '开始导航' button clicked.")
 
@@ -1545,7 +1459,7 @@ class NavigationModeWidget(QWidget):
             self.auto_navigation_enabled = False
             if self.portal_test_controller.active:
                 self._set_portal_manual_test_active(False, reason="navigation stopped")
-            self.auto_navigator.stop()
+            self.navigation_task_controller.stop()
             self._set_game_input_window_mode(False)
             self.btn_auto_nav.setChecked(False)
             self._render_route_overlay()
@@ -1555,22 +1469,32 @@ class NavigationModeWidget(QWidget):
             self.status_label.setText("导航暂停")  # 状态栏提示
             print("DEBUG: Navigation stopped.")
 
-    def navigation_loop(self):
-        """Navigation loop: localize, update overlays, and optionally run auto navigation."""
+    def _use_unified_navigation_loop(self) -> None:
+        try:
+            self.nav_timer.timeout.disconnect(self.navigation_loop)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self.nav_timer.timeout.disconnect(self._navigation_loop_unified)
+        except (TypeError, RuntimeError):
+            pass
+        self.nav_timer.timeout.connect(self._navigation_loop_unified)
+
+    def _navigation_loop_unified(self):
+        """Unified navigation loop: event observation + one task controller."""
         if not self.nav_config or (not self.nav_config.monitor_logical_center and not self.nav_config.monitor_region):
             return
 
         capture_rect, default_player_pos = self._build_capture_geometry()
         if not capture_rect:
             return
-
         self._current_capture_rect = capture_rect
 
         frame = self.app_context.screen_capture.capture(
-            capture_rect['left'],
-            capture_rect['top'],
-            capture_rect['width'],
-            capture_rect['height']
+            capture_rect["left"],
+            capture_rect["top"],
+            capture_rect["width"],
+            capture_rect["height"],
         )
         if frame is None:
             return
@@ -1579,80 +1503,59 @@ class NavigationModeWidget(QWidget):
             player_mask = self.nav_core.recognizer.extract_player(frame)
             player_pos = self.app_context.tracker.detect_player(player_mask)
             if player_pos is None:
-                if self._current_player_local_pos is not None:
-                    player_pos = self._current_player_local_pos
-                else:
-                    player_pos = (capture_rect['width'] // 2, capture_rect['height'] // 2)
+                player_pos = self._current_player_local_pos or (
+                    capture_rect["width"] // 2,
+                    capture_rect["height"] // 2,
+                )
         else:
             player_pos = default_player_pos
-
         self._current_player_local_pos = player_pos
 
         global_x, global_y, conf = self.nav_core.localize(frame, player_pos=player_pos)
         now_ms = int(time.time() * 1000)
         localized_pos = None if global_x is None or global_y is None else (global_x, global_y)
-        auto_action = None
-        event_action = None
-        event_run_enabled = bool(self.auto_navigation_enabled or self.portal_test_controller.active)
-
-        if self.event_coordinator and localized_pos is not None:
+        event_tick = None
+        if self.event_coordinator:
             event_tick = self._build_event_tick(now_ms, frame, player_pos, localized_pos, conf)
-            event_action = self.event_coordinator.update(
-                event_tick,
-                run_handlers=event_run_enabled,
-            )
-            self._render_event_overlay()
-            if self.event_dialog.isVisible():
-                self.event_dialog.refresh_tasks()
-        elif self.event_coordinator and event_run_enabled:
-            event_tick = self._build_event_tick(now_ms, frame, player_pos, None, conf)
-            event_action = self.event_coordinator.update(event_tick, run_handlers=True)
+            self.event_coordinator.observe(event_tick)
             self._render_event_overlay()
             if self.event_dialog.isVisible():
                 self.event_dialog.refresh_tasks()
 
-        event_blocks_auto_navigation = (
-            self._should_event_action_take_control(event_action)
-            or is_terminal_event_action(event_action)
-        )
-        if self.auto_navigation_enabled and not event_blocks_auto_navigation:
-            lookahead = max(36.0, min(float(capture_rect['width']) * self.nav_core.draw_scale * 0.18, 120.0))
-            auto_action = self.auto_navigator.update(
+        intent = None
+        event_run_enabled = bool(self.auto_navigation_enabled or self.portal_test_controller.active)
+        if event_run_enabled:
+            lookahead = max(36.0, min(float(capture_rect["width"]) * self.nav_core.draw_scale * 0.18, 120.0))
+            main_route = (self.route_data or {}).get("routes", {}).get("main", {})
+            intent = self.navigation_task_controller.update(
                 localized_pos=localized_pos,
                 confidence=conf,
-                wall_map=self.nav_core.wall_layer,
+                route=main_route,
+                event_coordinator=self.event_coordinator,
+                event_tick=event_tick,
+                wall_map=self.nav_core.nav_wall_layer,
                 pathfinder=self.app_context.path_finder,
+                explored_map=self.nav_core.explored_map,
                 now_ms=now_ms,
                 lookahead_distance=lookahead,
-                explored_map=self.nav_core.explored_map,
+                manual_event_only=bool(self.portal_test_controller.active and not self.auto_navigation_enabled),
             )
 
         if global_x is not None and global_y is not None:
             offset_x, offset_y = self.nav_core.crop_offset
             display_x = global_x - offset_x
             display_y = global_y - offset_y
-
             if not self.player_item:
                 self.player_item = self.scene.addEllipse(-5, -5, 10, 10, QPen(Qt.red), QBrush(Qt.red))
                 self.player_item.setZValue(2)
-
             self.player_item.setPos(display_x, display_y)
             self.player_item.setVisible(True)
             self._update_monitor_rect((global_x, global_y), capture_rect=capture_rect, player_local_pos=player_pos)
             self._update_game_view_rect((global_x, global_y))
-
             status_text = (
                 f"位置: ({int(global_x)}, {int(global_y)}) | 置信度: {conf:.2f} | "
                 f"监视: {capture_rect['width']}x{capture_rect['height']}"
             )
-            if auto_action:
-                message = auto_action.get('message') or auto_action.get('state')
-                if message:
-                    status_text += f" | 导航: {message}"
-            event_status = self._event_status_text()
-            if event_status:
-                status_text += f" | {event_status}"
-            self.status_label.setText(status_text)
             self.view.centerOn(display_x, display_y)
         else:
             fallback_pos = self.nav_core.last_good_pos or self.nav_core.drawing_saved_pos
@@ -1666,68 +1569,86 @@ class NavigationModeWidget(QWidget):
             if self.player_item:
                 self.player_item.setVisible(False)
             status_text = f"定位中... 监视: {capture_rect['width']}x{capture_rect['height']}"
-            if auto_action:
-                message = auto_action.get('message') or auto_action.get('state')
-                if message:
-                    status_text += f" | 导航: {message}"
-            event_status = self._event_status_text()
-            if event_status:
-                status_text += f" | {event_status}"
-            self.status_label.setText(status_text)
 
-        event_terminal = is_terminal_event_action(event_action)
-        if event_run_enabled and event_blocks_auto_navigation:
-            self.event_action_executor.execute(event_action)
-            if event_terminal:
-                self._reset_event_move_runtime()
-                self._render_route_overlay()
-                if self.event_dialog.isVisible():
-                    self.event_dialog.refresh_tasks()
-            else:
-                self._render_route_overlay(
-                    current_path=self.event_path_mover.path,
-                    current_subgoal=self.event_path_mover.subgoal,
-                    current_target_kind="event",
-                )
-            if event_terminal and self.portal_test_controller.active:
-                self._set_portal_manual_test_active(False, reason=f"event {event_action.type.value}")
-        elif auto_action:
+        if intent:
+            if intent.message:
+                status_text += f" | 导航: {intent.message}"
+            if intent.path_kind and intent.path_kind != "none":
+                status_text += f" | path:{intent.path_kind}"
+        event_status = self._event_status_text()
+        if event_status:
+            status_text += f" | {event_status}"
+        self.status_label.setText(status_text)
+
+        if intent:
             self._render_route_overlay(
-                current_path=auto_action.get('path'),
-                current_subgoal=auto_action.get('subgoal'),
-                current_required_index=auto_action.get('required_index'),
-                current_guide_index=auto_action.get('guide_index'),
-                current_target_kind=auto_action.get('target_kind'),
+                current_path=intent.path,
+                current_subgoal=intent.subgoal,
+                current_required_index=intent.required_index,
+                current_guide_index=None,
+                current_target_kind=intent.task_kind,
             )
-            if (
-                auto_action.get('type') == 'move'
-                and auto_action.get('issued_click')
-                and auto_action.get('player_pos')
-                and auto_action.get('target_pos')
-            ):
-                click_info = self.motion_controller.move_to_map_target(
-                    auto_action['player_pos'],
-                    auto_action['target_pos'],
-                )
-                if click_info:
-                    self.status_label.setText(
-                        f"{self.status_label.text()} | "
-                        f"click r:{click_info['screen_radius']:.0f}/"
-                        f"raw:{click_info.get('raw_screen_radius', 0):.0f}"
-                    )
-            elif auto_action.get('type') in {'arrived', 'failed'}:
+            self._execute_navigation_intent(intent, now_ms)
+            if intent.metadata.get("terminal") and self.portal_test_controller.active:
+                self._set_portal_manual_test_active(False, reason=intent.message)
+            if intent.type == NavigationIntentType.ARRIVED:
                 self.auto_navigation_enabled = False
+                self.navigation_task_controller.stop()
                 self._set_game_input_window_mode(False)
                 self.btn_auto_nav.setChecked(False)
-                if auto_action.get('type') == 'arrived':
-                    self.status_label.setText("已到达出口区域")
-                else:
-                    self.status_label.setText(auto_action.get('message', "自动导航失败"))
+                self.status_label.setText("已到达出口区域")
+            elif intent.type == NavigationIntentType.FAILED:
+                self.auto_navigation_enabled = False
+                self.navigation_task_controller.stop()
+                self._set_game_input_window_mode(False)
+                self.btn_auto_nav.setChecked(False)
+                self.status_label.setText(intent.message or "自动导航失败")
         elif self.route_data:
             self._render_route_overlay()
 
-    def _should_event_action_take_control(self, event_action) -> bool:
-        return should_event_action_take_control(event_action)
+    def _execute_navigation_intent(self, intent, now_ms: int) -> None:
+        if intent is None or intent.type in (NavigationIntentType.NONE, NavigationIntentType.WAIT):
+            return
+        if intent.type == NavigationIntentType.MOVE_MAP:
+            if not intent.player_pos or not intent.subgoal:
+                return
+            self._set_game_input_window_mode(True)
+            self.motion_controller.set_control_enabled(True)
+            if intent.metadata.get("force_click_target"):
+                click_info = self.motion_controller.click_map_target_once(
+                    intent.player_pos,
+                    intent.subgoal,
+                    reason=intent.message or "navigation_forced_target",
+                )
+            else:
+                click_info = self.motion_controller.move_to_map_target(
+                    intent.player_pos,
+                    intent.subgoal,
+                )
+            if click_info:
+                self.navigation_task_controller.record_intent_click(intent, now_ms)
+                self.status_label.setText(
+                    f"{self.status_label.text()} | "
+                    f"click r:{click_info['screen_radius']:.0f}/"
+                    f"raw:{click_info.get('raw_screen_radius', 0):.0f}"
+                )
+            return
+        if intent.type == NavigationIntentType.CLICK_SCREEN:
+            screen_pos = intent.metadata.get("screen_pos")
+            if screen_pos:
+                self._set_game_input_window_mode(True)
+                self.motion_controller.click_screen_position(screen_pos, reason=intent.message or "navigation_event_click")
+            return
+        if intent.type == NavigationIntentType.PRESS_KEY:
+            key = intent.metadata.get("key")
+            if key:
+                self._set_game_input_window_mode(True)
+                self.motion_controller.press_key(key, reason=intent.message or "navigation_event_key")
+            return
+
+    def navigation_loop(self):
+        """Compatibility entry point for the Qt timer; all logic lives in the unified loop."""
+        return self._navigation_loop_unified()
 
     def _event_status_text(self) -> str:
         return event_status_text(self.event_coordinator)

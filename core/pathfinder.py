@@ -9,7 +9,14 @@ class PathFinder:
     针对大地图进行优化：使用降采样网格进行寻路
     """
     
-    def __init__(self, downsample_factor=10, safety_margin=0, wall_shrink_iterations=1):
+    def __init__(
+        self,
+        downsample_factor=10,
+        safety_margin=0,
+        wall_shrink_iterations=0,
+        start_clear_radius=30,
+        walkable_snap_radius=18,
+    ):
         """
         初始化
         
@@ -22,6 +29,8 @@ class PathFinder:
         # 寻路参数
         self.safety_margin = max(0, int(safety_margin))  # 安全边距（像素，原始尺度）
         self.wall_shrink_iterations = max(0, int(wall_shrink_iterations))
+        self.start_clear_radius = max(0, int(start_clear_radius))
+        self.walkable_snap_radius = max(0, int(walkable_snap_radius))
     
     def find_path(self, wall_map, start_pos, end_pos, explored_map=None):
         """
@@ -54,6 +63,7 @@ class PathFinder:
             
         # 2. 地图预处理（先让墙体变薄，再降采样）
         obstacle_map = self._build_obstacle_map(wall_map, grid_w, grid_h, explored_map=explored_map)
+        obstacle_map = self._clear_start_area(obstacle_map, start_grid)
         
         # 检查起点和终点是否在障碍物内
         # 如果起点在墙内（可能是误差），尝试找最近的空地
@@ -128,6 +138,28 @@ class PathFinder:
         kernel_size = grid_margin * 2 + 1
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         return cv2.dilate(binary_map, kernel)
+
+    def _clear_start_area(self, obstacle_map, start_grid):
+        """Forgive local wall noise around the live player position."""
+        radius = int(round(self.start_clear_radius / max(1, self.downsample_factor)))
+        if radius <= 0:
+            return obstacle_map
+
+        cleared = obstacle_map.copy()
+        h, w = cleared.shape
+        cx, cy = int(start_grid[0]), int(start_grid[1])
+        x1 = max(0, cx - radius)
+        y1 = max(0, cy - radius)
+        x2 = min(w, cx + radius + 1)
+        y2 = min(h, cy + radius + 1)
+        if x1 >= x2 or y1 >= y2:
+            return cleared
+
+        local = cleared[y1:y2, x1:x2]
+        mask = np.zeros_like(local, dtype=np.uint8)
+        cv2.circle(mask, (cx - x1, cy - y1), radius, 255, -1)
+        local[mask > 0] = 0
+        return cleared
         
     def _astar(self, grid, start, end):
         """A* 算法实现"""
@@ -198,10 +230,15 @@ class PathFinder:
             total_path.append(current)
         return total_path[::-1]  # 反转列表
         
-    def _find_nearest_walkable(self, grid, pos, max_radius=10):
+    def _find_nearest_walkable(self, grid, pos, max_radius=None):
         """在给定半径内寻找最近的空地"""
         h, w = grid.shape
         cx, cy = pos
+        if max_radius is None:
+            max_radius = max(
+                1,
+                int(round(self.walkable_snap_radius / max(1, self.downsample_factor))),
+            )
         
         for r in range(1, max_radius + 1):
             for dy in range(-r, r + 1):

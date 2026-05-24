@@ -77,6 +77,7 @@ class HSVRecognizer:
         # 饱和度过滤参数 (新增：支持蓝色地图)
         self.sat_filter_enabled = True
         self.sat_filter_thresh = 40
+        self.player_clear_radius = 22
         self.sat_filter_radius = 0  # 0=全局过滤(白图模式), >0=仅过滤玩家周围(蓝图模式)
 
     def get_params(self):
@@ -112,6 +113,7 @@ class HSVRecognizer:
             'transparent_mode': self.transparent_mode,
             'sat_filter_thresh': self.sat_filter_thresh,
             'sat_filter_radius': self.sat_filter_radius,
+            'player_clear_radius': self.player_clear_radius,
 
             # Weights
             'wall_weight': self.wall_weight,
@@ -164,6 +166,7 @@ class HSVRecognizer:
         if 'transparent_mode' in params: self.transparent_mode = params['transparent_mode']
         if 'sat_filter_thresh' in params: self.sat_filter_thresh = params['sat_filter_thresh']
         if 'sat_filter_radius' in params: self.sat_filter_radius = params['sat_filter_radius']
+        if 'player_clear_radius' in params: self.player_clear_radius = max(0, int(params['player_clear_radius']))
 
         # Weights
         if 'wall_weight' in params: self.wall_weight = params['wall_weight']
@@ -523,10 +526,11 @@ class HSVRecognizer:
         else:
             cx, cy = w // 2, h // 2
 
-        radius = 22
-        cv2.circle(wall_mask, (cx, cy), radius, 0, -1)
-        cv2.circle(fog_mask, (cx, cy), radius, 0, -1)
-        cv2.circle(edges, (cx, cy), radius, 0, -1)
+        radius = int(self.player_clear_radius)
+        if radius > 0:
+            cv2.circle(wall_mask, (cx, cy), radius, 0, -1)
+            cv2.circle(fog_mask, (cx, cy), radius, 0, -1)
+            cv2.circle(edges, (cx, cy), radius, 0, -1)
         
         # 4. ⭐ 关键优化：配准mask = 墙体 + 边缘，不混入灰度图
         ww = max(0, self.wall_weight)
@@ -538,7 +542,8 @@ class HSVRecognizer:
 
         # 只融合墙体和边缘（用于配准）
         match_mask = cv2.addWeighted(wall_mask, a, edges, b, 0)
-        cv2.circle(match_mask, (cx, cy), radius, 0, -1)
+        if radius > 0:
+            cv2.circle(match_mask, (cx, cy), radius, 0, -1)
 
         # 确保输出是uint8
         match_mask = match_mask.astype(np.uint8)

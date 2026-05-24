@@ -312,6 +312,16 @@ class NavParametersDialog(QDialog):
         self.nav_bottom_click_guard_spin.setRange(0, 1200)
         self.nav_bottom_click_guard_spin.setSingleStep(20)
 
+        self.nav_wall_erode_iterations_spin = QSpinBox()
+        self.nav_wall_erode_iterations_spin.setRange(0, 5)
+        self.nav_wall_erode_iterations_spin.setSingleStep(1)
+        self.nav_path_start_clear_radius_spin = QSpinBox()
+        self.nav_path_start_clear_radius_spin.setRange(0, 200)
+        self.nav_path_start_clear_radius_spin.setSingleStep(5)
+        self.nav_path_walkable_snap_radius_spin = QSpinBox()
+        self.nav_path_walkable_snap_radius_spin.setRange(0, 200)
+        self.nav_path_walkable_snap_radius_spin.setSingleStep(5)
+
         self.nav_auto_click_radius_btn = QPushButton("自动估算点击半径")
 
         # 地图精度显示（只读）
@@ -346,6 +356,9 @@ class NavParametersDialog(QDialog):
         info_layout.addRow("自动点击冷却(ms):", self.nav_auto_click_cooldown_spin)
         info_layout.addRow("自动点击目标变化阈值:", self.nav_auto_min_target_delta_spin)
         info_layout.addRow("底部禁点区域(px):", self.nav_bottom_click_guard_spin)
+        info_layout.addRow("A* 墙体侵蚀次数:", self.nav_wall_erode_iterations_spin)
+        info_layout.addRow("A* 起点清空半径(地图像素):", self.nav_path_start_clear_radius_spin)
+        info_layout.addRow("A* 起终点吸附半径(地图像素):", self.nav_path_walkable_snap_radius_spin)
         info_layout.addRow(self.nav_auto_click_radius_btn)
         info_layout.addRow("地图精度 (Draw Scale):", self.nav_info_draw_scale)
         info_layout.addRow("逻辑中心 (建图继承):", self.nav_info_logical_center)
@@ -421,6 +434,9 @@ class NavParametersDialog(QDialog):
             self.nav_auto_click_cooldown_spin: (None, "auto_click_cooldown_ms"),
             self.nav_auto_min_target_delta_spin: (None, "auto_min_click_target_delta"),
             self.nav_bottom_click_guard_spin: (None, "bottom_click_guard_pixels"),
+            self.nav_wall_erode_iterations_spin: (None, "nav_wall_erode_iterations"),
+            self.nav_path_start_clear_radius_spin: (None, "path_start_clear_radius"),
+            self.nav_path_walkable_snap_radius_spin: (None, "path_walkable_snap_radius"),
             self.nav_fps_spin: (None, "fps"),
         }
 
@@ -625,6 +641,9 @@ class NavParametersDialog(QDialog):
         self.nav_auto_click_cooldown_spin.setValue(config.auto_click_cooldown_ms)
         self.nav_auto_min_target_delta_spin.setValue(config.auto_min_click_target_delta)
         self.nav_bottom_click_guard_spin.setValue(config.bottom_click_guard_pixels)
+        self.nav_wall_erode_iterations_spin.setValue(config.nav_wall_erode_iterations)
+        self.nav_path_start_clear_radius_spin.setValue(config.path_start_clear_radius)
+        self.nav_path_walkable_snap_radius_spin.setValue(config.path_walkable_snap_radius)
 
         # 更新角色屏幕坐标显示
         if config.game_screen_center:

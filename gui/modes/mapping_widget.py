@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QTextEdit, QApplication, QComboBox, QDoubleSpinBox,
     QInputDialog, QMessageBox
 )
-from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtCore import Qt, QTimer, QPoint, QSignalBlocker
 
 from ..selection.region_overlay import TransparentOverlay
 from ..selection.center_selector import CenterPointSelector
@@ -31,6 +31,7 @@ from .mapping.params_adapter import (
     apply_hsv_toggles,
     apply_merge_weight,
     feature_params_from_widgets,
+    sync_geometry_widgets,
     sync_recognizer_widgets,
     sync_stitcher_widgets,
 )
@@ -129,6 +130,49 @@ class MappingWidget(QWidget):
         
         monitor_group.setLayout(monitor_layout)
         layout.addWidget(monitor_group)
+
+        geometry_group = QGroupBox("3. 高清绘图参数 (新地图生效)")
+        geometry_layout = QVBoxLayout()
+
+        self.draw_scale_spin = QDoubleSpinBox()
+        self.draw_scale_spin.setRange(1.0, 4.0)
+        self.draw_scale_spin.setSingleStep(0.5)
+        self.draw_scale_spin.setDecimals(1)
+        self.draw_scale_spin.setValue(float(self.app_context.stitcher.draw_scale))
+        self.draw_scale_spin.valueChanged.connect(self.update_geometry_params)
+        geometry_layout.addWidget(QLabel("绘图倍率 Draw Scale"))
+        geometry_layout.addWidget(self.draw_scale_spin)
+
+        self.canvas_size_spin = QSpinBox()
+        self.canvas_size_spin.setRange(3000, 12000)
+        self.canvas_size_spin.setSingleStep(500)
+        self.canvas_size_spin.setValue(int(self.app_context.stitcher.canvas_size))
+        self.canvas_size_spin.valueChanged.connect(self.update_geometry_params)
+        geometry_layout.addWidget(QLabel("画布大小 Canvas Size"))
+        geometry_layout.addWidget(self.canvas_size_spin)
+
+        self.player_clear_radius_spin = QSpinBox()
+        self.player_clear_radius_spin.setRange(0, 120)
+        self.player_clear_radius_spin.setSingleStep(2)
+        self.player_clear_radius_spin.setValue(int(getattr(self.app_context.recognizer, "player_clear_radius", 22)))
+        self.player_clear_radius_spin.valueChanged.connect(self.update_geometry_params)
+        geometry_layout.addWidget(QLabel("人物动态擦除半径(小地图像素)"))
+        geometry_layout.addWidget(self.player_clear_radius_spin)
+
+        self.wall_close_kernel_spin = QSpinBox()
+        self.wall_close_kernel_spin.setRange(1, 15)
+        self.wall_close_kernel_spin.setSingleStep(2)
+        self.wall_close_kernel_spin.setValue(int(getattr(self.app_context.stitcher, "wall_close_kernel_size", 3)))
+        self.wall_close_kernel_spin.valueChanged.connect(self.update_geometry_params)
+        geometry_layout.addWidget(QLabel("墙体闭运算核(奇数)"))
+        geometry_layout.addWidget(self.wall_close_kernel_spin)
+
+        geometry_hint = QLabel("draw_scale/canvas_size 只在重置地图后生效；推荐 3.0 + 7500。")
+        geometry_hint.setWordWrap(True)
+        geometry_layout.addWidget(geometry_hint)
+
+        geometry_group.setLayout(geometry_layout)
+        layout.addWidget(geometry_group)
 
         # Merge Parameters
         merge_group = QGroupBox("3. 融合参数 (Weighted Merge)")
@@ -429,6 +473,21 @@ class MappingWidget(QWidget):
     def update_merge_params(self):
         apply_merge_weight(self.app_context.stitcher, self.weight_spin)
 
+    def update_geometry_params(self):
+        if self._stitcher_is_empty():
+            self.app_context.stitcher.reinitialize_canvas(
+                canvas_size=self.canvas_size_spin.value(),
+                draw_scale=self.draw_scale_spin.value(),
+                wall_close_kernel_size=self.wall_close_kernel_spin.value(),
+            )
+        self.app_context.recognizer.set_params({
+            "player_clear_radius": self.player_clear_radius_spin.value(),
+        })
+        self.app_context.stitcher.set_params({
+            "wall_close_kernel_size": self.wall_close_kernel_spin.value(),
+        })
+        self.save_config()
+
     def open_advanced_settings(self):
         current_params = self.app_context.recognizer.get_params()
         stitcher_params = self.app_context.stitcher.get_params()
@@ -442,10 +501,18 @@ class MappingWidget(QWidget):
             self.save_config()
 
     def reset_map(self):
-        self.app_context.stitcher.reset()
+        self.app_context.stitcher.reinitialize_canvas(
+            canvas_size=self.canvas_size_spin.value(),
+            draw_scale=self.draw_scale_spin.value(),
+            wall_close_kernel_size=self.wall_close_kernel_spin.value(),
+        )
+        self.app_context.recognizer.set_params({
+            "player_clear_radius": self.player_clear_radius_spin.value(),
+        })
         self.app_context.tracker.reset()
         self.global_map_widget.set_image(None)
         self.stats_text.clear()
+        self.save_config()
 
     def save_map(self):
         map_name, ok = QInputDialog.getText(self, '保存地图', '请输入地图名称:')
@@ -455,13 +522,13 @@ class MappingWidget(QWidget):
         
         self.app_context.stitcher.save_map_package(str(map_folder))
         
-        config_data = build_mapping_config(self.app_context, self.fps_spin.value(), include_draw_scale=True)
+        config_data = self._build_mapping_config_with_ui_overrides(include_draw_scale=True)
         save_map_config(map_folder, config_data)
         
         QMessageBox.information(self, "成功", f"地图 '{map_name}' 已保存!")
 
     def save_config(self):
-        config = build_mapping_config(self.app_context, self.fps_spin.value())
+        config = self._build_mapping_config_with_ui_overrides()
         save_root_config(__file__, config)
 
     def load_saved_params(self):
@@ -504,11 +571,60 @@ class MappingWidget(QWidget):
 
 
             if 'stitcher_params' in config:
+                if self._stitcher_is_empty():
+                    self.app_context.stitcher.reinitialize_canvas(
+                        canvas_size=config['stitcher_params'].get("canvas_size", self.app_context.stitcher.canvas_size),
+                        draw_scale=config['stitcher_params'].get("draw_scale", self.app_context.stitcher.draw_scale),
+                        wall_close_kernel_size=config['stitcher_params'].get(
+                            "wall_close_kernel_size",
+                            getattr(self.app_context.stitcher, "wall_close_kernel_size", 3),
+                        ),
+                    )
                 self.app_context.stitcher.set_params(config['stitcher_params'])
                 sync_stitcher_widgets(config['stitcher_params'], weight_spin=self.weight_spin)
 
+            blockers = [
+                QSignalBlocker(self.draw_scale_spin),
+                QSignalBlocker(self.canvas_size_spin),
+                QSignalBlocker(self.player_clear_radius_spin),
+                QSignalBlocker(self.wall_close_kernel_spin),
+            ]
+            try:
+                sync_geometry_widgets(
+                    config.get('recognizer_params', {}),
+                    config.get('stitcher_params', {}),
+                    draw_scale_spin=self.draw_scale_spin,
+                    canvas_size_spin=self.canvas_size_spin,
+                    player_clear_radius_spin=self.player_clear_radius_spin,
+                    wall_close_kernel_spin=self.wall_close_kernel_spin,
+                )
+            finally:
+                del blockers
+
         except (json.JSONDecodeError, KeyError) as e:
             print(f"配置文件 'config.json' 加载失败或格式错误: {e}")
+
+    def _build_mapping_config_with_ui_overrides(self, *, include_draw_scale: bool = False) -> dict:
+        config = build_mapping_config(
+            self.app_context,
+            self.fps_spin.value(),
+            include_draw_scale=include_draw_scale,
+        )
+        stitcher_params = dict(config.get("stitcher_params", {}))
+        stitcher_params["draw_scale"] = float(self.draw_scale_spin.value())
+        stitcher_params["canvas_size"] = int(self.canvas_size_spin.value())
+        stitcher_params["wall_close_kernel_size"] = int(self.wall_close_kernel_spin.value())
+        config["stitcher_params"] = stitcher_params
+        if include_draw_scale:
+            config["draw_scale"] = float(self.draw_scale_spin.value())
+
+        recognizer_params = dict(config.get("recognizer_params", {}))
+        recognizer_params["player_clear_radius"] = int(self.player_clear_radius_spin.value())
+        config["recognizer_params"] = recognizer_params
+        return config
+
+    def _stitcher_is_empty(self) -> bool:
+        return int(self.app_context.stitcher.stats.get("total_frames", 0)) == 0
 
     def update_topmost(self):
         if self.topmost_check.isChecked():

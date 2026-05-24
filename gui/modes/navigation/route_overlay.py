@@ -85,18 +85,9 @@ def render_route_overlay(
         mapped = global_to_scene(point, nav_core)
         if mapped is None:
             continue
-        is_completed = (
-            current_guide_index is not None
-            and (index - 1) < current_guide_index
-        )
-        is_current = (
-            current_target_kind == "guide"
-            and current_guide_index is not None
-            and (index - 1) == current_guide_index
-        )
-        color = QColor(0, 200, 255) if not is_completed else QColor(120, 120, 120)
-        pen_width = 3 if is_current else 2
-        radius = 5 if is_current else 4
+        color = QColor(0, 200, 255)
+        pen_width = 2
+        radius = 4
         ellipse = scene.addEllipse(
             mapped[0] - radius,
             mapped[1] - radius,
@@ -107,7 +98,7 @@ def render_route_overlay(
         )
         ellipse.setZValue(4)
         items.append(ellipse)
-        text = scene.addText(str(index))
+        text = scene.addText(f"A{index}")
         text.setDefaultTextColor(color)
         text.setPos(mapped[0] + 6, mapped[1] - 10)
         text.setZValue(4)

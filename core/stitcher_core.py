@@ -55,10 +55,11 @@ class MapStitcher:
     - 这样可以将累积误差降低 N 倍 (N=关键帧间隔)。
     """
 
-    def __init__(self, canvas_size=6000, draw_scale=2.0):
+    def __init__(self, canvas_size=6000, draw_scale=2.0, wall_close_kernel_size=3):
         """初始化"""
-        self.canvas_size = canvas_size
-        self.draw_scale = draw_scale
+        self.canvas_size = int(canvas_size)
+        self.draw_scale = float(draw_scale)
+        self.wall_close_kernel_size = max(1, int(wall_close_kernel_size))
 
         # 全局画布
         # 使用稀疏矩阵思想？不，OpenCV图像必须是Dense的。
@@ -66,17 +67,17 @@ class MapStitcher:
         # 但如果是 float32 权重层，那就是 1.6GB，稍微有点大。
         # 我们需要保持 weight_layer 为 float32 以进行精确累积。
         # 总内存占用约 2GB，对于现代PC没问题。
-        self.canvas = np.zeros((canvas_size, canvas_size), dtype=np.uint8)
-        self.wall_layer = np.zeros((canvas_size, canvas_size), dtype=np.uint8)
-        self.fog_layer = np.zeros((canvas_size, canvas_size), dtype=np.uint8)
-        self.explored_map = np.zeros((canvas_size, canvas_size), dtype=np.uint8)
+        self.canvas = np.zeros((self.canvas_size, self.canvas_size), dtype=np.uint8)
+        self.wall_layer = np.zeros((self.canvas_size, self.canvas_size), dtype=np.uint8)
+        self.fog_layer = np.zeros((self.canvas_size, self.canvas_size), dtype=np.uint8)
+        self.explored_map = np.zeros((self.canvas_size, self.canvas_size), dtype=np.uint8)
         
         # 权重层 (用于置信度融合)
-        self.weight_layer = np.zeros((canvas_size, canvas_size), dtype=np.float32)
+        self.weight_layer = np.zeros((self.canvas_size, self.canvas_size), dtype=np.float32)
 
         # 核心坐标 (高精度 float)
-        self.current_x = float(canvas_size // 2)
-        self.current_y = float(canvas_size // 2)
+        self.current_x = float(self.canvas_size // 2)
+        self.current_y = float(self.canvas_size // 2)
 
         # 关键帧锚点系统
         self.keyframe_mask = None      # 当前锁定的关键帧图像
@@ -132,6 +133,8 @@ class MapStitcher:
             self.use_precise_visibility_mask = bool(params['use_precise_visibility_mask'])
         if 'precise_visibility_min_pixels' in params:
             self.precise_visibility_min_pixels = max(0, int(params['precise_visibility_min_pixels']))
+        if 'wall_close_kernel_size' in params:
+            self.wall_close_kernel_size = max(1, int(params['wall_close_kernel_size']))
         # 注意：canvas_size 和 draw_scale 通常不应该通过 set_params 修改
         # 因为它们会影响画布的初始化，需要重新创建画布
         # 如果确实需要修改，需要更复杂的逻辑来处理画布重建
@@ -146,9 +149,20 @@ class MapStitcher:
             'draw_quality_gate': self.draw_quality_gate,
             'use_precise_visibility_mask': self.use_precise_visibility_mask,
             'precise_visibility_min_pixels': self.precise_visibility_min_pixels,
+            'wall_close_kernel_size': self.wall_close_kernel_size,
             'canvas_size': self.canvas_size,
             'draw_scale': self.draw_scale
         }
+
+    def reinitialize_canvas(self, *, canvas_size=None, draw_scale=None, wall_close_kernel_size=None) -> None:
+        """Reset the drawing canvas before starting a new high-resolution map."""
+        self.__init__(
+            canvas_size=int(canvas_size if canvas_size is not None else self.canvas_size),
+            draw_scale=float(draw_scale if draw_scale is not None else self.draw_scale),
+            wall_close_kernel_size=int(
+                wall_close_kernel_size if wall_close_kernel_size is not None else self.wall_close_kernel_size
+            ),
+        )
 
     def save_map_package(self, folder_path):
         """
@@ -168,7 +182,8 @@ class MapStitcher:
             wall_layer=self.wall_layer,
             fog_layer=self.fog_layer,
             current_pos=np.array([self.current_x, self.current_y]),
-            canvas_size=self.canvas_size
+            canvas_size=self.canvas_size,
+            draw_scale=self.draw_scale,
         )
         print(f"地图数据已保存至: {folder_path}")
 
@@ -582,7 +597,10 @@ class MapStitcher:
     def standardize_wall_thickness(self, mask):
         """简单的形态学处理"""
         # 闭运算连接断点
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        size = max(1, int(self.wall_close_kernel_size))
+        if size % 2 == 0:
+            size += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
         return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     def _check_bounds(self, x1, y1, x2, y2):

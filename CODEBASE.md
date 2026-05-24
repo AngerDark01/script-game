@@ -33,9 +33,18 @@ gui/modes/mapping/params_adapter.py - 绘图模式参数控件与 recognizer/sti
 gui/modes/mapping/save_load.py - 绘图模式项目路径、map_data 目录和 config.json 读写 helper。
 core/navigation_core.py - 导航定位核心，将实时小地图截图匹配到全局地图坐标。
 core/stitcher_core.py - 建图拼接核心，维护 wall_layer/explored_map/current_pos。
+core/navigation_obstacles.py - 从原始 wall_layer 派生 A* 专用的宽容障碍层，不改变定位用墙图。
 core/pathfinder.py - A* 寻路，输入输出地图全局坐标。
 core/path_utils.py - 路径平滑、投影、插值、出口区域判断工具。
-core/auto_navigator.py - 自动导航状态机，输出路径子目标和是否应点击。
+core/anchor_path.py - 可选软锚点路径规划工具，供统一移动执行器把途经点作为有序锚点走廊。
+core/navigation_tasks/__init__.py - 统一导航任务控制器包入口。
+core/navigation_tasks/models.py - required/exit/event 统一任务、移动步骤和动作意图数据模型。
+core/navigation_tasks/route_context.py - 用户辅助锚点折线投影、路线进度和前方锚点查询。
+core/navigation_tasks/movement_executor.py - 普通路线和事件目标共用的 A*、锚点 lookahead、点击节流执行器。
+core/navigation_tasks/task_builder.py - 把 route.json 静态目标和 EventMemory 动态事件任务合并成 NavigationTask 列表。
+core/navigation_tasks/scheduler.py - 在 required、exit、event 中选择当前应处理任务。
+core/navigation_tasks/controller.py - 统一导航任务控制器，输出 MOVE_MAP/CLICK_SCREEN/PRESS_KEY/ARRIVED/FAILED 意图。
+core/navigation_tasks/debug.py - 将导航任务日志写入事件运行日志。
 core/motion_controller.py - 将地图方向转换成真实屏幕鼠标点击。
 core/events/models.py - 事件系统通用数据结构和动作类型。
 core/events/config.py - 事件配置默认值、地图级 event_config.json 加载/保存和 TUI 事件选项输出。
@@ -46,9 +55,7 @@ core/events/monitor.py - 调用启用事件的 detector，并缓存 detector 避
 core/events/scheduler.py - 在 pending/running 事件中选择当前处理任务。
 core/events/runner.py - 启动事件 handler 并根据 COMPLETE/FAIL 更新 memory。
 core/events/position_stabilizer.py - 通过当前帧墙体配准把事件局部候选投影到全局地图，并用多帧聚类输出稳定事件坐标。
-core/events/path_mover.py - 事件 MOVE_TO 动作专用 A* 路径、lookahead 子目标和点击节流模块。
 core/events/capture_provider.py - 为事件 handler 提供小地图/主画面截图来源。
-core/events/action_executor.py - 执行事件返回的 MOVE_TO/CLICK_SCREEN/PRESS_KEY/WAIT 等通用动作。
 core/events/window_finder.py - Windows 游戏窗口枚举、DPI awareness 和窗口矩形获取。
 core/events/detectors/template_matcher.py - 多模板、多尺度图标匹配通用工具。
 core/events/types/portal/definition.py - `portal` 完整事件包对外定义。
@@ -61,10 +68,15 @@ assets/event_detectors/portal/main_view/blue_glow_detector_v1.json - 大画面�
 assets/event_detectors/portal/main_view/README.md - 大画面传送门检测资产说明和复现命令。
 utils/event_icon_probe.py - 独立事件图标探针，用原始小地图截图验证多模板匹配。
 utils/portal_screen_probe.py - 独立大画面传送门探针，用游戏窗口截图验证蓝紫发光实体识别。
+utils/route_context_probe.py - 离线打印 route.json 中辅助锚点、必经点和出口的路线进度。
+utils/navigation_task_probe.py - 离线打印统一导航任务列表，确认 required/exit/event 的投影顺序。
 docs/plans/2026-05-22-event-system-design.md - 事件系统模块边界、传送门事件 v1 和探针结果记录。
 docs/plans/2026-05-22-event-system-architecture-design.md - 审核通过的事件系统代码结构架构设计。
 docs/plans/2026-05-22-event-system-implementation-plan.md - 事件系统 TDD 实现任务拆分计划。
-tests/test_auto_navigator.py - 自动导航状态机行为测试。
+docs/plans/2026-05-23-portal-event-case-study.md - 以传送门为案例固化事件四阶段方法论，并检查当前代码架构的通用化边界。
+docs/plans/2026-05-24-navigation-route-progress-option-b-design.md - 导航冲突方案 B 设计：保留现有普通导航和事件移动执行器，新增统一路线进度/锚点消费模型。
+docs/plans/2026-05-24-navigation-task-queue-option-c-design.md - 导航冲突方案 C 设计：把必经点、出口和事件抽象成统一 NavigationTask，由统一任务队列状态机调度。
+docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md - 用户选定方案 C 后的详细实施计划，按 RouteContext、MovementExecutor、EventCoordinator 拆分、TaskBuilder/Scheduler/Controller、UI 接入和旧逻辑清理分阶段执行。
 tests/test_motion_controller.py - 点击半径夹紧逻辑测试。
 ```
 
@@ -83,9 +95,9 @@ Level 2
 └──────┬───────┘
        ├──▶ MappingWidget ──▶ MapStitcher ──▶ map_data.npz/config.json
        └──▶ NavigationModeWidget ──▶ NavigationCore ──▶ global player pos
-                                  ├──▶ AutoNavigator ──▶ map subgoal
-                                  ├──▶ EventCoordinator ──▶ event task/action
-                                  └──▶ MotionController ──▶ Win32 mouse_event click
+                                  ├──▶ EventCoordinator.observe/run_task
+                                  ├──▶ NavigationTaskController ──▶ NavigationIntent
+                                  └──▶ MotionController ──▶ Win32 mouse_event / key input
 ```
 
 ```text
@@ -97,11 +109,11 @@ Level 3: navigation click path
 └──────────┬───────────┘
            ▼
 ┌──────────────────────┐
-│ AutoNavigator.update │
-│ map pos -> path      │
-│ path -> subgoal      │
-└──────────┬───────────┘
-           ▼ issued_click=True
+│ NavigationTaskController │
+│ select route/event task  │
+│ MovementExecutor -> step │
+└──────────┬───────────────┘
+           ▼ MOVE_MAP intent
 ┌────────────────────────────┐
 │ MotionController           │
 │ normalize map direction    │
@@ -118,10 +130,10 @@ Level 3: navigation click path
 职责：定义导航配置数据模型，并把地图 `config.json` 转换为运行时 `NavConfig`。
 关键导出：`NavConfig`、`RecognizerParams`、`NavPreferences`、`_parse_hsv_list`。
 对外依赖：无内部模块依赖。
-注意事项：`monitor_size`/`draw_scale` 服务定位一致性；`game_view_map_size` 和点击半径参数服务主画面移动控制，不能反向影响定位。
+注意事项：`monitor_size`/`draw_scale` 服务定位一致性；`game_view_map_size` 和点击半径参数服务主画面移动控制，不能反向影响定位。`RecognizerParams` 严格接收当前代码声明的字段，包含绘图页写入的 `player_clear_radius`；未知字段不做静默过滤，配置和代码不一致时应直接暴露。
 
 ### `core/motion_controller.py`
-职责：把 `AutoNavigator` 给出的地图全局子目标转换为屏幕物理坐标点击。
+职责：把 `NavigationTaskController` 输出的地图全局子目标转换为屏幕物理坐标点击。
 关键导出：`MotionController`。
 对外依赖：`core.input_driver.InputDriver`；`pydirectinput.click` 仅为异常兜底。
 注意事项：当前不负责寻路、不负责定位，只处理“地图方向 -> 屏幕点击”。`movement_scale_factor` 先得到原始屏幕半径，再由 `movement_min_click_radius`/`movement_max_click_radius` 夹紧；底部 UI 防误点由 `bottom_click_guard_pixels` 在最终点击前单独处理，不反向修改移动比例。事件系统的显式屏幕点击走 `click_screen_position()`，事件按键走 `press_key()`，避免 handler 直接调用私有输入细节。
@@ -177,13 +189,13 @@ Level 3: navigation click path
 ### `gui/modes/navigation_mode.py`
 职责：导航模式 UI 与运行循环，包含地图加载、定位、路线编辑、自动导航动作消费、绿色定位框和橙色真实可见框绘制。
 关键导出：`NavigationModeWidget`。
-对外依赖：`NavigationCore`、`MotionController`、`AutoNavigator`、`RouteManager`、`EventCoordinator`、`EventPathMover`、`ManualEventTestController`、`navigation.event_adapter`、`navigation.route_overlay`、`navigation.event_overlay`。
-注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`guide_points` 构成可被 A* 逐段追踪的路线骨架，`required_points` 是必须按顺序完成的阶段门，状态机按路线进度判断当前应追普通点还是必经点，并通过 `target_kind` 控制覆盖层只高亮真正当前目标。加载地图时初始化事件 registry/config/coordinator；导航循环每帧通过 `navigation.event_adapter.build_event_tick()` 构造 `EventTick`，事件动作在自动导航开启或手动事件测试开启时优先于普通 auto move 执行。事件 MOVE_TO 不再在本文件内维护路径细节，而是委托 `EventPathMover`；传送门测试按钮文本/选中状态由 `ManualEventTestController` 维护。自动导航开启时会持续运行事件 handler；事件 `MOVE_TO/WAIT/PRESS_KEY/CLICK_SCREEN/COMPLETE/FAIL` 占用当前帧，普通路线导航从下一帧恢复，避免传送门完成帧同时推进主路线。事件管理窗口可见时，导航循环只调用 `EventManagerDialog.refresh_tasks()` 更新任务表，完整 `refresh()` 留给手动刷新、上下文切换和配置变化。路线 overlay 与事件 overlay 的 QGraphicsItem 创建/清理由 `gui/modes/navigation/route_overlay.py` 和 `event_overlay.py` 承担，`NavigationModeWidget` 保留原 `_render_*`/`_clear_*` 方法作为兼容委托入口。事件 registry 默认创建、配置摘要、窗口查找、action 接管判定和事件状态文案由 `event_adapter.py` 承担。本文件不再打印每帧“当前位置/位置来源”调试块，事件操作过程应走 `event_log()`。
+对外依赖：`NavigationCore`、`MotionController`、`NavigationTaskController`、`RouteManager`、`EventCoordinator`、`ManualEventTestController`、`navigation.event_adapter`、`navigation.route_overlay`、`navigation.event_overlay`。
+注意事项：绿色框来自 `capture_rect * draw_scale`，表示小地图截图定位范围；橙色框来自 `game_view_map_size`，表示主游戏画面真实可见/可交互范围。路线编辑分为两类点：`required_points` 是必须按顺序完成的阶段门；`guide_points` 是有序软锚点/辅助走廊，只在 `MovementExecutor` 规划 required、exit 或 event 目标时塑形路线，不作为独立导航目标。导航循环每帧先定位，再通过 `EventCoordinator.observe()` 持续检测/定位/记忆事件，随后由 `NavigationTaskController.update()` 在 required、exit、event 之间统一调度并输出 `NavigationIntent`。事件被选中后才调用 `EventCoordinator.run_task()` 推进 handler；事件 `MOVE_TO` 与普通目标共用同一个 `MovementExecutor`，事件 `PRESS_KEY/CLICK_SCREEN` 也统一在 `_execute_navigation_intent()` 中消费。传送门手动测试只是把 controller 置为 manual-event-only 模式，不再走单独事件移动链路。事件管理窗口可见时，导航循环只调用 `EventManagerDialog.refresh_tasks()` 更新任务表，完整 `refresh()` 留给手动刷新、上下文切换和配置变化。路线 overlay 与事件 overlay 的 QGraphicsItem 创建/清理由 `gui/modes/navigation/route_overlay.py` 和 `event_overlay.py` 承担。本文件不再打印每帧“当前位置/位置来源”调试块，导航/事件操作过程走 `logs/event_runtime.log`。
 ### `gui/modes/navigation/event_adapter.py`
 职责：封装导航模式和事件系统之间的轻量桥接，不推进事件状态机。
 关键导出：`create_default_event_registry`、`event_config_summary`、`find_default_game_window_rect`、`build_event_tick`、`should_event_action_take_control`、`is_terminal_event_action`、`event_status_text`。
 对外依赖：`core.events.models.EventTick/EventActionType`、`core.events.registry.EventRegistry`、`core.events.types.portal.PortalEventDefinition`、`core.events.window_finder.find_game_window`。
-注意事项：该模块只组装事件系统需要的输入或判断 action 类型；`EventCoordinator.update()`、handler 生命周期和真实输入执行仍由原有模块/页面调用方负责。
+注意事项：该模块只组装事件系统需要的输入和状态文案；当前主链路不再使用 action 接管判定函数，事件 handler 的执行由 `NavigationTaskController` 通过 `EventCoordinator.run_task()` 触发，真实输入由 `_execute_navigation_intent()` 统一消费。
 ### `gui/modes/navigation/event_overlay.py`
 职责：封装导航地图事件 marker 的 QGraphics 绘制和清理。
 关键导出：`clear_event_overlay`、`global_to_scene`、`render_event_overlay`。
@@ -198,7 +210,7 @@ Level 3: navigation click path
 职责：封装导航路线 overlay 的 QGraphics 绘制，包括出口、必经点、途经点、当前路径和 subgoal。
 关键导出：`clear_route_overlay`、`render_route_overlay`。
 对外依赖：`gui.modes.navigation.event_overlay.global_to_scene`。
-注意事项：该模块只渲染调用方传入的 `route_data/current_path/current_subgoal/current_*_index/current_target_kind`，不读取或写入 `route.json`，不推进自动导航状态机。
+注意事项：该模块只渲染调用方传入的 `route_data/current_path/current_subgoal/current_*_index/current_target_kind`，不读取或写入 `route.json`，不推进自动导航状态机。途经点显示为 `A1/A2/...` 辅助锚点，不再根据 `guide_index` 标记已完成或当前目标。
 ### `gui/modes/navigation/viewport_overlay.py`
 职责：封装导航相关矩形几何计算，避免页面主类直接维护屏幕幕布/监控框/真实主画面框公式。
 关键导出：`screen_overlay_geometry`、`monitor_scene_rect`、`game_view_scene_rect`。
@@ -209,7 +221,7 @@ Level 3: navigation click path
 职责：绘图模式主界面，仍负责控件组合、区域/中心选择、实时截图建图、调用地图显示 helper、路径点击入口、参数控件同步和状态栏更新。
 关键导出：`MappingWidget`。
 对外依赖：`TransparentOverlay`、`CenterPointSelector`、`ColorPickerDialog`、`ScalableMapWidget`、`CollapsibleMapGroup`、`AdvancedSettingsDialog`、`gui.modes.mapping.save_load`、`gui.modes.mapping.map_renderer`、`gui.modes.mapping.params_adapter`。
-注意事项：`save_map()`、`save_config()`、`load_saved_params()` 作为外部兼容入口保留，但路径解析、目录创建、JSON 读写和配置 dict 构造已委托 `mapping/save_load.py`。`update_displays()` 和 `_show_image()` 入口保留，但图像转换、全局地图着色、路径线、视野框和当前位置圆点绘制已委托 `mapping/map_renderer.py`。HSV/feature/merge 参数控件读取和已加载参数回填已委托 `mapping/params_adapter.py`；本类仍决定何时调用 `recognizer.set_params()`、`stitcher.set_params()` 和 `save_config()`，以保持原副作用顺序。
+注意事项：`save_map()`、`save_config()`、`load_saved_params()` 作为外部兼容入口保留，但路径解析、目录创建、JSON 读写和配置 dict 构造已委托 `mapping/save_load.py`。`update_displays()` 和 `_show_image()` 入口保留，但图像转换、全局地图着色、路径线、视野框和当前位置圆点绘制已委托 `mapping/map_renderer.py`。HSV/feature/merge 参数控件读取和已加载参数回填已委托 `mapping/params_adapter.py`；本类仍决定何时调用 `recognizer.set_params()`、`stitcher.set_params()` 和 `save_config()`，以保持原副作用顺序。高分辨率绘图参数 `draw_scale`、`canvas_size`、`player_clear_radius`、`wall_close_kernel_size` 已作为绘图页控件暴露；空地图时几何参数可立即重建画布，已有帧时仅保存为下次重置/新地图使用。
 
 ### `gui/modes/mapping/__init__.py`
 职责：绘图模式 helper 包标识。
@@ -247,23 +259,35 @@ Level 3: navigation click path
 对外依赖：标准库 `json`、`pathlib.Path`。
 注意事项：`required_points` 和 `guide_points` 是两套独立序列；`clear_route()` 会同时清空两类点，避免旧路线状态残留。
 
-### `core/auto_navigator.py`
-职责：自动导航状态机，等待稳定定位、规划当前段路径、选择路径前方子目标、控制点击冷却和卡住恢复。
-关键导出：`AutoNavigator`。
-对外依赖：`core.path_utils`。
-注意事项：输出的是地图全局坐标的 `target_pos/subgoal`，不应掺入屏幕点击半径。阶段 1 默认规划优先：`PathFinder` 使用变薄后的墙图，A* 失败时才进入局部脱困 fallback。`guide_points + exit` 始终是路线接入和行走骨架；`required_points` 不直接替代路线骨架，而是按其投影到路线骨架上的进度成为阶段门，接近当前必经点后才推进 `required_index`。
+### `core/anchor_path.py`
+职责：为地图坐标 A* 提供可选软锚点规划，避免普通导航和事件移动各自复制“把辅助点放进路径规划”的逻辑。
+关键导出：`AnchorPathResult`、`plan_path_with_optional_anchors`。
+对外依赖：`core.path_utils.point_distance`。
+注意事项：该模块不会把锚点当作自动导航完成目标，也不会把锚点做成最短路图。`guide_points` 按用户添加顺序形成有序走廊；当前位置之前的锚点视为已路过，当前位置到当前主目标投影之间的锚点会按顺序保留。`anchor_step` 表示先走到下一个前方锚点，调用方到达后重新规划；`anchor_probe` 表示该锚点 A* 暂不可达时先朝它做约 84 像素短探测，不再直接点击不可达锚点；只有没有前方锚点时才直接 A* 到当前主目标。
+
+### `core/navigation_tasks/*`
+职责：方案 C 的统一导航任务层，把静态路线目标和动态事件目标放进同一调度与移动执行链路。
+关键导出：`NavigationTaskController`、`NavigationTaskScheduler`、`NavigationTaskBuilder`、`MovementExecutor`、`RouteContext`、`NavigationTask`、`NavigationIntent`、`NavigationIntentType`。
+对外依赖：`core.anchor_path`、`core.path_utils`、`core.events.models.EventActionType`。
+注意事项：`NavigationTaskController` 是自动导航和手动事件测试的唯一运行控制器；原普通导航器、事件路径移动器、事件动作执行器三个旧模块已删除。`RouteContext` 负责 guide_points 折线投影和单调路线进度；`NavigationTaskBuilder` 把未完成 required、exit 和 `EventCoordinator.tasks()` 中可运行事件转成 `NavigationTask`；`NavigationTaskScheduler` 只对 event 持有 active lock，静态 required/exit 每帧重新仲裁以允许新事件抢占；`MovementExecutor` 在任务切换时由 controller 重置，避免上一任务的路径和点击节流污染下一任务。事件 `MOVE_TO` 和普通 required/exit 都走 `MovementExecutor.step()`，事件 `PRESS_KEY/CLICK_SCREEN` 直接转成 `NavigationIntent` 由 GUI 消费。
 
 ### `core/navigation_core.py`
 职责：读取 `map_data.npz`，用实时小地图截图定位玩家在全局地图中的坐标。
 关键导出：`NavigationCore`。
-对外依赖：`HSVRecognizer`。
-注意事项：`draw_scale` 必须与建图保持一致；输出坐标是全局地图坐标，不是屏幕点击坐标。`fog_layer` 仍会随地图包保存，但当前显示默认只渲染 `explored_map`（灰）和 `wall_layer`（白），不额外铺蓝底。战斗/事件场景下，F2F 跟踪优先使用 `wall_mask` 而不是混合 `match_mask`，以降低动态边缘特效带来的漂移。
+对外依赖：`HSVRecognizer`、`core.navigation_obstacles.derive_navigation_wall_layer`。
+注意事项：`draw_scale` 必须与建图保持一致；输出坐标是全局地图坐标，不是屏幕点击坐标。原始 `wall_layer` 必须保持不变并继续服务定位、事件配准和地图显示；`nav_wall_layer` 是由原始墙图派生出的 A* 专用障碍层，可按 `nav_wall_erode_iterations` 侵蚀以放宽窄通道。`fog_layer` 仍会随地图包保存，但当前显示默认只渲染 `explored_map`（灰）和 `wall_layer`（白），不额外铺蓝底。战斗/事件场景下，F2F 跟踪优先使用 `wall_mask` 而不是混合 `match_mask`，以降低动态边缘特效带来的漂移。
+
+### `core/navigation_obstacles.py`
+职责：把定位用原始墙图转换为导航寻路可使用的宽容墙图。
+关键导出：`derive_navigation_wall_layer`。
+对外依赖：无内部模块依赖。
+注意事项：该模块只返回派生数组，不写回 `wall_layer`。它是“视觉/定位墙体”和“A* 障碍墙体”分离的边界，后续不能把侵蚀后的结果用于 `NavigationCore.localize()` 或事件 `EventPositionStabilizer`。
 
 ### `core/pathfinder.py`
-职责：对 `wall_layer` 先做墙体变薄，并结合 `explored_map` 排除未知区域，再降采样运行 A*，输出全局地图路径点。
+职责：把调用方传入的障碍层结合 `explored_map` 转为低分辨率 A* 网格，并输出全局地图路径点。
 关键导出：`PathFinder`。
 对外依赖：无内部模块依赖。
-注意事项：路径点用于地图导航，不能直接当屏幕点击点。默认 `safety_margin=0`、`wall_shrink_iterations=1`，优先避免缝隙/窄路被建图墙体误封；`explored_map==0` 必须视为不可走，否则 A* 会穿过地图外黑区。
+注意事项：路径点用于地图导航，不能直接当屏幕点击点。默认 `safety_margin=0`、`wall_shrink_iterations=0`，墙体变薄优先在 `NavigationCore.nav_wall_layer` 派生阶段完成，避免双重侵蚀。`start_clear_radius` 会在 A* 网格上清空玩家当前位置附近的小圆，容忍“定位点落在视觉墙像素内”；`walkable_snap_radius` 控制起终点落障碍时寻找最近可走格的半径。`explored_map==0` 必须视为不可走，否则 A* 会穿过地图外黑区。
 
 ### `core/stitcher_core.py`
 职责：将实时小地图墙层/地面层融合到全局地图，并输出供绘图模式与导航模式共用的地图包。
@@ -284,23 +308,17 @@ Level 3: navigation click path
 注意事项：该探针默认枚举 `UnrealWindow` / `Torchlight` 游戏窗口并抓整块窗口画面；也支持 `--rect` 或 `--full-screen`。探针现在复用 portal 事件包的 main-view confirmer，避免探针算法和运行时算法漂移。
 
 ### `core/events/*`
-职责：事件系统核心层。`EventCoordinator` 是导航模式唯一入口；`EventRegistry` 只注册完整事件包；`EventMemory` 管理事件实例生命周期；`EventRunner` 调用具体事件 handler；`EventActionExecutor` 执行动作。
-关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`、`EventActionExecutor`、`EventPathMover`。
+职责：事件系统核心层。`EventCoordinator` 是导航模式唯一事件入口；`EventRegistry` 只注册完整事件包；`EventMemory` 管理事件实例生命周期；`EventRunner` 调用具体事件 handler。
+关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`。
 对外依赖：标准库；视觉工具依赖 OpenCV/NumPy。
-注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventPositionStabilizer` 会按同一帧隔离聚类，避免一帧内两个相近事件图标被合并成一个跳动 marker；`EventMemory.merge_observations()` 还会避免同一帧多个 observation 复用同一个刚更新的 task，近距离双传送门依赖 `dedupe_radius` 小于两门间距来稳定显示两个 marker。`EventCoordinator.update()` 会在合并本帧 observation 之后把 `tick.event_tasks` 更新为当前 memory 快照，供 handler 在同一帧判断“另一个已知事件任务”。
+注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventCoordinator.observe()` 只做检测、事件定位、memory 合并、任务表/overlay 状态更新；`EventCoordinator.run_task(task_id, tick)` 只推进被统一导航调度器选中的事件任务。旧 UI 层事件允许集合兼容入口已删除，避免重新引入 UI 层事件仲裁。`EventPositionStabilizer` 会按同一帧隔离聚类，避免一帧内两个相近事件图标被合并成一个跳动 marker；`EventMemory.merge_observations()` 还会避免同一帧多个 observation 复用同一个刚更新的 task，近距离双传送门依赖 `dedupe_radius` 小于两门间距来稳定显示两个 marker。事件执行抢占规则已迁移到 `NavigationTaskScheduler`，事件本身作为动态必经点参与 required/exit 的统一调度。
 `EventCoordinator.reset_event_type(event_type, now_ms)` 是事件管理 UI 的运行时重置入口；它清理同类型 active handler、memory tasks、position clusters、last detections/observations 和 selected task，不改 `event_config.json`，用于同一地图反复识别/执行某类事件。
-
-### `core/events/path_mover.py`
-职责：为事件动作中的地图坐标 `MOVE_TO` 提供可复用移动路径规划，不让传送门或未来事件各自复制 A*、lookahead 和点击节流逻辑。
-关键导出：`EventMoveStep`、`EventPathMover`。
-对外依赖：`core.path_utils`、`core.events.debug.event_log`。
-注意事项：输入和输出均为全局地图坐标；它不执行鼠标点击，只返回 `subgoal/should_click/path_kind`，真正点击仍由 `MotionController.move_to_map_target()` 完成。A* 失败时只生成玩家附近短距离 `fallback` probe，避免事件为了靠近目标直接拉长直线穿墙。
 
 ### `core/events/types/portal/*`
 职责：传送门完整事件包。对外暴露 `PortalEventDefinition`，内部拆分小地图 detector、主画面 confirmer 和 handler。
 关键导出：`PortalEventDefinition`。
 对外依赖：`core.events.detectors.template_matcher`、`core.events.types.portal.main_view_confirmer`。
-注意事项：小地图 detector 用 raw minimap 多模板匹配创建 `portal` observation，但模板命中后还必须通过蓝/青色像素比例校验，避免白色墙体、圆形地形细节被识别成传送门。默认交互方式是靠近传送门后直接按 `D`，不再要求主画面蓝紫实体确认；如果配置为 `click` 才走主画面 confirmer 二阶段确认。按键/点击后 handler 等待位置变化或小地图周边环境变化才判定传送完成，避免固定等待导致误完成；完成动作会携带入口和出口坐标，runner 将出口附近的传送门任务也标记 completed，防止双门来回触发。
+注意事项：小地图 detector 用 raw minimap 多模板匹配创建 `portal` observation，但模板命中后还必须通过蓝/青色像素比例校验，避免白色墙体、圆形地形细节被识别成传送门。当前传送门主流程是靠近后点击映射传送门点、短暂等待、再按 `D`；即使配置残留 `interaction="click"`，`PortalEventHandler` 也会强制按键交互并记录日志，不再要求主画面蓝紫实体确认。按键/点击后 handler 等待位置变化或小地图周边环境变化才判定传送完成，避免固定等待导致误完成；完成动作会携带入口和出口坐标，runner 将出口附近的传送门任务也标记 completed，防止双门来回触发。
 
 ## 5. 函数索引与算法实现
 ### `MotionController._calculate_target_screen_position(self, player_global_pos: tuple, target_global_pos: tuple) -> tuple[int, int] | None`
@@ -340,7 +358,7 @@ Level 3: navigation click path
 5. 返回包含 key/reason 的诊断 dict。
 副作用：向当前游戏/前台窗口发送键盘输入。
 失败行为：未开启控制或 key 为空时不执行输入；`pydirectinput.press()` 异常不在本函数吞掉。
-调用关系：called by `NavigationModeWidget._execute_event_key_press()`。
+调用关系：called by `NavigationModeWidget._execute_navigation_intent()` when consuming a `PRESS_KEY` intent.
 
 ### `NavigationModeWidget._update_game_view_rect(self, player_pos)`
 行为：在地图视图中绘制橙色真实主画面范围框。
@@ -379,7 +397,7 @@ Level 3: navigation click path
 1. 清空传入的旧 route overlay items。
 2. 从 `route_data["routes"]["main"]` 读取 `exit_region`、`required_points`、`guide_points`。
 3. 使用 `global_to_scene()` 将全局坐标减去 `nav_core.crop_offset` 得到场景坐标。
-4. 绘制出口橙色圆、必经点紫色/灰色 marker、途经点青色/灰色 marker，并按当前 target kind 加粗当前目标。
+4. 绘制出口橙色圆、必经点紫色/灰色 marker、途经点青色 `A1/A2/...` 辅助锚点；途经点不再按当前 target kind 加粗或标记完成。
 5. 如传入 `current_path`，构造 `QPainterPath` 绘制黄色路径线。
 6. 如传入 `current_subgoal`，绘制洋红色子目标点。
 7. 返回新的 item 列表和 route path item。
@@ -438,10 +456,23 @@ Level 3: navigation click path
 2. 校验事件协调器、地图定位内核和游戏屏幕中心均已就绪；失败时恢复按钮显示并弹出警告。
 3. 若导航定时器未运行，则复用 `toggle_navigation()` 启动定位循环；启动失败时停止继续执行。
 4. 调用 `_set_portal_manual_test_active(True)`，开启游戏输入模式和运动控制。
-5. 后续每帧由 `navigation_loop()` 调用 `EventCoordinator.update(..., run_handlers=True)`，而不是在按钮槽函数中执行一次点击。
+5. 后续每帧由 `_navigation_loop_unified()` 调用 `EventCoordinator.observe()` 识别事件，再由 `NavigationTaskController.update(..., manual_event_only=True)` 选择并执行事件任务。
 副作用：可启动导航循环、启用游戏输入、更新按钮/状态栏并记录事件日志。
 失败行为：先决条件缺失时只警告并保持测试未启动。
 调用关系：called by `EventManagerDialog.test_portal_requested` signal。
+
+### `NavigationModeWidget._execute_navigation_intent(self, intent, now_ms: int) -> None`
+行为：消费统一导航控制器输出的动作意图，并把地图目标、屏幕点击或按键转换为真实输入。
+算法：
+1. `NONE/WAIT` 不执行输入，只保留状态栏和 overlay。
+2. `MOVE_MAP` 校验 `player_pos/subgoal`，打开游戏输入模式并启用 `MotionController`。
+3. 若 intent metadata 带 `force_click_target`，调用 `MotionController.click_map_target_once()` 点击映射后的事件目标点；否则调用 `MotionController.move_to_map_target()` 做方向移动点击。
+4. 真实点击成功后调用 `NavigationTaskController.record_intent_click()`，让 `MovementExecutor` 更新点击冷却和上次子目标。
+5. `CLICK_SCREEN` 直接调用 `MotionController.click_screen_position()`。
+6. `PRESS_KEY` 直接调用 `MotionController.press_key()`。
+副作用：可能触发真实鼠标/键盘输入，更新状态栏点击诊断和 controller 点击节流状态。
+失败行为：缺少必要坐标或 key 时跳过输入；底层输入异常由 `MotionController`/输入后端处理。
+调用关系：called by `NavigationModeWidget._navigation_loop_unified()` after `NavigationTaskController.update()`。
 
 ### `build_event_tick(*, now_ms, frame, player_pos, localized_pos, confidence, nav_core, nav_config, map_name: str, capture_provider) -> EventTick`
 行为：把导航循环当前帧状态包装成事件系统统一输入。
@@ -449,20 +480,25 @@ Level 3: navigation click path
 1. 接收导航循环已捕获的 raw minimap frame、玩家局部坐标、定位结果和置信度。
 2. 从 `nav_core.draw_scale` 读取当前地图缩放；`nav_core` 不存在时回退 `nav_config.draw_scale`。
 3. 从 `nav_core.last_frame_registration` 读取当前帧墙体配准契约；`nav_core` 不存在时为 `None`。
-4. 组装 `EventTick`，保留 `capture_provider` 供事件 handler 需要主画面截图时使用；`event_tasks` 初始为空，进入 `EventCoordinator.update()` 后由 coordinator 写入当前 memory 任务快照。
+4. 组装 `EventTick`，保留 `capture_provider` 供事件 handler 需要主画面截图时使用；`event_tasks` 初始为空，进入 `EventCoordinator.observe()` 后由 coordinator 写入当前 memory 任务快照。
 副作用：无。
 失败行为：不验证图像或定位是否有效；由 `EventCoordinator` 和后续模块按字段值决定是否运行。
 调用关系：called by `NavigationModeWidget._build_event_tick()`。
 
-### `should_event_action_take_control(event_action) -> bool`
-行为：判断事件 action 是否应优先于普通自动导航移动。
+### `NavigationModeWidget._navigation_loop_unified(self)`
+行为：当前唯一导航循环，统一完成定位、事件观察、任务调度、overlay/status 更新和动作意图消费。
 算法：
-1. 空 action 返回 `False`。
-2. `MOVE_TO`、`CLICK_SCREEN`、`PRESS_KEY`、`WAIT` 返回 `True`，表示事件正在接管本帧行为。
-3. `COMPLETE`/`FAIL` 不在此函数中视为接管动作；它们由调用方单独处理手动测试停止。
-副作用：无。
-失败行为：未知 action type 返回 `False`。
-调用关系：called by `NavigationModeWidget._should_event_action_take_control()`。
+1. 根据导航配置构造截图矩形，捕获 raw minimap frame。
+2. 根据配置获取玩家局部位置：显式监视区域走玩家识别，中心点模式使用截图中心。
+3. 调用 `NavigationCore.localize()` 得到全局位置和置信度。
+4. 构造 `EventTick` 后调用 `EventCoordinator.observe()`，只做事件检测、定位和 memory 更新。
+5. 自动导航或手动事件测试启用时，调用 `NavigationTaskController.update()`；普通自动导航允许 required/exit/event 统一调度，手动事件测试使用 `manual_event_only=True`。
+6. 更新玩家点、绿色监视框、橙色真实可见框、路线 overlay 和事件 overlay。
+7. 调用 `_execute_navigation_intent()` 消费 `MOVE_MAP/CLICK_SCREEN/PRESS_KEY`。
+8. 收到 `ARRIVED/FAILED` 时停止自动导航并恢复窗口输入模式。
+副作用：更新 UI、事件任务表、controller 状态、可能执行真实输入。
+失败行为：截图失败、配置缺失或定位低置信时跳过移动，等待下一帧。
+调用关系：called by `navigation_loop()` compatibility entry and QTimer after `_use_unified_navigation_loop()` rewires the timer.
 
 ### `map_runtime.build_capture_geometry(nav_config: NavConfig | None, capture_center_physical)`
 行为：根据导航配置生成真实屏幕截图矩形和玩家在截图中的局部坐标。
@@ -508,6 +544,17 @@ Level 3: navigation click path
 4. 当 `include_draw_scale=True` 时，在字典前部加入 `draw_scale`，用于地图级配置；根级配置保持旧字段集合。
 副作用：读取 recognizer/stitcher 参数，不写文件。
 失败行为：若 `app_context` 缺少 recognizer 或 stitcher 参数接口，会按原调用路径抛出异常。
+调用关系：called by `MappingWidget.save_map()` and `MappingWidget.save_config()`。
+
+### `MappingWidget._build_mapping_config_with_ui_overrides(self, *, include_draw_scale: bool = False) -> dict`
+行为：在通用绘图配置基础上叠加绘图页几何/清晰度控件值。
+算法：
+1. 调用 `build_mapping_config()` 收集截图、FPS、recognizer 和 stitcher 当前运行参数。
+2. 用 UI 控件覆盖 `stitcher_params.draw_scale`、`canvas_size`、`wall_close_kernel_size`。
+3. 用 UI 控件覆盖 `recognizer_params.player_clear_radius`。
+4. `include_draw_scale=True` 时同步写入顶层 `draw_scale`，供导航模式按地图包坐标体系加载。
+副作用：读取 Qt 控件值，不写文件。
+失败行为：控件缺失时沿原调用路径抛异常。
 调用关系：called by `MappingWidget.save_map()` and `MappingWidget.save_config()`。
 
 ### `ensure_map_folder(file_path: str | Path, map_name: str) -> Path`
@@ -668,43 +715,43 @@ Level 3: navigation click path
 失败行为：原图尺寸为 0 会除零；调用方初始化时已来自截图尺寸。
 调用关系：called by `ColorPickerDialog._show_image()`。
 
-### `NavigationModeWidget._execute_event_move_to(self, target_global_pos)`
-行为：消费事件 handler 返回的地图目标点，通过可复用路径移动器执行靠近事件的移动点击。
+### `EventCoordinator.observe(self, tick) -> None`
+行为：运行事件检测、局部到全局定位、任务记忆和显示任务选择，但不推进任何事件 handler。
 算法：
-1. 校验当前定位位置与目标；不可用时重置 `EventPathMover` 并返回。
-2. 打开游戏输入模式和运动控制，并传入当前墙图、探索图、`PathFinder`、时间戳和 lookahead 距离调用 `EventPathMover.step()`。
-3. 若没有可用移动步或未达到点击节流条件，保持现有 path/subgoal 供 overlay 显示但不点击。
-4. 若应点击，调用 `MotionController.move_to_map_target(current_pos, subgoal)` 映射为真实游戏输入。
-5. 只有点击实际返回诊断信息后，调用 `EventPathMover.record_click()` 更新时间和写入事件操作日志。
-副作用：可能触发真实鼠标点击；更新事件 path overlay 和日志状态。
-失败行为：未定位、无路径、A*/投影暂不可用时不发鼠标输入，下一帧可继续重规划。
-调用关系：called by `EventActionExecutor.execute()` through its MOVE_TO callback。
+1. 全局事件配置关闭时停止/清理 active runner，清空 last action 和 selected task。
+2. 调用 `EventMonitor.detect()` 在 raw minimap frame 上产生局部 `EventDetection`。
+3. 调用 `EventPositionStabilizer.update()` 使用 `FrameRegistration` 将局部检测投影为稳定全局 `EventObservation`。
+4. 调用 `EventMemory.merge_observations()` 合并、确认、去重和冷却任务，并把当前 tasks 写入 `tick.event_tasks`。
+5. 用全部启用 active tasks 选择 `display_task`，用于 status/overlay/任务表。
+副作用：更新 `last_detections/last_observations/last_selected_task`，修改 `EventMemory` 状态，并写事件日志。
+失败行为：检测/定位失败时保留既有 memory；全局关闭时停止 active runner。
+调用关系：called by `NavigationModeWidget._navigation_loop_unified()` before task scheduling.
 
-### `EventPathMover.step(self, *, current_pos, target_pos, wall_map, pathfinder, explored_map, now_ms: int, lookahead_distance: float) -> EventMoveStep | None`
-行为：为事件目标计算或复用地图路径，选出下一次真实点击应追踪的前方子目标。
+### `EventCoordinator.run_task(self, task_id: str | None, tick)`
+行为：只推进由统一导航调度器选中的事件任务，并返回该 handler 输出的 `EventAction`。
 算法：
-1. 将当前位置和事件目标标准化为浮点全局地图坐标。
-2. 调用 `_ensure_path()`，按目标变化、离路偏差或 fallback 重试时间决定是否重新规划。
-3. 若无法获得至少两个点的路径，记录 `event move path unavailable` 并返回 `None`。
-4. 将玩家位置投影到当前路径；投影失败时强制下一帧重规划并返回 `None`。
-5. 沿路径累计距离向前插值 `lookahead_distance` 得到 `subgoal`，超过路径终点时使用终点。
-6. 用距上次点击至少 260ms、子目标变化至少 8 像素或离路偏差至少 48 像素作为点击节流条件。
-7. 返回包含 `path/subgoal/path_kind/should_click/deviation` 的 `EventMoveStep`。
-副作用：可更新缓存路径、子目标和重规划时间，并写入事件规划日志。
-失败行为：A* 失败不直接失败；`_plan_path()` 降级为短距离 fallback probe。
-调用关系：called by `NavigationModeWidget._execute_event_move_to()`。
+1. 全局事件配置关闭时停止 active runner 并返回 `None`。
+2. `task_id is None` 时调用 `EventRunner.update(None, ...)`，用于清理或 requeue。
+3. 在启用 active tasks 中查找指定 `task_id`。
+4. 未找到时记录 `coordinator run_task missing`，并调用 runner 空更新。
+5. 找到任务后调用 `_run_selected_task()`，由 `EventRunner` 启动/继续 handler 并返回 action。
+副作用：更新 `last_action`、`EventRunner.active_task` 和 `EventMemory` 中的任务状态。
+失败行为：任务不存在或事件关闭时返回 `None`，不会直接触发输入。
+调用关系：called by `NavigationTaskController._update_event_task()`。
 
-### `EventPathMover._plan_path(self, current_pos, target_pos, wall_map, pathfinder, explored_map)`
-行为：优先 A*，失败时为事件移动生成短距离脱困路径。
+### `plan_path_with_optional_anchors(*, wall_map, pathfinder, start_pos, target_pos, explored_map=None, anchors=None, max_anchors: int = 48, max_anchor_factor: float = 1.8, max_anchor_branching: int = 4, min_progress: float = 24.0) -> AnchorPathResult | None`
+行为：在地图全局坐标上优先按用户添加顺序构建有序锚点走廊，供普通导航和事件移动共用。
 算法：
-1. 将当前位置与目标四舍五入为 `PathFinder` 使用的整数地图点。
-2. 若存在墙图和 pathfinder，则以 `explored_map` 约束调用 `find_path()`。
-3. 若 A* 返回路径，删除共线冗余点；单点路径补入真实目标点；计算累计长度并标记 `planned`。
-4. 若 A* 无结果，调用 `_local_probe()` 只向目标方向前进最多 84 像素，并按失败次数交替加入左右 44 像素侧向偏移。
-5. 返回两点 fallback 路径及累计长度，标记 `fallback`，等待后续重规划。
-副作用：fallback 会推进 `probe_index` 以切换探测方向。
-失败行为：A* 无路时不会生成直达事件点的长直线点击。
-调用关系：called by `EventPathMover._ensure_path()`。
+1. 将起点、目标和锚点转为整数地图点。
+2. `_ordered_corridor_anchors()` 去重并保留 UI 添加顺序，把当前位置投影到锚点折线得到路线进度。
+3. 把当前进度之前的锚点视为已路过；把超过当前主目标投影之后的锚点过滤掉，避免锚点抢过必经点、事件或出口。
+4. 如果存在前方锚点，只规划 `当前位置 -> 下一个锚点` 的 A* 段并返回 `path_kind="anchor_step"`。
+5. 如果下一个锚点 A* 暂不可达，返回两点 `anchor_probe`，让调用方先朝该锚点做约 84 像素短探测。
+6. 只有无前方锚点时才直接 A* 到当前主目标并返回 `path_kind="planned"`。
+7. 二者都不可用时返回 `None`。
+副作用：无真实输入副作用；只调用 `PathFinder.find_path()` 做路径查询。
+失败行为：没有墙图/pathfinder、直接路径和锚点路径都不存在时返回 `None`，由调用方执行局部 fallback。
+调用关系：called by `MovementExecutor._plan_path()`。
 
 ### `NavParametersDialog._auto_estimate_click_radius(self)`
 行为：根据已校准的角色屏幕中心和物理屏幕边界估算点击半径，避免 2K 屏幕下半径配置过小。
@@ -718,76 +765,86 @@ Level 3: navigation click path
 副作用：更新参数面板控件和 `nav_status_label`。
 调用关系：called by `nav_auto_click_radius_btn.clicked`。
 
-### `AutoNavigator.update(self, localized_pos, confidence: float, wall_map, pathfinder, now_ms: int, lookahead_distance=None)`
-行为：消费当前定位结果，输出状态或移动动作。
+### `derive_navigation_wall_layer(wall_layer, *, erode_iterations: int = 1, threshold: int = 50) -> np.ndarray`
+行为：从原始建图墙层派生 A* 专用墙层。
 算法：
-1. 若暂停或未启动，返回状态。
-2. 用 `observe_localization()` 过滤低置信度和异常跳变。
-3. ACQUIRE/SHORT_LOST 状态需要稳定窗口满足后才规划。
-4. PLAN_SEGMENT 先调用 `_align_route_to_current_position()` 将 `guide_index` 接入到当前位置附近，但不会越过当前必经点在路线骨架上的进度。
-5. `_select_segment_target()` 比较当前普通点进度和当前必经点投影进度：普通点仍在必经点之前时追普通点；必经点已到达或位于当前普通点之前时追必经点；两类点都完成后追出口。
-6. 默认调用 `PathFinder.find_path()` 用变薄墙图和已探索区域规划当前段路径；若显式 `prefer_direct_guidance=True` 才强制直线段。
-7. 如果 A* 因墙体/障碍失败，不再构造到 `segment_target` 的长直线路径，而是用 `_set_local_fallback_path()` 生成当前人物附近、朝目标方向的一小段临时脱困点。
-8. FOLLOW_SEGMENT 状态把当前位置投影到路径并选择 lookahead 子目标。
-9. `click_cooldown_ms` 和 `min_click_target_delta` 满足时返回 `{"type": "move", "issued_click": True, "target_pos": subgoal}`。
-10. 如果临时脱困点到达或无进展，进入 PLAN_SEGMENT 重新跑 A*；卡住时进入 STUCK_RECOVER，先做小幅左右绕障试探，再按冷却重规划或失败。
-副作用：更新状态机、平滑控制位置、点击冷却时间。
-调用关系：called by `NavigationModeWidget.navigation_loop()`。
+1. 校验 `wall_layer` 不为空。
+2. 将输入转换为 `uint8`。
+3. 按 `threshold` 二值化，得到只有墙/非墙的导航源图。
+4. 当 `erode_iterations > 0` 时，用 3x3 十字核腐蚀墙像素，使视觉墙体变薄、窄通道变宽。
+5. 返回新的 `nav_wall` 数组。
+副作用：无；不会修改传入的原始 `wall_layer`。
+失败行为：`wall_layer is None` 时抛出 `ValueError`。
+调用关系：called by `NavigationCore.__init__()` and `NavigationCore.rebuild_navigation_wall_layer()`。
 
-### `AutoNavigator._set_local_fallback_path(self, target)`
-行为：A* 失败时生成局部脱困路径，而不是直接点击下一目标点。
+### `NavigationTaskController.update(self, *, localized_pos, confidence: float, route: dict | None, event_coordinator, event_tick, wall_map, pathfinder, explored_map, now_ms: int, lookahead_distance: float, manual_event_only: bool = False) -> NavigationIntent`
+行为：消费当前定位、路线和事件 memory 快照，统一输出普通路线或事件动作意图。
 算法：
-1. 调用 `_local_probe_towards_target()`，以当前人物位置为起点、当前段目标为方向参考。
-2. `direct_fallback_distance` 限制前进距离，默认约 96 地图像素。
-3. `direct_fallback_side_distance` 和 `direct_fallback_attempts` 在重复失败时轻微左右偏移。
-4. 将 `current_path` 设置为 `[control_pos, probe]`。
-5. 标记 `current_path_kind="local_fallback"`，让 `_follow_segment()` 到达临时点后重新规划而不是推进路线段。
-副作用：更新 `current_path/current_path_kind/direct_fallback_attempts`。
-调用关系：called by `AutoNavigator._plan_segment()`。
+1. 路线对象变化时重新 `load_route()` 并保持 controller active。
+2. 未 active 时返回 `NONE` intent；定位为空、置信度过低或低置信大跳变时返回 `WAIT`。
+3. `observe_localization()` 维护 `trusted_pos/control_pos` 和单调 `route_progress`。
+4. `_update_required_progress()` 用距离或路线进度越过判断已完成必经点，完成后清路径和 active task。
+5. `NavigationTaskBuilder.build()` 把未完成 required、exit 和 `EventCoordinator.tasks()` 中 runnable 事件合成任务列表。
+6. `NavigationTaskScheduler.pick()` 选择当前任务；事件 active 时持锁，静态目标不持锁，允许新事件动态抢占。
+7. 任务切换时记录 `nav task transition` 并重置共享 `MovementExecutor`，避免上一任务路径/点击冷却污染下一任务。
+8. static required/exit 走 `_update_static_task()`；event 走 `_update_event_task()` 并调用 `EventCoordinator.run_task()`。
+9. 返回 `MOVE_MAP/CLICK_SCREEN/PRESS_KEY/WAIT/ARRIVED/FAILED` 之一，由 GUI 层统一执行输入。
+副作用：更新定位平滑状态、已完成必经点集合、active task、共享移动执行器和事件 runner 状态。
+失败行为：无路径时返回 `WAIT path unavailable`，不会生成穿墙长直线点击；事件上下文缺失时返回 `WAIT`。
+调用关系：called by `NavigationModeWidget._navigation_loop_unified()`。
 
-### `AutoNavigator._align_route_to_current_position(self)`
-行为：自动导航启动或重定位后，根据当前位置选择应该追踪的路线标记。
+### `MovementExecutor.step(self, *, task_id: str, current_pos, target_pos, wall_map, pathfinder, explored_map, now_ms: int, lookahead_distance: float, route_context=None, soft_anchors=None, force_repeat_click: bool = False) -> MovementStep | None`
+行为：为当前 required、exit 或 event 地图目标规划/复用路径，选出本帧 lookahead 子目标和是否应点击。
 算法：
-1. 如果本轮已经对齐或没有当前位置，直接返回。
-2. 读取 `guide_points + exit_region.center` 作为有序标记点。
-3. 如果仍有未完成 `required_points`，计算当前必经点投影到路线骨架上的进度，后续接入候选不能超过该进度之后的第一个普通点。
-4. 计算当前位置到每个标记点的距离，得到最近标记候选。
-5. 调用 `_candidate_index_from_nearest_route_segment()`；若当前位置贴近某条路线段，则候选改为该段的下一个标记，避免在两个标记之间回头追上一个点。
-6. 如果距离最近标记小于 `arrival_radius * route_marker_arrival_factor`，认为该标记已到达，目标推进到下一个标记。
-7. 将 `guide_index` 设置为候选标记索引，并清空当前路径，下一步重新 A* 到该标记。
-副作用：更新 `guide_index/current_path/current_target/current_path_kind`。
-调用关系：called by `AutoNavigator._plan_segment()`。
+1. 标准化当前位置和目标坐标。
+2. `_ensure_path()` 根据目标变化、路径为空、锚点段到达、离路偏差或 fallback 过期判断是否重规划。
+3. `_plan_path()` 优先从 `RouteContext.corridor_anchors()` 获取当前位置到当前任务目标之间的前方锚点。
+4. 若有前方锚点，调用 `plan_path_with_optional_anchors()` 只规划到下一个锚点；若无锚点则直接 A* 到当前任务目标。
+5. 如果 A* 失败，生成玩家附近短距离 `fallback` probe，而不是直接点击远端目标。
+6. 将当前位置投影到当前路径，沿累计距离向前插值 `lookahead_distance` 得到 `subgoal`。
+7. 冷却满足且子目标变化、首次点击、强制重复或离路偏差较大时设置 `should_click=True`。
+8. 返回包含 path、subgoal、path_kind、deviation 的 `MovementStep`。
+副作用：更新缓存路径、路径终点、子目标、重规划时间和 fallback probe index。
+失败行为：路径不可用或投影失败返回 `None`，调用方本帧不输入。
+调用关系：called by `NavigationTaskController._update_static_task()` and `_update_event_task()`。
 
-### `AutoNavigator._select_segment_target(self)`
-行为：在普通路线骨架、当前必经点和出口之间选择本次 A* 应追踪的段目标。
+### `NavigationTaskScheduler.pick(self, *, tasks: list[NavigationTask], player_pos, route_context, active_task_id: str | None = None, manual_event_only: bool = False) -> NavigationTask | None`
+行为：在静态路线目标和动态事件目标中选择当前应处理任务。
 算法：
-1. 若没有有效路线，返回 `("none", None)`。
-2. 读取当前 `guide_index` 对应的普通点和当前 `required_index` 对应的必经点。
-3. 当普通点和必经点同时存在时，把必经点投影到 `guide_points + exit` 路线骨架，得到必经点路线进度；同时读取当前普通点的路线进度。
-4. 如果必经点进度小于等于当前普通点进度，返回 `("required", required_point)`，表示阶段门已经到达当前路线位置，必须先完成。
-5. 如果当前普通点仍在必经点之前，返回 `("guide", guide_point)`，继续沿人工路线骨架行走，避免直接拉直线去下一个必经点。
-6. 若只剩必经点则返回必经点；若只剩普通点则返回普通点；两者都完成后返回出口中心。
-副作用：无；调用方会把结果写入 `current_target/current_target_kind`。
-调用关系：called by `current_segment_target()`、`current_segment_target_kind()`、`_plan_segment()`。
+1. 过滤出 `PENDING/MOVING/EXECUTING` 任务；手动事件测试时只保留 event。
+2. 如果 active task 是 event 且仍 runnable，直接返回它，保证事件执行到终态。
+3. 普通模式先找下一个未完成 required，若没有则选 exit 作为 base target。
+4. 计算玩家路线进度与 base target 进度，只把位于两者之间或略靠前的 event 纳入候选。
+5. 用“前方路线进度差、priority、欧氏距离、task id”排序，选择最靠近当前前进方向的任务。
+6. 任务变化时写 `nav task selected` 日志。
+副作用：只维护 `_last_selected_id` 以减少重复日志。
+失败行为：无 runnable 任务时返回 `None`。
+调用关系：called by `NavigationTaskController.update()`。
 
-### `AutoNavigator._candidate_index_from_nearest_route_segment(self, points)`
-行为：当当前位置在路线段附近时，按路线方向接入下一标记。
+### `PathFinder._build_obstacle_map(self, wall_map, grid_w, grid_h, explored_map=None)`
+行为：把调用方传入的导航障碍层转换为 A* 使用的低分辨率障碍图。
 算法：
-1. 遍历每一段 `points[i] -> points[i+1]`。
-2. 将当前位置投影到线段，计算投影点和线段距离。
-3. 选择距离最近且小于 `route_snap_max_distance` 的线段。
-4. 如果投影参数 `t <= route_snap_segment_threshold`，候选仍是该段起点；否则候选是该段终点，即沿路线向出口方向推进。
-副作用：无。
-调用关系：called by `_align_route_to_current_position()`。
-
-### `PathFinder._build_obstacle_map(self, wall_map, grid_w, grid_h)`
-行为：把建图墙层转换为 A* 使用的低分辨率障碍图。
-算法：
-1. 将输入墙图转为 `uint8` 并阈值化。
-2. 如果 `wall_shrink_iterations > 0`，用 `MORPH_CROSS` 腐蚀墙像素，让建图偏厚的墙体变薄。
-3. 将变薄后的墙图 resize 到 A* 网格尺寸。
+1. 将输入障碍层转为 `uint8` 并阈值化。
+2. 如果 `wall_shrink_iterations > 0`，再次用 `MORPH_CROSS` 腐蚀墙像素；当前默认值为 0，避免和 `nav_wall_layer` 派生阶段重复变薄。
+3. 将障碍图 resize 到 A* 网格尺寸。
 4. 再阈值化得到 `binary_map`。
 5. 如果传入 `explored_map`，把已探索区域 resize 到同一网格，`explored_map==0` 的网格强制设为障碍。
+6. 如果 `safety_margin > 0`，按降采样后的半径膨胀障碍；当前默认 0。
+副作用：无。
+失败行为：输入图形状不合法时 OpenCV resize/threshold 异常向上传播。
+调用关系：called by `PathFinder.find_path()`。
+
+### `PathFinder._clear_start_area(self, obstacle_map, start_grid)`
+行为：清空 A* 起点附近小圆，容忍玩家定位点压在线条/墙边。
+算法：
+1. 将 `start_clear_radius` 按 `downsample_factor` 转为网格半径。
+2. 半径小于等于 0 时直接返回原障碍图。
+3. 复制障碍图，裁剪起点附近局部窗口。
+4. 在局部窗口内画圆形 mask，并把 mask 覆盖区域置为可走。
+5. 返回清空后的障碍图副本。
+副作用：无。
+失败行为：窗口越界或空窗口时返回复制后的障碍图。
+调用关系：called by `PathFinder.find_path()`。
 
 ### `PathFinder._astar(self, grid, start, end)`
 行为：在低分辨率障碍图上执行 8 方向 A*。
@@ -897,29 +954,32 @@ Level 3: navigation click path
 
 ## 6. 完整数据流链路
 ### Flow: 自动导航移动点击
-1. `NavigationModeWidget.navigation_loop()` 输入 `capture_rect`、屏幕截图帧；输出 `localized_pos=(global_x, global_y)`；副作用是更新地图上的玩家点、绿色定位框、橙色真实可见框。
+1. `NavigationModeWidget._navigation_loop_unified()` 输入 `capture_rect`、屏幕截图帧和当前路线配置；输出 `localized_pos=(global_x, global_y)`；副作用是更新地图上的玩家点、绿色定位框、橙色真实可见框和事件 marker。
 2. `NavigationCore.localize()` 输入实时小地图截图和 `player_pos`；输出地图全局坐标和置信度；副作用是更新 `current_pos/last_good_pos/prev_mask`。
-3. `AutoNavigator.update()` 输入地图全局坐标、置信度、`wall_layer`、`explored_map`、`PathFinder`；默认用变薄墙图和已探索区域做 A* 当前段规划，失败时才生成局部脱困点；输出 `auto_action`，其中 `target_pos` 是地图全局子目标。
-4. `NavigationModeWidget.navigation_loop()` 检查 `auto_action.type == "move"` 且 `issued_click=True`；副作用是调用运动控制器。
-5. `MotionController.move_to_map_target()` 输入玩家地图全局坐标和目标地图全局坐标；输出 `last_click_info`；副作用是调用 `_execute_click()`。
-6. `MotionController._execute_click()` 输入屏幕物理坐标；先用 `_apply_bottom_click_guard()` 避免落入底部 UI，再通过 `InputDriver.click()` 执行 Win32 `SetCursorPos + mouse_event`，失败时才回退 `pydirectinput.click(x, y)`。
+3. `EventCoordinator.observe()` 输入 `EventTick(frame, frame_registration, player_global_pos)`；输出 memory 中的 active event tasks；副作用是检测 raw minimap 图标、稳定全局事件坐标、更新事件 overlay，但不推进 handler。
+4. `NavigationTaskController.update()` 输入定位、`route["main"]`、`EventCoordinator.tasks()`、`nav_core.nav_wall_layer`、`explored_map` 和 `PathFinder`；先用 `NavigationTaskBuilder` 构造 required/exit/event 任务，再由 `NavigationTaskScheduler` 选择一个当前任务；输出 `NavigationIntent`。
+5. 静态 required/exit 或事件 `MOVE_TO` 进入 `MovementExecutor.step()`；该执行器通过 `RouteContext.corridor_anchors()` 和 `plan_path_with_optional_anchors()` 优先按前方 guide 点走廊规划 `anchor_step/anchor_probe`，无前方锚点时才直接规划目标，最后输出地图子目标 `subgoal` 和 `path_kind`。
+6. 事件任务被选中时，`NavigationTaskController._update_event_task()` 调用 `EventCoordinator.run_task(event_task_id, tick)` 推进 handler；`MOVE_TO` 复用第 5 步，`PRESS_KEY/CLICK_SCREEN/COMPLETE/FAIL` 转成统一 `NavigationIntent`。
+7. `NavigationModeWidget._execute_navigation_intent()` 消费 `MOVE_MAP/CLICK_SCREEN/PRESS_KEY`；`MOVE_MAP` 调用 `MotionController.move_to_map_target()`，带 `force_click_target` 时调用 `click_map_target_once()`，成功点击后回写 `NavigationTaskController.record_intent_click()` 更新点击节流状态。
+8. `MotionController._execute_click()` 输入屏幕物理坐标；先用 `_apply_bottom_click_guard()` 避免落入底部 UI，再通过 `InputDriver.click()` 执行 Win32 `SetCursorPos + mouse_event`，失败时才回退 `pydirectinput.click(x, y)`。
 
 ### Flow: 导航参数保存和加载
 1. `NavigationModeWidget.load_map()` 读取 `map_data/<map>/config.json`。
 2. `NavConfig.from_dict()` 将 dict 转为配置对象；缺失新字段时使用默认值。
 3. `NavParametersDialog.set_config_to_ui()` 将配置同步到控件。
 4. 控件变化触发 `_update_config_value()`，通过 `dataclasses.replace()` 创建新配置并发出 `parameters_changed`。
-5. `NavigationModeWidget._on_parameter_changed()` 保存内存态配置，立即更新运动控制器参数，并通过 `_refresh_game_view_rect_from_known_position()` 重绘橙色框。
-6. 同步调用 `AutoNavigator.configure()` 应用自动点击冷却和目标变化阈值。
-7. 用户保存时 `_save_nav_config()` 调用 `NavConfig.to_dict()` 写回地图配置文件，并再次刷新橙色框。
+5. `NavigationModeWidget._on_parameter_changed()` 保存内存态配置，立即更新 `MotionController` 的屏幕中心、移动比例、点击半径和底部禁点区，并通过 `_refresh_game_view_rect_from_known_position()` 重绘橙色框。
+6. `_apply_config_to_core()` 调用 `NavigationCore.rebuild_navigation_wall_layer(nav_wall_erode_iterations)`，并把 `path_start_clear_radius`、`path_walkable_snap_radius` 写入共享 `PathFinder`。
+7. 同步调用 `_configure_navigation_task_controller()`，把 `auto_click_cooldown_ms` 和 `auto_min_click_target_delta` 写入 `NavigationTaskController.movement`。
+8. 用户保存时 `_save_nav_config()` 调用 `NavConfig.to_dict()` 写回地图配置文件，并再次刷新橙色框。
 
 ### Flow: 绘图模式地图保存和根配置加载
 1. 用户点击绘图页保存地图时，`MappingWidget.save_map()` 读取地图名并调用 `ensure_map_folder(__file__, map_name)` 创建 `map_data/<map_name>`。
-2. `MappingWidget.save_map()` 调用 `app_context.stitcher.save_map_package(str(map_folder))` 保存地图包，保持原 `MapStitcher` 持久化路径。
-3. `build_mapping_config(app_context, fps, include_draw_scale=True)` 读取截图配置、FPS、recognizer 参数、stitcher 参数和 draw_scale。
+2. `MappingWidget.save_map()` 调用 `app_context.stitcher.save_map_package(str(map_folder))` 保存地图包；`MapStitcher.save_map_package()` 会把 `wall_layer`、`explored_map`、`fog_layer`、`current_pos`、`canvas_size` 和 `draw_scale` 写入 `map_data.npz`。
+3. `MappingWidget._build_mapping_config_with_ui_overrides(include_draw_scale=True)` 读取截图配置、FPS、recognizer/stitcher 参数，并叠加绘图页 `draw_scale/canvas_size/player_clear_radius/wall_close_kernel_size` 控件值。
 4. `save_map_config(map_folder, config_data)` 写入 `map_data/<map_name>/config.json`。
-5. 绘图页参数变化或区域变化触发 `MappingWidget.save_config()`，它通过 `build_mapping_config(..., include_draw_scale=False)` 构造根配置并由 `save_root_config(__file__, config)` 写入项目根目录 `config.json`。
-6. `MappingWidget.load_saved_params()` 启动时调用 `load_root_config(__file__)`；不存在时直接返回，存在时回填 `app_context`、Qt 控件和 recognizer/stitcher 参数。
+5. 绘图页参数变化或区域变化触发 `MappingWidget.save_config()`，它通过 `_build_mapping_config_with_ui_overrides(include_draw_scale=False)` 构造根配置并由 `save_root_config(__file__, config)` 写入项目根目录 `config.json`。
+6. `MappingWidget.load_saved_params()` 启动时调用 `load_root_config(__file__)`；不存在时直接返回，存在时回填 `app_context`、Qt 控件和 recognizer/stitcher 参数；当 stitcher 仍为空地图时，几何参数会立即重建画布。
 
 ### Flow: 点击半径诊断
 1. `MotionController._calculate_target_screen_position()` 记录 `raw_screen_radius` 和夹紧后的 `screen_radius`。
@@ -949,11 +1009,12 @@ Level 3: navigation click path
 5. `NavigationModeWidget._on_event_config_changed()` 将配置写回 coordinator，清空旧事件 marker，并打印事件配置日志。
 6. 用户点击“测试传送门”时，`EventManagerDialog.test_portal_requested` 触发 `NavigationModeWidget._run_portal_manual_test()`；按钮状态由 `ManualEventTestController` 同步，导航循环未运行时先启动定位循环。
 7. 用户点击“刷新传送门状态”时，`EventManagerDialog.reset_portal_requested` 触发 `NavigationModeWidget._reset_portal_event_state()`；该函数停止手动 portal 测试、调用 `EventCoordinator.reset_event_type("portal")` 清空 portal 任务/聚类/冷却状态，并刷新任务表和地图 marker。
-8. 导航循环定位成功后构造 `EventTick`，`EventCoordinator.update()` 检测 raw minimap 图标、合并 memory、把最新任务快照写入 `tick.event_tasks`、选择任务；自动导航开启或手动事件测试开启时推进 handler。
-9. 事件 handler 返回 `MOVE_TO` 时，`EventActionExecutor` 调用 `NavigationModeWidget._execute_event_move_to()`；该函数委托 `EventPathMover.step()` 规划事件路径和 subgoal，再由 `MotionController.move_to_map_target()` 真实点击。
-10. 事件 handler 返回 `COMPLETE/FAIL` 时，导航循环仍由 `EventActionExecutor` 消费终态 action，清理 event path overlay；若是手动传送门测试则自动停止测试按钮，若是自动导航则普通路线从下一帧继续。
-11. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；事件 path/subgoal 也会复用路线 overlay 绘制。
-12. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
+8. 导航循环定位成功后构造 `EventTick` 并调用 `EventCoordinator.observe()`；该阶段只检测 raw minimap 图标、合并 memory、把最新任务快照写入 `tick.event_tasks`、选择显示任务，不执行 handler。
+9. 自动导航或手动事件测试启用时，`NavigationTaskController.update()` 从 `EventCoordinator.tasks()` 获取 pending/running event tasks，并把它们作为动态必经点和 required/exit 一起调度；手动传送门测试通过 `manual_event_only=True` 只选择事件任务。
+10. 被选中的事件任务通过 `EventCoordinator.run_task(task_id, tick)` 推进 handler；handler 返回 `MOVE_TO` 时复用 `MovementExecutor.step()` 规划事件路径和 subgoal，返回 `PRESS_KEY/CLICK_SCREEN` 时直接转成 `NavigationIntent`。
+11. `NavigationModeWidget._execute_navigation_intent()` 统一消费事件和普通导航的移动/点击/按键；终态事件 action 会让手动测试按钮自动停止，自动导航则从下一帧按当前位置重新调度 required/event/exit。
+12. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；当前 path/subgoal 复用路线 overlay 绘制。
+13. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
 
 ## 7. 外部集成详情
 `main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。管理员进程启动后会获取基于项目路径的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口；如果已有实例存在，新实例直接退出，防止多个 GUI 同时识别事件并向游戏发送移动/按键。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
@@ -985,6 +1046,9 @@ Level 3: navigation click path
 `auto_click_cooldown_ms: int` - 自动导航两次真实点击之间的最小间隔，默认 260ms。
 `auto_min_click_target_delta: float` - 冷却结束后，子目标至少变化多少地图像素才重复点击，默认 8.0。
 `bottom_click_guard_pixels: int` - 屏幕底部禁点区高度，默认 300px，设为 0 可关闭；只在点击落入底部 UI 时沿原方向缩短半径。
+`nav_wall_erode_iterations: int` - 从原始 `wall_layer` 派生 A* 专用墙图时的腐蚀次数，默认 1；只影响寻路，不影响定位/事件配准。
+`path_start_clear_radius: int` - A* 网格构建后清空玩家起点附近障碍的地图像素半径，默认 30。
+`path_walkable_snap_radius: int` - A* 起终点落在障碍内时搜索最近可走点的地图像素半径，默认 18。
 
 ### `EventSystemConfig`
 字段：
@@ -1029,9 +1093,9 @@ P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观�
 
 `core/motion_controller.py` still owns only map-direction to screen-click conversion. The main project backend is `win32_mouse_event`: `MotionController._send_click()` calls `InputDriver.click(x, y, button="primary", hold_seconds=0.05, move_delay=0.02)`. `pydirectinput.click(x, y)` is only used as a fallback if the primary backend raises.
 
-`MotionController.click_map_target_once()` is an event-interaction helper, not normal movement guidance. It maps the target map point to screen space with `movement_scale_factor` and `movement_max_click_radius`, but deliberately does not apply `movement_min_click_radius`; if the player and target overlap, it clicks `game_screen_center`. Portal uses this for the pre-`D` mapped portal-point click.
+`MotionController.click_map_target_once()` is an event-interaction helper, not normal movement guidance. It maps the target map point to screen space with `movement_scale_factor` and `movement_max_click_radius`, but deliberately does not apply `movement_min_click_radius`; if the player and target overlap, it clicks `game_screen_center`. Portal uses this for the pre-`D` mapped portal-point click when `NavigationIntent.metadata.force_click_target` is set.
 
-`core/auto_navigator.py` now defaults back to planning-first guidance. User-defined guide points and exit region still define major route intent, but each segment is planned with `PathFinder` on a thinned wall map constrained by `explored_map`. Direct full-segment guidance is retained only as explicit `prefer_direct_guidance=True`; A* failure uses a short local fallback probe near the player and then re-plans. Default automatic click cadence is `auto_click_cooldown_ms=260` and `auto_min_click_target_delta=8.0`, both exposed in the navigation parameter dialog.
+`core/navigation_tasks/movement_executor.py` is the single map-space movement planner for required points, exit movement, and event `MOVE_TO`. User-defined guide points shape route intent through `RouteContext.corridor_anchors()`: current-position-before anchors are ignored, forward anchors between the player and current selected task are preserved, and movement advances by `anchor_step` or `anchor_probe` before direct target A*. Default automatic click cadence is `auto_click_cooldown_ms=260` and `auto_min_click_target_delta=8.0`, both exposed in the navigation parameter dialog and applied to `NavigationTaskController.movement`.
 
 `bottom_click_guard_pixels` protects the game's bottom UI/hotbar/chat region without changing the normal movement mapping. If a computed click lands below the safe line, `MotionController` projects that point back along the same center-to-target vector, effectively clicking slightly closer to the character in the same direction.
 
@@ -1046,7 +1110,7 @@ The stable movement baseline is the original `pydirectinput.click(x, y)` call. D
 `MotionController._execute_click()` logs the requested coordinate, final coordinate, whether clamping changed it, `pydirectinput.size()`, pydirectinput cursor position before/after, Win32 cursor position before/after, target window information, foreground window information, current `ClipCursor` rectangle, focus HWND, and confirmation-click state. This is intended to separate coordinate mapping failures from Unreal/Windows mouse capture or "click reached the wrong window" failures during real-game testing.
 
 ### Event Move Repeat Click
-`EventPathMover.step(..., force_repeat_click=True)` keeps the normal 260ms click cooldown but bypasses the "subgoal must change by 8px" gate. Portal uses it only for final approach before `interact_radius`, so repeated same-subgoal clicks continue pushing the character into the exact portal point without weakening the later `D`-press distance check.
+`MovementExecutor.step(..., force_repeat_click=True)` keeps the normal 260ms click cooldown but bypasses the "subgoal must change by 8px" gate. Portal handler sets this flag only for final approach before `interact_radius`, so repeated same-subgoal clicks continue pushing the character into the exact portal point without weakening the later `D`-press distance check. The same executor state is reset on every selected task transition, preventing a previous required/event click from suppressing the next task.
 
 ### 2026-05-20 Standalone Input Probe
 `utils/input_probe.py` is a standalone manual probe for testing real game input before changing `MotionController`. It supports `pydi_click_xy`, `pydi_move_click`, `pydi_hold_xy`, `setcursor_pydi_click`, `setcursor_pydi_hold`, and `setcursor_win32_click`. It is diagnostic-only unless launched with `--execute`.
@@ -1057,13 +1121,13 @@ Runtime probe on the user's machine showed `pydirectinput.size() == (1707, 1067)
 ## 11. Event Runtime Diagnostics
 `core/events/debug.py` is the shared logging utility for the event system. It provides `event_log()`, `describe_action()`, and `describe_task()` so event modules print consistent `[Event HH:MM:SS.mmm pid=<pid>] ...` lines instead of ad-hoc debug strings. `event_log()` writes to both the normal runtime output and the dedicated `logs/event_runtime.log`, which is the preferred file for portal/event testing. The PID is intentionally included because multiple GUI processes can otherwise interleave event lines and make a portal bounce look like a single state-machine bug.
 
-`EventMonitor`, `EventMemory`, `EventCoordinator`, `EventRunner`, and `EventActionExecutor` now log detector initialization, observation counts, task creation/confirmation, scheduler selection, handler start, action output, action execution, completion, failure, retry, and ignored states. Repeating frame-level logs are throttled, while click/key/complete/fail actions print immediately.
+`EventMonitor`, `EventMemory`, `EventCoordinator`, `EventRunner`, and `NavigationTaskController` log detector initialization, observation counts, task creation/confirmation, display-task selection, navigation task selection/transition, handler start, action output, action execution, completion, failure, retry, and ignored states. Repeating frame-level logs are throttled, while click/key/complete/fail actions print immediately.
 
-`PortalMinimapDetector`, `PortalMainViewConfirmer`, and `PortalEventHandler` now log the portal-specific chain: minimap template hits, task global position, movement distance to the portal, key/click interaction, wait-after-interaction, teleport position/environment completion, and timeout failure. Main-view confirmation only runs when `interaction="click"`; default `interaction="key"` goes directly to pressing `D` after arriving near the minimap-derived portal point.
+`PortalMinimapDetector`, retained `PortalMainViewConfirmer` probe assets, and `PortalEventHandler` now log the portal-specific chain: minimap template hits, task global position, movement distance to the portal, mapped portal-point click, key interaction, wait-after-interaction, teleport position/environment completion, and timeout failure. Current runtime portal flow is minimap-first and key-based: after arriving near the minimap-derived portal point it clicks that mapped point once, waits briefly, then presses `D`; main-view confirmation is not part of the active default portal loop.
 
-`NavigationModeWidget` logs event-system initialization and event movement/click callbacks, and the status bar now appends a compact event summary from `EventCoordinator.status_summary()`, for example `event:portal running seen=3 act=move_to`. This is intended for live game testing only; it does not change event matching thresholds or navigation movement semantics. The old per-frame localization print block (`当前定位` / `位置来源` / `本帧定位位置`) is intentionally removed so portal/event operation logs remain readable in `logs/runtime.log`.
+`NavigationModeWidget` logs event-system initialization and unified navigation intent execution, and the status bar now appends a compact event summary from `EventCoordinator.status_summary()`, for example `event:portal running seen=3 act=move_to`. This is intended for live game testing only; it does not change event matching thresholds or navigation movement semantics. The old per-frame localization print block (`当前定位` / `位置来源` / `本帧定位位置`) is intentionally removed so portal/event operation logs remain readable in `logs/runtime.log`.
 
-Event detection and memory updates may run while normal navigation localization is active, but `EventCoordinator.update(..., run_handlers=False)` prevents handlers from advancing unless auto navigation or manual event test mode is enabled. This avoids a misleading state where an event task could log completion without the executor being allowed to move or click.
+Event detection and memory updates may run while normal navigation localization is active, but handlers only advance when `NavigationTaskController` selects an event task and calls `EventCoordinator.run_task()`. This avoids a misleading state where an event task could log completion without the unified controller being allowed to move or click.
 
 ## 12. Event Manager UI
 `gui/dialogs/event_manager_dialog.py` is the independent event-management surface. It is intentionally package-level: the table lists complete events such as `portal`, not the internal minimap detector, main-view confirmer, or handler. The global checkbox toggles `EventSystemConfig.enabled`; each row checkbox toggles `config.events[event_type]["enabled"]`. Selecting a row renders editable controls from the event definition schema; for portal this includes `interact_radius`, which controls how close the player must be before pressing `D` and can now be lowered to 1, plus `portal_point_click_wait_ms`, which controls the pause between the mapped portal-point click and pressing `D`.
@@ -1083,7 +1147,7 @@ The current portal event is minimap-first. `PortalMinimapDetector` detects the p
 
 `NavigationCore.localize()` stores `last_frame_registration` whenever player localization succeeds. `EventCoordinator` passes local detections and that registration to `EventPositionStabilizer`, which projects each candidate with `frame_origin_global + local_minimap_pos * draw_scale`, clusters samples by event type and map distance, and emits an `EventObservation` only after `stable_frames` samples stay within `stable_variance`. `EventMemory` only creates/updates tasks from these stable global observations.
 
-When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. `MOVE_TO` is executed through `EventPathMover`, which uses A* where available and short local fallback probes instead of direct long-line clicks. During the final approach where `distance > interact_radius`, the handler marks the action with `metadata.force_repeat_click=True`; `EventPathMover.step()` then allows another real click after the normal click cooldown even if the subgoal has not changed, preventing a near-target stall such as staying 7px away from a 1px interaction radius. Once the player is within `interact_radius`, the handler first emits one forced mapped portal-point click (`metadata.force_click_target=True`), waits `portal_point_click_wait_ms`, then sends `D` through `MotionController.press_key()` and enters `wait_result`. The forced click goes through `MotionController.click_map_target_once()` so it targets the mapped portal point rather than using movement minimum radius. With `interaction="click"`, it uses `PortalMainViewConfirmer` to find the blue/purple portal entity in the game window and clicks its screen center.
+When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. The handler returns `EventAction.move_to(global_pos)`; `NavigationTaskController` converts that to a `MOVE_MAP` intent through the shared `MovementExecutor`, so portal movement uses the same A*/guide-anchor/fallback/click-throttle behavior as required points and exit movement. During the final approach where `distance > interact_radius`, the handler marks the action with `metadata.force_repeat_click=True`; `MovementExecutor.step()` then allows another real click after the normal click cooldown even if the subgoal has not changed, preventing a near-target stall such as staying 7px away from a 1px interaction radius. Once the player is within `interact_radius`, the handler first emits one forced mapped portal-point click (`metadata.force_click_target=True`), waits `portal_point_click_wait_ms`, then sends `D` through `MotionController.press_key()` and enters `wait_result`. The forced click goes through `MotionController.click_map_target_once()` so it targets the mapped portal point rather than using movement minimum radius. The schema still has an `interaction="click"` choice, but current handler behavior forces key interaction and treats main-view confirmation as a retained probe/asset path rather than the active portal flow.
 
 After interaction, completion is not a fixed timer. The handler waits at least `post_interact_wait_ms`, then returns a teleport completion if the player's global position changes by at least `teleport_min_distance`, if the raw minimap patch around the player differs from the pre-interaction patch by at least `environment_change_threshold`, or if the player has landed within `exit_complete_radius` of another active known portal task and is clearly closer to that task than to the entry portal. The last branch is required for close paired portals where the real teleport distance can be far below `teleport_min_distance`. If none of these checks pass before `teleport_timeout_ms`, the task fails and may retry.
 
@@ -1098,16 +1162,27 @@ Cooldown still remains as a secondary guard: `EventMemory` uses `cooldown_radius
 
 `core/events/models.py::EventObservation` is stable/global: event type, confidence, observation time, global map position, optional latest local minimap position, source, sample count, variance, and stabilization metadata. `EventMemory.merge_observations()` treats this as already localized and stable.
 
-`core/events/models.py::EventTick.event_tasks` is a runtime memory snapshot, not detector output. `build_event_tick()` leaves it empty; `EventCoordinator.update()` fills it after `EventMemory.merge_observations()`. Handlers use this to compare against already-known tasks without importing memory or scheduler internals.
+`core/events/models.py::EventTick.event_tasks` is a runtime memory snapshot, not detector output. `build_event_tick()` leaves it empty; `EventCoordinator.observe()` fills it after `EventMemory.merge_observations()`. Handlers use this to compare against already-known tasks without importing memory or scheduler internals.
 
 `core/events/position_stabilizer.py::EventPositionStabilizer.update()` is the shared localization stage for all future event types. It rejects detections when no valid frame registration exists, projects candidates through the same wall alignment used for player localization, clusters nearby samples, expires stale clusters, and emits stable observations only after the configured sample and variance gates pass.
 
-## 15. Structural Audit Snapshot
-`gui/modes/navigation_mode.py` is the current highest-risk responsibility hotspot. It owns the navigation page UI, signal wiring, route persistence commands, route overlay drawing, event overlay drawing, map loading, event config bridge, event tick creation, event action callbacks, capture geometry, debug overlay window updates, input-window topmost/lower behavior, calibration, click-mode state, and the navigation loop. The stable external entry remains `gui.modes.navigation_mode.NavigationModeWidget`; refactors should keep this module as a facade/re-export while moving behavior into `gui/modes/navigation/*`.
+## 15. Event Four-Phase Methodology
+`docs/plans/2026-05-23-portal-event-case-study.md` records the project-level event methodology using `portal` as the first concrete case. Future event work should be evaluated through four phases: event recognition/localization, navigation to trigger point and triggering, event-specific execution, and event completion.
+
+Phase 1 is already mostly shared: concrete detectors emit local `EventDetection` values, `EventPositionStabilizer` projects them through wall registration, and `EventMemory` only accepts stable `EventObservation` values. New minimap-based events should normally replace only detector assets/thresholds and event-specific config, not rewrite localization or memory.
+
+Phase 2 is now shared through the unified navigation task layer: handlers return `EventAction.move_to(global_pos)`, `NavigationTaskController` converts the selected event task into `NavigationIntent`, and `MovementExecutor` owns A*, guide-anchor lookahead, click throttling, and fallback probes. The remaining coupling is that `NavigationModeWidget._navigation_loop_unified()` still wires capture/localization/UI overlay dependencies and consumes `NavigationIntent` with `MotionController`; future refactors should move more of that wiring behind navigation-mode helper modules without changing the task/controller protocol.
+
+Phase 3 remains event-specific by design. Handlers may maintain complex state machines, but they must express side effects through `EventAction` rather than directly calling mouse/keyboard APIs. Portal is simple because triggering and execution are effectively the same: click the mapped portal point, wait briefly, then press `D`.
+
+Phase 4 requires an explicit completion strategy per event. Portal uses a teleport completion strategy: position jump, local minimap environment change, or landing near another known portal. It then marks both entry and exit tasks completed through `EventMemory.complete_teleport_session()` to prevent bounce loops.
+
+## 16. Structural Audit Snapshot
+`gui/modes/navigation_mode.py` is still the main UI hotspot, but scheme C has removed the old split between normal navigation execution and event movement execution. It owns the navigation page UI, signal wiring, route persistence commands, map loading, event config bridge, event tick creation, capture geometry, debug overlay window updates, input-window topmost/lower behavior, calibration, click-mode state, the unified navigation loop, and final `NavigationIntent` consumption. The stable external entry remains `gui.modes.navigation_mode.NavigationModeWidget`; future refactors should keep this module as a facade/re-export while moving UI wiring into `gui/modes/navigation/*`.
 
 After the first split, route/event QGraphics overlay item construction lives in `gui/modes/navigation/route_overlay.py` and `gui/modes/navigation/event_overlay.py`. `NavigationModeWidget` still owns when overlays refresh and still exposes the original private methods, but no longer contains the long per-item drawing loops for route and event markers.
 
-After the second split, `gui/modes/navigation/event_adapter.py` owns event registry bootstrapping, config summary strings, default game-window lookup, `EventTick` construction, event-action control checks, terminal event-action checks, and coordinator status text. `NavigationModeWidget` still owns when to initialize the event system, when to call coordinator updates, and how to respond with UI/input side effects.
+After the second split, `gui/modes/navigation/event_adapter.py` owns event registry bootstrapping, config summary strings, default game-window lookup, `EventTick` construction, legacy event-action helper predicates, and coordinator status text. `NavigationModeWidget` still owns when to initialize the event system and when to call `EventCoordinator.observe()`, but event execution selection now lives in `NavigationTaskController` rather than UI-level helper predicates.
 
 After the third split, `gui/modes/navigation/map_runtime.py` owns project/map path resolution, map-name listing, `NavConfig` JSON load/save, logical-to-physical center conversion, and capture geometry calculation. `NavigationModeWidget` still owns user feedback, `NavigationCore` construction, button enabling, and applying loaded config to runtime services.
 
@@ -1127,10 +1202,19 @@ After the eighth split, `gui/dialogs/advanced_settings/params_adapter.py` owns a
 
 After the ninth split, `gui/dialogs/color_picker/hsv_ranges.py` owns HSV conversion/sample/range math and saturation averaging, while `gui/dialogs/color_picker/image_renderer.py` owns OpenCV-to-QPixmap conversion and sample marker drawing. `ColorPickerDialog` still owns point collection, preview mask generation, morphology, debug file output, result text, and accept/reject flow.
 
-Core hotspots are algorithmically sensitive and should be split later. `core/stitcher_core.py` mixes registration, keyframe policy, weighted fusion, map package persistence, statistics, and display-map generation. `core/navigation_core.py` mixes map package loading, F2F tracking, template relocalization, frame-registration contract creation, and display-map rendering. `core/auto_navigator.py` is a large but cohesive state machine; route-progress helpers and fallback probe helpers are reusable candidates, but the state transitions should not be moved until covered by targeted import/behavior checks. `core/motion_controller.py` is the input-control boundary and combines map-to-screen conversion, bottom-click guard, Win32 backend access, pydirectinput fallback, keyboard presses, and click diagnostics.
+Core hotspots are algorithmically sensitive and should be split later. `core/stitcher_core.py` mixes registration, keyframe policy, weighted fusion, map package persistence, statistics, and display-map generation. `core/navigation_core.py` mixes map package loading, F2F tracking, template relocalization, frame-registration contract creation, and display-map rendering. `core/navigation_tasks/*` is now the shared route/event movement layer and should remain small, testable modules rather than being folded back into the UI. `core/motion_controller.py` is the input-control boundary and combines map-to-screen conversion, bottom-click guard, Win32 backend access, pydirectinput fallback, keyboard presses, and click diagnostics.
 
-The event system has comparatively clear module boundaries: `EventCoordinator` orchestrates, `EventMonitor` runs detectors, `EventPositionStabilizer` localizes detections, `EventMemory` owns task lifecycle/cooldown, `EventScheduler` selects work, `EventRunner` owns handler lifecycle, and `EventActionExecutor` bridges actions to GUI-owned callbacks. The main unclear boundary is currently in `NavigationModeWidget`, which still builds `EventTick`, executes event MOVE_TO through GUI state, and draws event overlays.
+The event system has comparatively clear module boundaries: `EventCoordinator` observes detections and runs only a selected task, `EventMonitor` runs detectors, `EventPositionStabilizer` localizes detections, `EventMemory` owns task lifecycle/cooldown, `EventScheduler` selects display/event-runner work inside the event layer, and `EventRunner` owns handler lifecycle. There is no event-specific action executor now; event actions become `NavigationIntent` through `NavigationTaskController`, then the GUI consumes the same intent path used by normal route navigation.
 
-Reusable capabilities already present: `EventPathMover` is reusable A* lookahead movement for event actions; `path_utils` is reusable route math; `core/events/detectors/template_matcher.py` is reusable template matching; `core/events/window_finder.py` and `core/input_driver.py` are reusable Windows input/window primitives; `NavConfig` and `EventSystemConfig` are separate runtime configuration contracts. Reusable capabilities now extracted from GUI include route overlay rendering, event overlay rendering, navigation capture geometry, navigation viewport geometry, mapping save/load config IO, mapping display rendering, mapping parameter control adapters, advanced-settings parameter mapping, color-picker HSV range math, and color-picker image marker rendering. Reusable capabilities still trapped in GUI include nav-params dialog field mapping and mapping capture-loop orchestration.
+## 17. Navigation Conflict Design Options
+`docs/plans/2026-05-24-navigation-route-progress-option-b-design.md` records the rejected/intermediate option B for historical comparison. It kept normal navigation and event movement as separate executors with shared route progress, but the user selected scheme C instead, so option B is no longer the active implementation direction.
+
+Option B's useful idea, route progress and guide-anchor consumption, was absorbed into `RouteContext`, `NavigationTaskScheduler`, `MovementExecutor`, and `core/anchor_path.py` rather than implemented as two separate executors.
+
+`docs/plans/2026-05-24-navigation-task-queue-option-c-design.md` records the active architecture now implemented in source: UI-level arbitration and dual executors have been replaced with a unified `NavigationTask` queue where required points, exit, and event tasks are scheduled by one `NavigationTaskController`. Shared movement behavior lives in `MovementExecutor`; old movement wrappers and their tests have been deleted.
+
+`docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md` remains the implementation record. The current source has already passed the planned cleanup boundary: the old ordinary navigator module, old event path mover module, old event action executor module, and their dedicated ordinary-navigator test have been removed; `NavigationModeWidget.navigation_loop()` is only a compatibility wrapper that calls `_navigation_loop_unified()`.
+
+Reusable capabilities already present: `MovementExecutor` is reusable A* + guide-anchor + fallback movement for route and event targets; `RouteContext` is reusable route progress/projection; `path_utils` is reusable route math; `core/events/detectors/template_matcher.py` is reusable template matching; `core/events/window_finder.py` and `core/input_driver.py` are reusable Windows input/window primitives; `NavConfig` and `EventSystemConfig` are separate runtime configuration contracts. Reusable capabilities now extracted from GUI include route overlay rendering, event overlay rendering, navigation capture geometry, navigation viewport geometry, mapping save/load config IO, mapping display rendering, mapping parameter control adapters, advanced-settings parameter mapping, color-picker HSV range math, and color-picker image marker rendering. Reusable capabilities still trapped in GUI include nav-params dialog field mapping and mapping capture-loop orchestration.
 
 Recommended refactor order is: first split navigation GUI helpers with compatibility imports; then split mapping save/load/render helpers; then split dialog schema/helper modules; then isolate motion input backend/diagnostics; then split core navigation/stitching algorithms only after the GUI layer no longer obscures call sites.

@@ -1723,3 +1723,439 @@
 
 **验证：**
 - `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\path_mover.py core\events\models.py core\events\action_executor.py core\events\config.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\handler.py core\motion_controller.py gui\modes\navigation_mode.py gui\dialogs\event_manager_dialog.py` 已通过。
+## [SYNC] 2026-05-23 21:33 - 传送门事件四阶段案例文档
+### A. SYNC 范围声明
+**触发任务：** 新增一份以传送门事件为例的事件方法论文档，体现“事件识别、导航触发、事件执行、事件结束”四阶段，并检查当前代码架构是否支持将第 1、2 阶段抽成通用能力。
+**直接变更文件：** 待新增 `docs/plans/2026-05-23-portal-event-case-study.md`，并同步 `CODEBASE.md` / `ITERATION_LOG.md`。
+**预计连带影响：** 需要重读 `core/events/types/portal/handler.py`、`core/events/types/portal/definition.py`、`core/events/types/portal/config.py`、`core/events/path_mover.py`、`core/events/coordinator.py`、`core/events/models.py`、`gui/modes/navigation_mode.py` 中事件接入点，确认事件生命周期和通用化边界。
+
+### C. SYNC 结果
+**关键发现：**
+- (verified) 当前 `portal` 已经按完整事件包暴露：`PortalEventDefinition` 对外提供配置和 detector/handler 创建，事件管理 UI 只看到完整 `portal` 事件。
+- (verified) 第 1 阶段已经基本通用：`PortalMinimapDetector` 只输出局部 `EventDetection`，`EventPositionStabilizer` 统一通过墙体配准投影到全局地图，`EventMemory` 只接受稳定 `EventObservation`。
+- (verified) 第 2 阶段已经有通用核心：`PortalEventHandler` 只返回 `EventAction.move_to()`，`EventPathMover` 负责事件移动的 A*、lookahead、点击节流和 fallback probe。
+- (partial) 第 2 阶段仍有 GUI 耦合：`NavigationModeWidget._execute_event_move_to()` 仍持有 `nav_core.wall_layer`、`PathFinder`、`MotionController` 和事件 path overlay 上下文；后续事件增多时应抽成独立事件移动执行桥。
+- (verified) 第 3 阶段传送门较简单：靠近后点击映射传送门点、等待、按 `D`，触发和执行几乎合一。
+- (verified) 第 4 阶段传送门已有明确 completion strategy：位置变化、环境变化或落在另一个已知 portal 附近，并通过 `complete_teleport_session()` 同时完成入口和出口，防止反复传送。
+- (conflict) 旧 `CODEBASE.md` 仍写着 `interaction="click"` 会走主画面 confirmer；本轮重读 `PortalEventHandler` 确认当前实现会强制按键交互，已修正文档避免误导。
+
+**新增文档：**
+- `docs/plans/2026-05-23-portal-event-case-study.md`：按“事件识别/定位 -> 导航触发 -> 执行事件 -> 事件结束”四阶段拆解传送门案例，并标注可通用能力、事件特定能力和当前架构风险。
+
+**CODEBASE.md 更新内容：**
+- 在目录结构中新增传送门案例文档入口。
+- 新增 `Event Four-Phase Methodology` 章节，记录四阶段方法论、1/2 阶段通用化边界和 `NavigationModeWidget._execute_event_move_to()` 的后续抽离风险。
+- 修正旧 portal 说明中关于 `interaction="click"` 的过期描述：当前主流程强制按 `D`，大画面 confirmer 只是保留的技术资产/探针路径。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 7 | 本轮按四阶段重读状态机：靠近、最终贴近、映射点点击、按 D、等待传送完成。 |
+| `core/events/types/portal/definition.py` | (partial) | (partial) | 3 | 本轮确认 `portal` 对外仍是完整事件包，TUI 不暴露内部 detector/handler。 |
+| `core/events/types/portal/config.py` | (partial) | (partial) | 2 | 本轮确认识别、定位、靠近、交互、完成和冷却参数分布。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 3 | 本轮确认事件移动通用核心：A*、lookahead、fallback probe、repeat click。 |
+| `core/events/coordinator.py` | (partial) | (partial) | 2 | 本轮确认事件主链路：detect -> stabilize -> memory -> scheduler -> runner。 |
+| `core/events/models.py` | (partial) | (partial) | 2 | 本轮确认 `EventDetection`/`EventObservation`/`EventTask`/`EventAction` 对四阶段的承载关系。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 10 | 本轮确认第 2 阶段动作执行仍耦合在导航页面，是后续抽离风险。 |
+| `docs/plans/2026-05-23-portal-event-case-study.md` | PENDING | 浅读 | 1 | 新增案例文档，供后续事件设计和架构检查引用。 |
+
+**验证：**
+- 本轮仅新增/更新 Markdown 文档，未运行代码逻辑测试。
+## [SYNC] 2026-05-23 21:58 - 途经点改为软锚点并消除事件恢复回头
+### A. SYNC 范围声明
+**触发任务：** 用户修正导航/事件冲突需求：事件完成后恢复普通导航时不能回到原来的途经点；途经点不再是必须按顺序经过的目标，只作为普通导航和事件导航的 A* 辅助中间锚点。添加顺序仅用于撤销最后一个途经点。
+**直接变更文件：** 预计修改 `core/auto_navigator.py`、`core/events/path_mover.py`、`gui/modes/navigation_mode.py`、`gui/modes/navigation/route_overlay.py`，并同步 `CODEBASE.md` / `ITERATION_LOG.md`。
+**预计连带影响：** 自动导航目标选择、事件 `MOVE_TO` 路径规划、路线 overlay 当前目标显示、UI 文案和 CODEBASE 中关于 `guide_points` 的语义说明都需要同步；`required_points` 仍保留顺序阶段门语义。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) `AutoNavigator._select_segment_target()` 旧逻辑会返回 `("guide", guide_point)`，并用 `guide_index` 按添加顺序推进途经点。
+- (verified) 事件完成后普通导航从下一帧恢复时仍使用 `AutoNavigator` 当前 `guide_index`，因此可能回头追事件发生前的旧途经点。
+- (verified) `EventPathMover` 原本只对事件目标直接 A*，无法复用路线中的辅助点；用户要求事件导航也可以借助这些点作为中间锚点。
+
+**实际变更：**
+- 新增 `core/anchor_path.py`，提供 `plan_path_with_optional_anchors()`：先尝试直接 A*；直接失败时才筛选方向合理的软锚点并搜索锚点组合；仍失败则返回空，让调用方走原 fallback。
+- `AutoNavigator._select_segment_target()` 现在只返回当前必经点或出口；`guide_points` 不再成为 `current_target_kind="guide"`。
+- `AutoNavigator._align_route_to_current_position()` 只推进已经靠近的必经点，不再根据途经点/路线段修改 `guide_index`。
+- `AutoNavigator._plan_segment()` 通过 `plan_path_with_optional_anchors()` 把 `guide_points` 作为软锚点参与直接 A* 失败后的辅助规划。
+- `EventPathMover.step()` 新增 `soft_anchors` 参数，事件移动同样可以在直接 A* 失败时借用途经点辅助规划。
+- `NavigationModeWidget._execute_event_move_to()` 将当前路线 `guide_points` 传给事件移动器；事件完成后恢复普通导航时不会回头追途经点。
+- `route_overlay.py` 将途经点显示为 `A1/A2/...` 辅助点，不再按 `current_guide_index` 显示已完成或当前目标。
+- 导航 UI 文案改为“请在地图上点击A*辅助点；顺序仅用于撤销”。
+
+**CODEBASE.md 更新内容：**
+- 新增 `core/anchor_path.py` 目录和模块说明。
+- 更新 `NavigationModeWidget`、`route_overlay.py`、`core/auto_navigator.py` 的职责/注意事项，明确 `guide_points` 是软锚点，不是顺序目标。
+- 更新 `AutoNavigator.update()`、`_align_route_to_current_position()`、`_select_segment_target()` 函数说明，移除旧 `_candidate_index_from_nearest_route_segment()` 描述。
+- 更新传送门案例文档，明确事件移动可复用软锚点，但事件完成恢复不能回头追途经点。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/auto_navigator.py` | (partial) | (partial) | 4 | 本轮重读目标选择、路线对齐、规划和推进逻辑，将途经点从顺序目标改为软锚点。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 4 | 本轮接入 `soft_anchors`，让事件 MOVE_TO 复用途经点辅助规划。 |
+| `core/anchor_path.py` | PENDING | 浅读 | 1 | 新增通用软锚点路径规划 helper，直接 A* 失败后才尝试锚点组合。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 11 | 本轮重读事件 move callback 和路线 UI 文案，将路线 guide_points 传入事件移动器。 |
+| `gui/modes/navigation/route_overlay.py` | (partial) | (partial) | 2 | 本轮重读途经点 overlay，改为 A* 辅助点显示，不再显示完成/当前状态。 |
+| `docs/plans/2026-05-23-portal-event-case-study.md` | 浅读 | 浅读 | 2 | 补充事件移动阶段的软锚点语义。 |
+
+**验证：**
+- `python -m py_compile core\anchor_path.py core\auto_navigator.py core\events\path_mover.py gui\modes\navigation_mode.py gui\modes\navigation\route_overlay.py` 已通过。
+- 未运行逻辑/单元测试，等待用户在游戏内实测导航恢复和传送门事件移动。
+
+## [SYNC] 2026-05-23 22:11 - 软锚点参与规划而非失败兜底
+### A. SYNC 范围声明
+**触发任务：** 用户确认“都要借助锚点”：普通导航和事件导航都应把途经点作为路径规划候选中间节点，而不是只有直接 A* 失败时才尝试。
+**直接变更文件：** `core/anchor_path.py`、`CODEBASE.md`、`ITERATION_LOG.md`、`docs/plans/2026-05-23-portal-event-case-study.md`。
+**预计连带影响：** `core/auto_navigator.py` 和 `core/events/path_mover.py` 已统一调用 `plan_path_with_optional_anchors()`，因此只需要调整该共用规划器即可影响普通导航和事件移动；文档中所有“直接失败才用锚点”的旧表述必须同步修正。
+
+### C. SYNC 结果
+**关键发现：**
+- (verified) 旧新增的 `plan_path_with_optional_anchors()` 会在 `direct_path` 存在时立即返回，导致 `guide_points` 仍只是失败兜底，没有真正参与规划。
+- (verified) 普通导航和事件移动已经共用 `plan_path_with_optional_anchors()`，所以修正共用层即可同时覆盖自动导航和事件 `MOVE_TO`。
+
+**实际变更：**
+- `plan_path_with_optional_anchors()` 现在同时计算直接 A* 和锚点图路径，不再因直接 A* 成功提前跳过锚点。
+- `_plan_anchor_graph()` 用状态 `(node_index, used_anchor)` 搜索，`require_anchor=True` 时要求到目标前至少经过一个合理锚点；锚点仍不按 UI 添加顺序强制经过。
+- 如果锚点路径存在且长度不超过直接路径 `max_anchor_factor` 倍，则返回 `path_kind="anchor_planned"`；锚点不可达或绕远过多时回退直接路径。
+- `CODEBASE.md` 和传送门案例文档已修正为“锚点参与规划但不作为顺序目标”。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/anchor_path.py` | 浅读 | (partial) | 2 | 本轮重读并修正软锚点策略：直接路径和锚点图路径并行评估，锚点不再只是失败兜底。 |
+| `core/auto_navigator.py` | (partial) | (partial) | 5 | 本轮确认普通导航已通过共用规划器接收软锚点，无需重新引入 guide 目标。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 5 | 本轮确认事件 MOVE_TO 已通过共用规划器接收软锚点，传送门事件会同步受益。 |
+| `docs/plans/2026-05-23-portal-event-case-study.md` | 浅读 | 浅读 | 3 | 修正阶段 2 中“直接 A* 失败才借助锚点”的旧描述。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\anchor_path.py core\auto_navigator.py core\events\path_mover.py gui\modes\navigation_mode.py gui\modes\navigation\route_overlay.py` 已通过。
+- 未运行逻辑/单元测试，等待用户在游戏内验证 `path_kind=anchor_planned` 时的实际路线表现。
+
+## [BUGFIX] 2026-05-23 23:35 - 锚点分段 A* 不再直冲最终目标
+### A. SYNC 范围声明
+**触发任务：** 用户反馈自动导航仍然直线冲目标，完全忽视辅助锚点；正确语义是 A* 应通过中间锚点分段规划，锚点和 A* 不应是独立候选方案。
+**直接变更文件：** `core/anchor_path.py`、`core/auto_navigator.py`、`core/events/path_mover.py`、`gui/modes/navigation_mode.py`、`CODEBASE.md`、`ITERATION_LOG.md`、`docs/plans/2026-05-23-portal-event-case-study.md`。
+**预计连带影响：** 普通导航和事件 `MOVE_TO` 都会优先使用锚点分段图；锚点链断开时先走到当前可达的最远锚点或朝下一个锚点短探测，到达后重规划，而不是回退为长距离直冲最终目标。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) 最近运行日志只有最终鼠标点击和 `map_delta`，没有打印规划层 `path_kind`，所以运行日志能看出一直朝最终目标方向点，但不能定位规划层原因。
+- (verified) 离线探针使用 `map_data/Aa/route.json` 和 `map_data/Aa/map_data.npz` 复现：旧锚点图从起点到出口返回 `None`，随后运行时可能回退直接/局部目标方向。
+- (verified) 具体断点包括 `(2908,2280) -> (3020,2383)` A* 判定无路，以及 `(3381,2226) -> (3471,2320)` 在 `explored_map` 约束下不可走。
+- (verified) 旧 `_candidate_anchors()` 还会按“起点到最终目标的直线投影”过滤锚点，弯路锚点容易被筛掉；这和用户要求的“通过锚点往目标走”冲突。
+
+**实际变更：**
+- `plan_path_with_optional_anchors()` 改为优先构建锚点分段 A* 图；只有无可用锚点时才直接 A* 到真实目标。
+- `_candidate_anchors()` 不再用起点到终点直线投影过滤，只保留“锚点距离目标有实际进展、离当前位置不过近、去重”的条件。
+- `_plan_anchor_graph()` 支持返回 `anchor_planned`、`anchor_partial`、`anchor_probe`：
+- `anchor_planned`：锚点链能连到真实目标。
+- `anchor_partial`：只能先走到当前可达的最远锚点。
+- `anchor_probe`：连第一段锚点 A* 都不可用时，先朝下一个合理锚点做短探测。
+- `AutoNavigator` 新增 `current_path_goal/current_anchor_count`，当 `anchor_partial/anchor_probe` 到达当前路径终点时清空路径并重新规划下一段。
+- `EventPathMover` 同样识别 `anchor_partial/anchor_probe` 当前段终点，到达后重新规划，避免传送门事件移动再次直冲事件点。
+- 导航状态栏新增 `path:<path_kind>/A<count>`，便于实测时确认是否走了 `anchor_partial/anchor_planned`。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/anchor_path.py` | (partial) | (partial) | 3 | 本轮用 Aa 路线离线探针确认旧锚点图断点，改为锚点分段优先和 partial/probe 返回。 |
+| `core/auto_navigator.py` | (partial) | (partial) | 6 | 本轮新增锚点段临时目标，到达锚点段终点后重规划，不再把最终目标作为唯一到达条件。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 6 | 本轮让事件移动也在锚点段终点后重规划，保持和普通导航一致。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 12 | 本轮状态栏增加 path_kind/anchor_count 诊断显示。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\anchor_path.py core\auto_navigator.py core\events\path_mover.py gui\modes\navigation_mode.py gui\modes\navigation\route_overlay.py` 已通过。
+- 离线探针：`Aa` 起点 `(2514,2666)` 到出口 `(3892,2032)` 现在返回 `anchor_partial/A3`，路径先到 `(2908,2280)`，不再直接返回最终出口路径。
+
+## [SYNC] 2026-05-23 23:58 - 主目标仲裁与有序锚点走廊
+### A. SYNC 范围声明
+**触发任务：** 用户明确锚点、必经点、事件必须区分职责：锚点只作为路线塑形点，不能和必经点/事件抢主目标；事件应作为动态必经点参与距离仲裁，不能一识别就强制打断当前路线；事件执行时会中断普通导航。
+**直接变更文件：** 预计涉及 `core/anchor_path.py`、`core/auto_navigator.py`、`core/events/path_mover.py`、`gui/modes/navigation_mode.py`、`CODEBASE.md`、`ITERATION_LOG.md`、必要时同步 `docs/plans/2026-05-23-portal-event-case-study.md`。
+**预计连带影响：** 普通导航当前目标选择、事件执行入口、事件 MOVE_TO、路线 overlay/status 诊断、传送门案例文档中的阶段 2 导航语义。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) `core/anchor_path.py` 上一版仍是“候选锚点图 + 最短路/Dijkstra”模型，会按距离和可达性跳过用户手工放置的中间锚点；这和“锚点是定制路径骨架”冲突。
+- (verified) `NavigationModeWidget.navigation_loop()` 之前只要事件 handler 返回可接管 action，就直接阻断普通自动导航；事件没有作为“动态必经点”参与和当前普通主目标的距离仲裁。
+- (verified) 事件检测/记忆本身可以继续运行，不应因为事件当前不执行就丢失 overlay 或任务表状态。
+
+**实际变更：**
+- `core/anchor_path.py` 重写为有序锚点走廊：`guide_points` 保留 UI 添加顺序，当前位置之前的锚点视为已路过，当前主目标投影之后的锚点会被过滤；有前方锚点时只规划到下一个锚点，返回 `anchor_step`。
+- `anchor_probe` 只用于下一个锚点 A* 暂不可达时的短探测；没有前方锚点时才直接 A* 到当前主目标。
+- `AutoNavigator` 新增 `segment_target_for_position()`，给事件仲裁预览当前普通目标，不推进真实 `required_index`。
+- `AutoNavigator` 和 `EventPathMover` 都把 `anchor_step/anchor_probe` 当作临时段，抵达段终点后清空路径并重新规划。
+- `EventCoordinator.update()` 增加 `allowed_task_ids`，事件检测、定位、memory、overlay 继续运行，但只有允许集合内的任务会推进 handler；active/running 任务继续执行到终态。
+- `NavigationModeWidget._allowed_event_task_ids()` 实现主目标仲裁：手动测试不限制；普通自动导航时，事件任务距离不大于当前普通主目标距离才允许执行；已有 active 事件始终允许继续。
+- `CODEBASE.md` 与传送门案例文档同步为“四阶段事件 + 动态必经点仲裁 + 有序锚点走廊”的当前语义。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/anchor_path.py` | (partial) | (partial) | 4 | 本轮废弃锚点图最短路模型，改为用户顺序锚点走廊和 `anchor_step` 分段推进。 |
+| `core/auto_navigator.py` | (partial) | (partial) | 7 | 本轮新增无副作用主目标预览，并让 `anchor_step` 到达后重规划。 |
+| `core/events/coordinator.py` | 浅读 | (partial) | 2 | 本轮新增 `allowed_task_ids` 运行过滤，检测/显示与 handler 执行解耦。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 7 | 本轮同步 `anchor_step` 作为事件移动临时段终点，避免停在锚点后不重规划。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 13 | 本轮新增事件/普通目标距离仲裁，事件作为动态必经点，不再一识别就抢控制。 |
+| `docs/plans/2026-05-23-portal-event-case-study.md` | 浅读 | 浅读 | 4 | 同步阶段 2：事件接管前先参与主目标仲裁，锚点按有序走廊推进。 |
+| `CODEBASE.md` | 浅读 | 浅读 | 6 | 同步新增函数、事件 flow、锚点语义和结构说明。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\anchor_path.py core\auto_navigator.py core\events\coordinator.py core\events\path_mover.py gui\modes\navigation_mode.py` 已通过。
+- 未运行逻辑/单元测试，等待游戏内验证普通导航、传送门事件触发顺序和锚点推进是否符合预期。
+
+## [SYNC] 2026-05-24 00:40 - 导航卡住：路线进度与锚点探测修正
+### A. SYNC 范围声明
+**触发任务：** 用户反馈新锚点逻辑运行后卡住且日志逻辑混乱；已读运行日志确认事件未参与，问题集中在普通导航的必经点完成判断和不可达锚点探测。
+**直接变更文件：** `core/anchor_path.py`、`core/auto_navigator.py`、`CODEBASE.md`、`ITERATION_LOG.md`，必要时涉及 `core/events/path_mover.py`。
+**预计连带影响：** 普通导航不再回头追已经按锚点进度越过的必经点；`anchor_probe` 不再长距离点击不可达锚点；运行日志应能看到当前主目标、路径类型和锚点段。
+
+### C. SYNC 结果
+**根因确认：**
+- (verified) 最新 `event_runtime.log` 只有事件系统初始化和 detector ready，没有 detection/task/action/arbitration，说明这次卡住不是传送门事件接管导致。
+- (verified) `runtime.log` 中点击方向先右下、再右上、再左上，符合普通导航目标/锚点段切换，而不是输入点击失败。
+- (verified) 离线探针确认：当位置已在后段锚点附近但早期必经点未按距离命中时，旧逻辑仍可能回头追早期必经点。
+- (verified) 离线探针确认：`A10 -> A11`、`A15 -> A16` 在墙图/探索图约束下会触发 `anchor_probe`；旧 probe 直接点击不可达锚点，容易硬冲墙。
+
+**实际变更：**
+- `core/anchor_path.py` 新增 `anchor_route_progress()`，为自动导航提供按锚点折线的路线进度。
+- `anchor_probe` 改为朝不可达锚点做约 84 像素短探测，不再直接点击不可达锚点坐标。
+- `AutoNavigator` 新增单调 `route_progress`，只允许路线进度前进不后退。
+- 必经点完成判断从“只看距离”升级为“距离命中或路线进度已越过”，防止人物已到后段后回头追旧必经点。
+- `segment_target_for_position()` 也使用进度预览，但不推进真实 `required_index`，保证事件仲裁无副作用。
+- 自动导航每次规划段写 `auto path planned` 日志，包含目标类型、目标坐标、路径类型、路径终点、锚点数、必经点 index 和路线进度。
+
+**离线验证：**
+- 从 `(3109,2353)`、`(2908,2280)`、`(3381,2226)` 预览路线，3 个必经点都会按进度视为已越过，当前目标变为出口。
+- `A10 -> A11` probe 从直接点击 `(3020,2383)` 改为短探测点 `(2970,2337)`。
+- `A15 -> A16` probe 从直接点击 `(3471,2320)` 改为短探测点 `(3439,2287)`。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/anchor_path.py` | (partial) | (partial) | 5 | 本轮新增锚点路线进度 helper，并把不可达锚点 probe 改为短探测。 |
+| `core/auto_navigator.py` | (partial) | (partial) | 8 | 本轮用单调 route_progress 防止回头追旧必经点，并补自动导航规划日志。 |
+| `CODEBASE.md` | 浅读 | 浅读 | 7 | 同步路线进度、短 probe 和 auto path planned 日志语义。 |
+
+**验证：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\anchor_path.py core\auto_navigator.py core\events\path_mover.py gui\modes\navigation_mode.py` 已通过。
+- 未运行逻辑/单元测试，等待用户游戏内验证；重点看 `logs/event_runtime.log` 中 `auto path planned` 是否仍出现旧必经点回头。
+## [DESIGN] 2026-05-24 01:04 - 导航冲突方案 B/C 设计
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `core/auto_navigator.py`（原因：普通导航状态机、必经点推进、锚点段到达逻辑是当前冲突核心）
+- `core/anchor_path.py`（原因：guide_points 走廊、锚点选择、路线进度投影定义了 B/C 两套方案的共同基础）
+- `core/events/path_mover.py`（原因：事件移动复用锚点规划，但状态独立，需要确认复用边界）
+- `core/events/coordinator.py`、`core/events/runner.py`、`core/events/scheduler.py`、`core/events/types/portal/handler.py`（原因：事件作为动态必经点/任务队列的现有实现依据）
+- `gui/modes/navigation_mode.py`、`gui/modes/navigation/event_adapter.py`（原因：事件和普通导航的仲裁、执行入口、UI 集成在这里）
+- `map_data/Aa/route.json`（原因：用实际 route 数据解释 B/C 方案如何处理 required_points、guide_points、exit）
+
+**本轮想弄清楚：** 在不立即改代码的前提下，基于现有源码分别设计方案 B「统一路线进度模型」和方案 C「统一任务队列状态机」，明确改动范围、状态模型、数据流、风险和迁移顺序，写入本地文档供用户选择。
+### C. 本轮发现
+**关键发现：**
+- (verified) `AutoNavigator` 当前同时承担普通导航定位状态、主目标选择、路径跟随和点击节流；`_select_segment_target()` 只会在当前 `required_points[required_index]` 与出口之间选择，不理解事件目标。
+- (verified) `EventCoordinator` 当前负责检测、定位、memory、scheduler 和 runner；事件执行与普通导航之间的最终仲裁发生在 `NavigationModeWidget._allowed_event_task_ids()` 和 `event_blocks_auto_navigation`，不是在核心层统一完成。
+- (verified) `EventPathMover` 和 `AutoNavigator` 都调用 `plan_path_with_optional_anchors()`，但两者各自维护 path/path_goal/click cooldown，因此共享规划算法但不共享“已消费锚点”的状态。
+- (verified) `anchor_path._ordered_corridor_anchors()` 内部跳过锚点的半径约 8 像素，而 `AutoNavigator._follow_segment()` 用 `arrival_radius=26` 判断锚点段到达；这是 `(2577,2474)` 反复规划的直接设计缺口。
+
+**产出文档：**
+- `docs/plans/2026-05-24-navigation-route-progress-option-b-design.md`：方案 B，保留现有执行器，新增统一路线进度/锚点消费模型。
+- `docs/plans/2026-05-24-navigation-task-queue-option-c-design.md`：方案 C，把 required、exit、event 全部抽象成统一 NavigationTask，由统一 controller 调度。
+
+**更新了 CODEBASE.md：** §2 目录图新增两个设计文档；§17 新增 Navigation Conflict Design Options，记录 B/C 的源码依据、主要改动范围和推荐选择。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/auto_navigator.py` | (partial) | (partial) | 9 | 本轮确认其仍同时负责主目标选择与移动执行，是 B/C 方案拆分边界的核心依据。 |
+| `core/anchor_path.py` | (partial) | (partial) | 6 | 本轮确认锚点跳过半径与导航到达半径不一致，且函数没有锚点消费状态。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 8 | 本轮确认事件 MOVE_TO 与普通导航复用锚点规划但运行时路径状态分离。 |
+| `core/events/coordinator.py` | (partial) | (partial) | 3 | 本轮确认事件检测/记忆/执行入口目前仍由 allowed_task_ids 过滤运行，而非统一任务调度。 |
+| `core/events/runner.py` | 浅读 | (partial) | 2 | 本轮确认 handler 生命周期和 COMPLETE/FAIL 更新 memory，可在方案 C 中由统一 controller 调用。 |
+| `core/events/scheduler.py` | 浅读 | (partial) | 2 | 本轮确认事件内部 scheduler 只按 running/priority/distance 选事件，不理解普通路线。 |
+| `core/events/memory.py` | (partial) | (partial) | 3 | 本轮确认事件 task 生命周期和传送门成对完成逻辑可作为 NavigationTask 的动态来源。 |
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 5 | 本轮确认传送门 handler 仍包含靠近、点击门点、按 D、等待完成四段，方案 C 后期可拆出靠近阶段。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 14 | 本轮确认 UI 层承担事件/普通导航仲裁、事件 MOVE_TO 执行和 overlay 刷新，是方案 C 最大迁移点。 |
+| `gui/modes/navigation/event_adapter.py` | 浅读 | 浅读 | 2 | 本轮确认事件接管规则只按 EventAction 类型判断，未承载路线语义。 |
+| `map_data/Aa/route.json` | 浅读 | 浅读 | 3 | 本轮使用 Aa 实际 required/guide/exit 数据说明方案 B 如何处理 `(2577,2474)` 卡点。 |
+| `docs/plans/2026-05-24-navigation-route-progress-option-b-design.md` | PENDING | 浅读 | 1 | 本轮新增，记录保守统一路线进度方案和迁移步骤。 |
+| `docs/plans/2026-05-24-navigation-task-queue-option-c-design.md` | PENDING | 浅读 | 1 | 本轮新增，记录统一任务队列状态机方案和迁移步骤。 |
+## [PLAN] 2026-05-24 01:16 - 方案 C 统一任务队列实施计划
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `docs/plans/2026-05-24-navigation-task-queue-option-c-design.md`（原因：用户已选择方案 C，需要转成详细实施计划）
+- `core/auto_navigator.py`（原因：当前普通导航状态机将被 facade/移动执行器化）
+- `core/events/coordinator.py`、`core/events/runner.py`、`core/events/memory.py`（原因：事件检测/记忆保留，执行调度要接入统一任务控制器）
+- `core/events/path_mover.py`（原因：事件移动逻辑将并入统一 MovementExecutor 或作为兼容壳）
+- `gui/modes/navigation_mode.py`、`gui/modes/navigation/event_adapter.py`（原因：当前 UI 层仲裁需要被 NavigationTaskController 替代）
+
+**本轮想弄清楚：** 将已选择的方案 C 拆成可执行、可分阶段验证的本地实施计划，明确每阶段文件范围、验证方式、回滚边界和用户手动测试点；本轮不修改运行逻辑。
+### C. 本轮发现
+**关键发现：**
+- (verified) 方案 C 不能直接从 UI 主循环删除旧仲裁，否则会同时扰动普通导航、传送门事件和手动测试按钮；计划必须先做兼容层和影子模式。
+- (verified) `EventPathMover` 是方案 C 最安全的第一个迁移点，因为它只服务事件 MOVE_TO，且可在不改 `_execute_event_move_to()` 外部调用的情况下委托新 `MovementExecutor`。
+- (verified) `EventCoordinator.update()` 当前把 observe 和 run handler 混在一起；方案 C 实施前必须拆出 `observe()` 与 `run_task()`，并保留 `update()` 兼容旧调用。
+- (verified) `NavigationModeWidget` 当前有两处真实鼠标移动执行入口：事件 `_execute_event_move_to()` 和普通 `auto_action` 消费；方案 C 必须最终统一成 `NavigationIntent` 消费。
+
+**产出文档：**
+- `docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md`：方案 C 详细实施计划，包含阶段 0 到阶段 12、每阶段文件范围、验证命令、手动验收和回滚策略。
+
+**更新了 CODEBASE.md：** §2 新增实施计划文档；§17 记录用户已选择方案 C，并说明 active implementation plan 和兼容层优先的执行策略。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `docs/plans/2026-05-24-navigation-task-queue-option-c-design.md` | 浅读 | 浅读 | 2 | 本轮将设计转为分阶段实施计划，明确先兼容后替换。 |
+| `docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md` | PENDING | 浅读 | 1 | 本轮新增，作为后续方案 C 开发的 active plan。 |
+| `core/auto_navigator.py` | (partial) | (partial) | 10 | 本轮确认第一批不直接重写，先通过 facade/影子模式降低风险。 |
+| `core/events/path_mover.py` | (partial) | (partial) | 9 | 本轮确认可作为 MovementExecutor 的首个兼容委托点。 |
+| `core/events/coordinator.py` | (partial) | (partial) | 4 | 本轮确认必须拆 observe/run_task，保留 update 兼容。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 15 | 本轮确认 UI 接入需先 shadow mode，再切换 NavigationIntent，最后清理旧仲裁。 |
+
+## [SYNC] 2026-05-24 09:05 — 方案 C 统一导航任务控制器收尾同步
+
+### A. SYNC 范围声明
+**触发任务：** 用户要求继续完成方案 C，并明确不保留旧兼容负担；本轮收尾文档同步、过期引用清理和轻量编译验证。
+
+**直接变更文件：**
+- `CODEBASE.md`（同步统一导航任务控制器、删除旧模块引用）
+- `ITERATION_LOG.md`（记录 SYNC 范围和结果）
+
+**预计连带影响：**
+- `gui/modes/navigation_mode.py` 的统一主循环描述需要替换旧 `AutoNavigator`/事件独立执行描述。
+- `core/events/coordinator.py` 的事件检测/执行拆分需要更新。
+- `core/navigation_tasks/*` 的新任务模型、调度器和移动执行器需要加入目录、模块和 Flow 描述。
+- 删除的 `core/auto_navigator.py`、`core/events/path_mover.py`、`core/events/action_executor.py`、`tests/test_auto_navigator.py` 不应再作为当前运行链路出现。
+
+### C. SYNC 结果
+**连带重读文件：**
+- `core/events/coordinator.py`（确认旧 `update(... allowed_task_ids ...)` 已无人调用，并删除兼容入口）
+- `gui/modes/navigation_mode.py`（确认 `_navigation_loop_unified()`、`_execute_navigation_intent()` 是当前唯一执行链路）
+- `core/navigation_tasks/controller.py`、`scheduler.py`、`movement_executor.py`、`route_context.py`、`task_builder.py`、`models.py`（确认方案 C 当前调度、锚点、移动和 intent 协议）
+- `core/anchor_path.py`（确认 guide_points 只作为有序软锚点走廊）
+
+**CODEBASE.md 更新内容：** §4 更新事件系统和统一导航任务层说明；§5 修正 `build_event_tick()` 由 `observe()` 写入任务快照；§6 更新自动导航移动点击和事件管理 UI 数据流；§10/§11/§13/§15/§16/§17 清理旧普通导航器、旧事件移动器、旧事件动作执行器和 UI 旧仲裁描述。
+
+**源码清理：** 删除 `EventCoordinator.update(... allowed_task_ids ...)` 和 `_runnable_tasks()` 旧兼容入口，当前事件执行只允许通过 `observe()` + `run_task()` 两段式协议进入统一 `NavigationTaskController`。
+
+**验证命令：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile main.py gui\modes\navigation_mode.py gui\modes\navigation\route_overlay.py core\events\coordinator.py core\anchor_path.py core\navigation_tasks\__init__.py core\navigation_tasks\models.py core\navigation_tasks\route_context.py core\navigation_tasks\movement_executor.py core\navigation_tasks\task_builder.py core\navigation_tasks\scheduler.py core\navigation_tasks\controller.py core\navigation_tasks\debug.py utils\route_context_probe.py utils\navigation_task_probe.py`
+- `D:\ACloud\.venv\Scripts\python.exe utils\route_context_probe.py --map Aa`
+- `D:\ACloud\.venv\Scripts\python.exe utils\navigation_task_probe.py --map Aa`
+
+**验证结果：** 编译通过；路线探针输出 required[0..2] 和 exit 的路线进度；任务探针输出 `required:0`、`required:1`、`required:2`、`exit:main`。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/coordinator.py` | (partial) | (partial) | 5 | 删除旧兼容 update 入口，事件系统仅保留 observe/run_task 两段式协议。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 16 | 确认统一循环负责定位、事件观察、任务控制器更新和 NavigationIntent 消费。 |
+| `core/navigation_tasks/controller.py` | PENDING | 浅读 | 1 | 确认 selected task 切换会重置 MovementExecutor，event 任务通过 run_task 推进 handler。 |
+| `core/navigation_tasks/scheduler.py` | PENDING | 浅读 | 1 | 确认 active lock 只保留 event，静态 required/exit 每帧参与重新仲裁。 |
+| `core/navigation_tasks/movement_executor.py` | PENDING | 浅读 | 1 | 确认 required/exit/event MOVE_TO 共用 A*、guide-anchor 和点击节流。 |
+| `core/navigation_tasks/route_context.py` | PENDING | 浅读 | 1 | 确认 guide_points 投影、路线进度和前方锚点过滤逻辑。 |
+| `core/navigation_tasks/task_builder.py` | PENDING | 浅读 | 1 | 确认 route required/exit 和 EventMemory runnable tasks 被合并为 NavigationTask。 |
+| `core/anchor_path.py` | PENDING | 浅读 | 1 | 确认锚点只作为有序软走廊，不作为独立完成目标。 |
+
+**新增 Finding：** 当前源码已经完成方案 C 的“无旧兼容负担”边界；历史设计文档中仍保留旧方案描述，但权威当前状态文档 `CODEBASE.md` 和 Python 源码不再引用旧执行链路。
+
+
+## [SYNC] 2026-05-24 09:31 — 导航卡住诊断日志增强
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈仍有必经点和辅助锚点冲突导致逻辑卡住，需要先观察日志确认问题。
+**直接变更文件：** core/navigation_tasks/controller.py, core/navigation_tasks/movement_executor.py, core/anchor_path.py, ITERATION_LOG.md。
+**预计连带影响：** 只增加诊断字段，不改变导航决策。
+
+### C. SYNC 结果
+**CODEBASE.md 更新内容：** 本次仅增加运行诊断日志，未改变架构契约，暂不更新 CODEBASE。
+**诊断新增：** 
+av required completed 现在记录 distance/player_progress/target_progress/progress_delta；
+av task transition 记录 player/player_progress/target_progress/completed_required；
+av movement planned 记录 next_anchor/anchor_count/direct_distance。
+**验证命令：** D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\controller.py core\navigation_tasks\movement_executor.py core\anchor_path.py。
+**验证结果：** 编译通过。
+
+
+## [SYNC] 2026-05-24 09:50 — 必经点顺序和事件插队规则修正
+
+### A. SYNC 范围声明
+**触发任务：** 日志显示 required:0/1 被 by_progress 提前完成，且用户明确必经点必须按顺序走，事件只能作为动态必经点穿插在已满足顺序后。
+**直接变更文件：** core/navigation_tasks/controller.py, core/navigation_tasks/scheduler.py, ITERATION_LOG.md。
+**预计连带影响：** 必经点完成条件和事件候选过滤。
+
+### C. SYNC 结果
+**代码变化：** _update_required_progress() 只检查当前最小未完成 required，并且只按距离完成，不再按 route progress 自动完成；NavigationTaskScheduler._eligible_events() 在当前静态目标是 required 时，只允许 route_progress 不超过该 required 附近的事件插队。
+**验证命令：** D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\controller.py core\navigation_tasks\scheduler.py; D:\ACloud\.venv\Scripts\python.exe utils\navigation_task_probe.py --map Aa; D:\ACloud\.venv\Scripts\python.exe utils\route_context_probe.py --map Aa。
+**验证结果：** 编译通过；任务探针顺序仍为 required:0, required:1, required:2, exit:main。
+**剩余观察点：** 09:44 日志中 
+ext_anchor=(3020,2383) 进入 nchor_probe，说明该辅助锚点 A* 不可达或局部墙图误封，下一轮需要根据新日志判断是否引入不可达锚点跳过/降权机制。
+
+## [SYNC] 2026-05-24 11:30 — 导航专用障碍层与高分辨率绘图参数
+
+### A. SYNC 范围声明
+**触发任务：** 用户要求从绘图侧改善墙体/地图清晰度，并为窄通道、玩家定位点压墙等 A* 失败场景提供保险方案；核心原则是原始 `wall_layer` 继续用于定位和事件配准，A* 使用派生后的宽容障碍层。
+
+**直接变更文件：**
+- `core/navigation_obstacles.py`
+- `core/navigation_core.py`
+- `core/pathfinder.py`
+- `core/stitcher_core.py`
+- `gui/navigation_params.py`
+- `gui/dialogs/nav_params_dialog.py`
+- `gui/modes/navigation_mode.py`
+- `gui/modes/mapping_widget.py`
+- `gui/modes/mapping/params_adapter.py`
+- `core/recognizer_optimized.py`
+- `CODEBASE.md`
+- `ITERATION_LOG.md`
+
+**预计连带影响：**
+- 自动导航和事件 `MOVE_TO` 仍共用 `NavigationTaskController` / `MovementExecutor`，但传入的 `wall_map` 从原始 `wall_layer` 改为 `nav_core.nav_wall_layer`。
+- 定位、事件图标投影和地图显示继续使用原始 `wall_layer`，避免墙体侵蚀影响匹配准确率。
+- 绘图页新增/恢复的高分辨率参数会影响后续新地图或重置后的地图包坐标体系，因此 `draw_scale` 必须同时保存进 `map_data.npz` 和地图 `config.json`。
+
+### C. SYNC 结果
+**代码变化：**
+- 新增 `derive_navigation_wall_layer()`，用阈值化 + 可配置 3x3 十字核腐蚀从原始墙图派生 A* 专用墙图。
+- `NavigationCore` 加载地图包时保留原始 `wall_layer`，并维护 `nav_wall_layer`；`rebuild_navigation_wall_layer()` 支持参数面板即时重建导航障碍层。
+- `NavigationModeWidget._navigation_loop_unified()` 调用 `NavigationTaskController.update(... wall_map=self.nav_core.nav_wall_layer ...)`，普通路线和事件移动都使用同一宽容障碍层。
+- `PathFinder` 默认 `wall_shrink_iterations=0`，避免派生墙图和 pathfinder 内部重复侵蚀；新增 `start_clear_radius` 与 `walkable_snap_radius` 用于起点局部清空和起终点吸附。
+- `NavConfig` 与导航参数 UI 新增 `nav_wall_erode_iterations`、`path_start_clear_radius`、`path_walkable_snap_radius`，并随地图配置保存。
+- `MapStitcher.save_map_package()` 将 `draw_scale` 写入 `map_data.npz`；绘图页参数保存现在叠加 UI 中的 `draw_scale/canvas_size/player_clear_radius/wall_close_kernel_size`。
+
+**CODEBASE.md 更新内容：**
+- §2/§4 新增 `core/navigation_obstacles.py`，并修正 `NavigationCore` / `PathFinder` 的职责边界。
+- §5 增加 `derive_navigation_wall_layer()`、`MappingWidget._build_mapping_config_with_ui_overrides()` 和 `PathFinder._clear_start_area()` 的函数说明。
+- §6 修正自动导航 flow：A* 使用 `nav_core.nav_wall_layer`；绘图保存 flow 记录 `draw_scale` 进入地图包。
+- §8 补充 `NavConfig` 的 A* 障碍层与容错参数字段。
+
+**验证命令：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_obstacles.py core\navigation_core.py core\pathfinder.py gui\navigation_params.py gui\dialogs\nav_params_dialog.py gui\modes\navigation_mode.py gui\modes\mapping_widget.py gui\modes\mapping\params_adapter.py core\stitcher_core.py core\recognizer_optimized.py core\navigation_tasks\movement_executor.py`
+
+**验证结果：** 编译通过；只做编译/启动级检查，未执行逻辑单元测试。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_obstacles.py` | PENDING | 浅读 | 1 | 新增 A* 专用障碍层派生函数，确认不会修改原始 `wall_layer`。 |
+| `core/navigation_core.py` | (partial) | (partial) | 17 | 确认 `wall_layer` 用于定位/显示，`nav_wall_layer` 用于寻路。 |
+| `core/pathfinder.py` | (partial) | (partial) | 2 | 确认默认不再内部侵蚀墙体，并新增起点清空/起终点吸附参数。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 18 | 确认统一导航循环向 task controller 传入 `nav_core.nav_wall_layer`。 |
+| `gui/navigation_params.py` | 已有记录 | (partial) | 2 | 确认新增 A* 障碍层和容错参数纳入 config 序列化。 |
+| `gui/dialogs/nav_params_dialog.py` | 已有记录 | (partial) | 2 | 确认新增参数控件进入 widget map，可从 UI 调整并保存。 |
+| `gui/modes/mapping_widget.py` | (partial) | (partial) | 2 | 确认绘图几何/清晰度控件参与保存，并在空地图时可重建画布。 |
+| `core/stitcher_core.py` | (partial) | (partial) | 2 | 确认地图包保存 `draw_scale`，供导航加载同一坐标缩放。 |
+
+## [SYNC] 2026-05-24 11:45 — RecognizerParams 严格字段修正
+
+### A. SYNC 范围声明
+**触发任务：** 导航加载地图时报 `RecognizerParams.__init__() got an unexpected keyword argument 'player_clear_radius'`；用户明确不需要兼容旧地图，配置字段应与当前代码严格一致。
+**直接变更文件：** `gui/navigation_params.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 当前绘图页写入的 `player_clear_radius` 可被导航配置模型识别；未知 recognizer 字段仍会抛错，不做静默过滤。
+
+### C. SYNC 结果
+**代码变化：** `RecognizerParams` 新增 `player_clear_radius: int = 22`；保留 `NavPreferences(**nav_prefs_data)` 和 `RecognizerParams(**rec_params_data)` 严格构造。
+**CODEBASE.md 更新内容：** 记录 `gui/navigation_params.py` 严格字段契约和 `player_clear_radius` 当前字段。
+**验证命令：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\navigation_params.py gui\modes\navigation_mode.py gui\modes\mapping_widget.py`; `D:\ACloud\.venv\Scripts\python.exe -c "import json; from gui.navigation_params import NavConfig; data=json.load(open('config.json', encoding='utf-8')); cfg=NavConfig.from_dict(data); print(cfg.recognizer_params.player_clear_radius)"`
+**验证结果：** 编译通过；当前 `config.json` 加载输出 `20`。
