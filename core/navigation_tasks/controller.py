@@ -6,6 +6,8 @@ from core.events.models import EventActionType
 from core.path_utils import is_inside_exit_region, point_distance
 
 from .debug import nav_log
+from .coordinate_diagnostics import CoordinateDiagnostics
+from .event_approach import EventApproachController
 from .models import NavigationIntent, NavigationIntentType, NavigationTaskKind
 from .movement_executor import MovementExecutor
 from .route_context import RouteContext
@@ -27,6 +29,8 @@ class NavigationTaskController:
         self.builder = NavigationTaskBuilder()
         self.scheduler = NavigationTaskScheduler()
         self.movement = MovementExecutor(arrival_radius=self.arrival_radius)
+        self.event_approach = EventApproachController()
+        self.coordinate_diagnostics = CoordinateDiagnostics()
         self.active = False
         self.completed_required: set[int] = set()
         self.active_task_id: str | None = None
@@ -54,12 +58,16 @@ class NavigationTaskController:
         self.route_progress = None
         self.current_intent = NavigationIntent()
         self.movement.reset()
+        self.event_approach.reset()
+        self.coordinate_diagnostics.reset()
 
     def start(self) -> bool:
         if not self.has_valid_route():
             return False
         self.active = True
         self.movement.reset()
+        self.event_approach.reset()
+        self.coordinate_diagnostics.record_session_start()
         nav_log("nav task controller started")
         return True
 
@@ -68,6 +76,7 @@ class NavigationTaskController:
         self.active_task_id = None
         self.current_intent = NavigationIntent()
         self.movement.reset()
+        self.event_approach.reset()
         nav_log("nav task controller stopped")
 
     def has_valid_route(self) -> bool:
@@ -87,6 +96,7 @@ class NavigationTaskController:
         now_ms: int,
         lookahead_distance: float,
         manual_event_only: bool = False,
+        frame_registration=None,
     ) -> NavigationIntent:
         if route is not None and route != self.route:
             self.load_route(route)
@@ -94,11 +104,46 @@ class NavigationTaskController:
         if not self.active:
             self.current_intent = NavigationIntent(message="navigation task controller inactive")
             return self.current_intent
-        if not self.observe_localization(localized_pos, confidence):
+        force_snap = _is_forced_global_relocalization(frame_registration, confidence, self.min_confidence)
+        localization_ok = self.observe_localization(localized_pos, confidence, force_snap=force_snap)
+        self.coordinate_diagnostics.record_localization(
+            now_ms=now_ms,
+            raw_pos=self.raw_pos,
+            confidence=confidence,
+            min_confidence=self.min_confidence,
+            registration=frame_registration,
+            trusted_pos=self.trusted_pos,
+            control_pos=self.control_pos,
+            active_task_id=self.active_task_id,
+        )
+        if not localization_ok:
             self.current_intent = NavigationIntent(
                 type=NavigationIntentType.WAIT,
                 message="waiting localization",
             )
+            return self.current_intent
+        if force_snap:
+            keep_active_task = _should_keep_active_task_after_forced_relocalization(frame_registration, self.active_task_id)
+            self.coordinate_diagnostics.mark_relocalization_accepted(
+                now_ms=now_ms,
+                pos=self.control_pos,
+                confidence=confidence,
+                registration=frame_registration,
+            )
+            self.movement.reset()
+            if not keep_active_task:
+                self.active_task_id = None
+            nav_log(
+                "nav coordinate relocalization accepted",
+                player=_int_point(self.control_pos),
+                confidence=round(float(confidence or 0.0), 2),
+                keep_active_task=bool(keep_active_task),
+                active_task=self.active_task_id,
+            )
+
+        recovery_intent = self._consume_relocalization_intent(now_ms)
+        if recovery_intent is not None:
+            self.current_intent = recovery_intent
             return self.current_intent
 
         self._update_required_progress()
@@ -124,6 +169,24 @@ class NavigationTaskController:
             )
             return self.current_intent
 
+        self.coordinate_diagnostics.record_navigation_state(
+            now_ms=now_ms,
+            task_id=selected.id,
+            task_kind=selected.kind.value,
+            target_pos=selected.target_pos,
+            raw_pos=self.raw_pos,
+            trusted_pos=self.trusted_pos,
+            control_pos=self.control_pos,
+            confidence=confidence,
+            route_context=self.route_context,
+            arrival_radius=selected.radius or self.arrival_radius,
+            registration=frame_registration,
+        )
+        recovery_intent = self._consume_relocalization_intent(now_ms, selected=selected)
+        if recovery_intent is not None:
+            self.current_intent = recovery_intent
+            return self.current_intent
+
         if selected.id != self.active_task_id:
             player_progress = self.route_context.progress_of(self.control_pos) if self.control_pos is not None else None
             nav_log(
@@ -139,6 +202,8 @@ class NavigationTaskController:
             )
             self.active_task_id = selected.id
             self.movement.reset()
+            if selected.kind != NavigationTaskKind.EVENT:
+                self.event_approach.reset_active()
 
         if selected.kind == NavigationTaskKind.EVENT:
             self.current_intent = self._update_event_task(
@@ -163,20 +228,20 @@ class NavigationTaskController:
         )
         return self.current_intent
 
-    def observe_localization(self, pos, confidence: float) -> bool:
+    def observe_localization(self, pos, confidence: float, *, force_snap: bool = False) -> bool:
         self.raw_pos = _float_point(pos) if pos is not None else None
         if pos is None or float(confidence or 0.0) < self.min_confidence:
             return False
 
         candidate = _float_point(pos)
-        if self.trusted_pos is not None:
+        if self.trusted_pos is not None and not force_snap:
             jump = point_distance(candidate, self.trusted_pos)
             if jump > self.max_jump_distance and float(confidence or 0.0) < 0.9:
                 nav_log("nav localization rejected jump", jump=round(float(jump), 2), confidence=float(confidence or 0.0))
                 return False
 
         self.trusted_pos = candidate
-        if self.control_pos is None:
+        if self.control_pos is None or force_snap:
             self.control_pos = candidate
         else:
             alpha = 0.5 if float(confidence or 0.0) >= 0.9 else self.control_alpha
@@ -188,6 +253,33 @@ class NavigationTaskController:
         if projection is not None:
             self.route_progress = projection.progress if self.route_progress is None else max(self.route_progress, projection.progress)
         return True
+
+    def _consume_relocalization_intent(self, now_ms: int, *, selected=None) -> NavigationIntent | None:
+        request = self.coordinate_diagnostics.consume_relocalization_request()
+        if request is None:
+            return None
+        self.movement.reset()
+        nav_log(
+            "nav coordinate relocalization requested",
+            reason=request.reason,
+            score=request.score,
+            signals=",".join(request.signals),
+            player=_int_point(self.control_pos),
+            task=selected.id if selected else self.active_task_id,
+        )
+        return NavigationIntent(
+            type=NavigationIntentType.WAIT,
+            task_id=selected.id if selected else self.active_task_id,
+            task_kind=selected.kind.value if selected else None,
+            player_pos=self.control_pos,
+            target_pos=selected.target_pos if selected else None,
+            message="coordinate relocalizing",
+            metadata={
+                "force_relocalize": True,
+                "relocalize_reason": request.reason,
+                "relocalize_score": request.score,
+            },
+        )
 
     def _update_required_progress(self) -> None:
         if self.control_pos is None or not self.route:
@@ -304,7 +396,7 @@ class NavigationTaskController:
             path_kind=step.path_kind,
             required_index=task.required_index,
             message="move static task" if intent_type == NavigationIntentType.MOVE_MAP else "hold static task",
-            metadata={"deviation": step.deviation},
+            metadata={"deviation": step.deviation, "force_click_target": step.force_click_target},
         )
 
     def _update_event_task(
@@ -322,6 +414,36 @@ class NavigationTaskController:
             return NavigationIntent(type=NavigationIntentType.WAIT, task_id=task.id, task_kind=task.kind.value, message="event context unavailable")
 
         event_task_id = str(task.metadata.get("event_task_id") or "")
+        if not self.event_approach.is_released(task.id):
+            approach = self.event_approach.update(
+                task=task,
+                current_pos=self.control_pos,
+                wall_map=wall_map,
+                pathfinder=pathfinder,
+                explored_map=explored_map,
+                now_ms=now_ms,
+                lookahead_distance=lookahead_distance,
+                route_context=self.route_context,
+                movement=self.movement,
+            )
+            if not approach.ready:
+                return approach.intent or NavigationIntent(
+                    type=NavigationIntentType.WAIT,
+                    task_id=task.id,
+                    task_kind=task.kind.value,
+                    player_pos=self.control_pos,
+                    target_pos=task.target_pos,
+                    message=approach.reason or "event approach blocked",
+                )
+            self.event_approach.release_task(task.id)
+            nav_log(
+                "event approach released",
+                task=task.id,
+                event=task.event_type,
+                player=_int_point(self.control_pos),
+                target=_int_point(task.target_pos),
+            )
+
         action = event_coordinator.run_task(event_task_id, event_tick)
         if action is None or action.type == EventActionType.NONE:
             return NavigationIntent(
@@ -381,7 +503,11 @@ class NavigationTaskController:
                 path=step.path,
                 path_kind=step.path_kind,
                 message=action.reason or "event move",
-                metadata={"event_action": action, "deviation": step.deviation},
+                metadata={
+                    "event_action": action,
+                    "deviation": step.deviation,
+                    "force_click_target": step.force_click_target,
+                },
             )
 
         if action.type == EventActionType.CLICK_SCREEN:
@@ -405,6 +531,8 @@ class NavigationTaskController:
                 metadata={"event_action": action, "key": action.key},
             )
         if action.type == EventActionType.WAIT:
+            metadata = {"event_action": action, "wait_ms": action.wait_ms}
+            metadata.update(action.metadata or {})
             return NavigationIntent(
                 type=NavigationIntentType.WAIT,
                 task_id=task.id,
@@ -412,10 +540,11 @@ class NavigationTaskController:
                 player_pos=self.control_pos,
                 target_pos=task.target_pos,
                 message=action.reason or "event wait",
-                metadata={"event_action": action, "wait_ms": action.wait_ms},
+                metadata=metadata,
             )
         if action.type == EventActionType.COMPLETE:
             nav_log("nav event task completed", task=task.id, event=task.event_type)
+            self.event_approach.finish_task(task.id)
             self.active_task_id = None
             self.movement.reset()
             return NavigationIntent(
@@ -429,6 +558,7 @@ class NavigationTaskController:
             )
         if action.type == EventActionType.FAIL:
             nav_log("nav event task failed", task=task.id, event=task.event_type, reason=action.reason)
+            self.event_approach.finish_task(task.id)
             self.active_task_id = None
             self.movement.reset()
             return NavigationIntent(
@@ -463,3 +593,22 @@ def _round_float(value, digits: int = 1):
     if value is None:
         return None
     return round(float(value), int(digits))
+
+
+def _is_forced_global_relocalization(registration, confidence: float, min_confidence: float) -> bool:
+    if registration is None:
+        return False
+    metadata = getattr(registration, "metadata", {}) or {}
+    return (
+        bool(getattr(registration, "valid", False))
+        and getattr(registration, "source", "") == "template_match"
+        and bool(metadata.get("forced_global"))
+        and float(confidence or 0.0) >= float(min_confidence)
+    )
+
+
+def _should_keep_active_task_after_forced_relocalization(registration, active_task_id: str | None) -> bool:
+    if not active_task_id or not str(active_task_id).startswith("event:"):
+        return False
+    metadata = getattr(registration, "metadata", {}) or {}
+    return str(metadata.get("forced_reason") or "") == "portal_wait_result"

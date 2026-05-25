@@ -66,6 +66,7 @@ class MovementStep:
     subgoal: tuple[float, float] | None = None
     path_kind: str = "none"
     should_click: bool = False
+    force_click_target: bool = False
     deviation: float = 0.0
     reason: str = ""
     task_id: str | None = None
@@ -85,4 +86,3 @@ class NavigationIntent:
     required_index: int | None = None
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
-

@@ -21,7 +21,7 @@ from core.navigation_tasks.models import NavigationIntentType
 from core.navigation_core import NavigationCore
 from core.motion_controller import MotionController
 from core.route_manager import RouteManager
-from core.events.debug import event_log
+from core.events.debug import event_log, start_event_log_session
 from core.events.capture_provider import GameWindowCaptureProvider
 from core.events.config import load_event_config, save_event_config
 from core.events.coordinator import EventCoordinator
@@ -50,6 +50,7 @@ from .navigation.map_runtime import (
     load_nav_config,
     physical_center_from_logical,
     resolve_map_folder,
+    save_default_nav_config,
     save_nav_config,
 )
 from .navigation.route_overlay import clear_route_overlay, render_route_overlay
@@ -104,7 +105,7 @@ class NavigationModeWidget(QWidget):
         self.nav_config = NavConfig()  # 使用数据类管理导航配置参数，包含所有导航相关设置
         self.map_folder_path = None  # 当前加载地图的文件夹路径，用于保存配置文件
         self.params_dialog = NavParametersDialog(self)  # 导航参数配置对话框，允许用户调整参数
-        self.event_dialog = EventManagerDialog(self)
+        self.event_dialog = None
 
         self.init_ui()  # 初始化用户界面，创建所有 UI 控件
         self._connect_signals()  # 连接 UI 控件的信号到对应的槽函数
@@ -133,8 +134,9 @@ class NavigationModeWidget(QWidget):
         self.event_capture_provider = None
         self.event_overlay_items = []
         self._event_arbitration_last_log_ms = 0
+        self._ensure_event_dialog()
         self.portal_test_controller = ManualEventTestController(
-            self.event_dialog.test_portal_button,
+            self.event_dialog.test_portal_button if self.event_dialog else None,
             "测试传送门",
             "停止传送门测试",
         )
@@ -298,7 +300,41 @@ class NavigationModeWidget(QWidget):
         # 连接参数对话框的信号
         self.params_dialog.parameters_changed.connect(self._on_parameter_changed)  # 参数变化信号 -> _on_parameter_changed 函数
         self.params_dialog.save_requested.connect(self._save_nav_config)  # 保存请求信号 -> _save_nav_config 函数
+        self.params_dialog.save_default_requested.connect(self._save_nav_default_config)
         self.params_dialog.nav_toggle_overlay_btn.clicked.connect(self._toggle_overlay_display)  # 幕布切换按钮 -> _toggle_overlay_display 函数
+        self._connect_event_dialog_signals()
+
+    def _ensure_event_dialog(self) -> EventManagerDialog:
+        if self.event_dialog is not None:
+            return self.event_dialog
+        self.event_dialog = EventManagerDialog(self.main_window or self)
+        self._connect_event_dialog_signals()
+        if hasattr(self, "portal_test_controller"):
+            self.portal_test_controller.button = self.event_dialog.test_portal_button
+            self.portal_test_controller.reset_button()
+        if self.event_registry and self.event_config is not None:
+            self._refresh_event_dialog()
+        return self.event_dialog
+
+    def _connect_event_dialog_signals(self) -> None:
+        if not self.event_dialog:
+            return
+        try:
+            self.event_dialog.config_changed.disconnect(self._on_event_config_changed)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self.event_dialog.save_requested.disconnect(self._save_event_config)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self.event_dialog.test_portal_requested.disconnect(self._run_portal_manual_test)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self.event_dialog.reset_portal_requested.disconnect(self._reset_portal_event_state)
+        except (RuntimeError, TypeError):
+            pass
         self.event_dialog.config_changed.connect(self._on_event_config_changed)
         self.event_dialog.save_requested.connect(self._save_event_config)
         self.event_dialog.test_portal_requested.connect(self._run_portal_manual_test)
@@ -308,7 +344,7 @@ class NavigationModeWidget(QWidget):
         """
         切换参数配置对话框的显示/隐藏状态
 
-        如果对话框当前可见则隐藏，否则显示对话框。
+        如果对话框当前在前台则隐藏，否则显示并前置对话框。
         用于响应用户点击"参数面板"按钮的操作。
 
         返回:
@@ -317,19 +353,35 @@ class NavigationModeWidget(QWidget):
         异常:
             无
         """
-        if self.params_dialog.isVisible():
-            # 对话框当前可见，隐藏它
+        if self._toggle_owned_dialog(self.params_dialog):
             self.params_dialog.hide()
-        else:
-            # 对话框当前隐藏，显示它
-            self.params_dialog.show()
 
     def toggle_event_dialog(self):
+        self._ensure_event_dialog()
         self._refresh_event_dialog()
-        if self.event_dialog.isVisible():
+        if self._toggle_owned_dialog(self.event_dialog):
             self.event_dialog.hide()
-        else:
-            self.event_dialog.show()
+
+    def _toggle_owned_dialog(self, dialog) -> bool:
+        """Show child dialogs above the main UI; return True only when caller should hide."""
+        if dialog.isVisible() and dialog.isActiveWindow():
+            return True
+        self._show_owned_dialog(dialog)
+        return False
+
+    def _show_owned_dialog(self, dialog) -> None:
+        if dialog is None:
+            return
+        if dialog.windowState() & Qt.WindowMinimized:
+            dialog.setWindowState(dialog.windowState() & ~Qt.WindowMinimized)
+        if self.main_window and not dialog.isVisible():
+            base = self.main_window.frameGeometry()
+            dialog.move(base.x() + 80, base.y() + 80)
+        dialog.show()
+        dialog.setWindowState(dialog.windowState() & ~Qt.WindowMinimized)
+        dialog.raise_()
+        dialog.activateWindow()
+        QApplication.setActiveWindow(dialog)
 
     def _set_map_click_mode(self, mode: str):
         self.map_click_mode = mode
@@ -722,6 +774,7 @@ class NavigationModeWidget(QWidget):
 
     def _reset_event_move_runtime(self):
         self.navigation_task_controller.movement.reset()
+        self.navigation_task_controller.event_approach.reset()
 
     def _run_portal_manual_test(self):
         if self.portal_test_controller.active:
@@ -747,6 +800,7 @@ class NavigationModeWidget(QWidget):
 
     def _set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
         if active:
+            start_event_log_session("portal_manual_test")
             main_route = (self.route_data or {}).get("routes", {}).get("main", {})
             self.navigation_task_controller.load_route(main_route)
             self.navigation_task_controller.start()
@@ -986,7 +1040,20 @@ class NavigationModeWidget(QWidget):
         # 将 NavConfig 中的 recognizer_params 转换为字典传递给识别器
         rec_params_dict = self.nav_config.recognizer_params.__dict__
         self.nav_core.recognizer.set_params(rec_params_dict)  # 设置识别器参数
-        self.nav_core.draw_scale = self.nav_config.draw_scale  # 设置绘制缩放系数
+        map_draw_scale = float(getattr(self.nav_core, "map_draw_scale", self.nav_core.draw_scale))
+        if abs(float(self.nav_config.draw_scale) - map_draw_scale) > 0.001:
+            event_log(
+                "navigation draw_scale config mismatch",
+                config_draw_scale=float(self.nav_config.draw_scale),
+                map_draw_scale=map_draw_scale,
+                action="use_map_npz_draw_scale",
+            )
+            self.nav_config.draw_scale = map_draw_scale
+        self.nav_core.draw_scale = map_draw_scale  # map_data.npz 是定位缩放的唯一可信来源
+        self.nav_core.wall_match_close_kernel_size = max(
+            1,
+            int(getattr(self.nav_core, "map_wall_match_close_kernel_size", getattr(self.nav_config, "wall_match_close_kernel_size", 3))),
+        )
         self.nav_core.rebuild_navigation_wall_layer(
             erode_iterations=self.nav_config.nav_wall_erode_iterations,
         )
@@ -998,6 +1065,8 @@ class NavigationModeWidget(QWidget):
             nav_wall_erode_iterations=self.nav_config.nav_wall_erode_iterations,
             path_start_clear_radius=self.app_context.path_finder.start_clear_radius,
             path_walkable_snap_radius=self.app_context.path_finder.walkable_snap_radius,
+            draw_scale=self.nav_core.draw_scale,
+            wall_match_close_kernel_size=self.nav_core.wall_match_close_kernel_size,
         )
         self._capture_center_physical = None
 
@@ -1058,9 +1127,38 @@ class NavigationModeWidget(QWidget):
         self.params_dialog.nav_status_label.setText("有未保存的修改")
 
     def _configure_navigation_task_controller(self):
+        if self.nav_core and self.nav_config:
+            self.nav_core.visual_check_interval_ms = max(0, int(self.nav_config.coordinate_visual_check_interval_ms))
+            self.nav_core.visual_check_margin = max(0, int(self.nav_config.coordinate_visual_check_margin))
+            self.nav_core.visual_check_min_confidence = max(
+                0.0,
+                min(0.99, float(self.nav_config.coordinate_visual_match_min_confidence)),
+            )
+            self.nav_core.visual_mismatch_threshold = max(0.0, float(self.nav_config.coordinate_visual_mismatch_threshold))
+
+        diagnostics = self.navigation_task_controller.coordinate_diagnostics
+        diagnostics.visual_mismatch_threshold = max(0.0, float(self.nav_config.coordinate_visual_mismatch_threshold))
+        diagnostics.visual_mismatch_required_frames = max(1, int(self.nav_config.coordinate_visual_mismatch_frames))
+
         movement = self.navigation_task_controller.movement
         movement.click_cooldown_ms = max(120, int(self.nav_config.auto_click_cooldown_ms))
         movement.min_click_target_delta = max(0.0, float(self.nav_config.auto_min_click_target_delta))
+        movement.anchor_arrival_radius = max(4.0, float(self.nav_config.anchor_arrival_radius))
+        movement.progress_timeout_ms = max(200, int(self.nav_config.movement_progress_timeout_ms))
+        movement.min_progress_delta = max(0.0, float(self.nav_config.movement_min_progress_delta))
+        movement.max_recover_attempts = max(0, int(self.nav_config.movement_max_recover_attempts))
+        movement.path_deviation_threshold = max(8.0, float(self.nav_config.movement_path_deviation_threshold))
+        self.navigation_task_controller.event_approach.configure(
+            enabled=bool(self.nav_config.event_approach_enabled),
+            game_view_map_size=max(100, int(self.nav_config.game_view_map_size)),
+            visible_margin=max(0, int(self.nav_config.event_visible_margin)),
+            approach_lookahead=max(8.0, float(self.nav_config.event_approach_lookahead)),
+            click_cooldown_ms=max(120, int(self.nav_config.event_approach_click_cooldown_ms)),
+            stop_radius=max(4.0, float(self.nav_config.event_stop_radius)),
+            settle_ms=max(0, int(self.nav_config.event_settle_ms)),
+            stable_frames=max(1, int(self.nav_config.event_stable_frames)),
+            max_motion_per_frame=max(0.0, float(self.nav_config.event_max_motion_per_frame)),
+        )
 
     def _save_nav_config(self):
         """
@@ -1101,6 +1199,18 @@ class NavigationModeWidget(QWidget):
             # 捕获写入异常并显示错误对话框
             QMessageBox.critical(self, "保存失败", f"无法写入 config.json: {e}")
             self.params_dialog.nav_status_label.setText("保存失败!")
+
+    def _save_nav_default_config(self):
+        if not self.nav_config:
+            QMessageBox.warning(self, "错误", "没有可保存的导航参数。")
+            return
+        try:
+            path = save_default_nav_config(__file__, self.nav_config)
+            self.params_dialog.nav_status_label.setText("已保存为默认配置")
+            QMessageBox.information(self, "成功", f"默认导航配置已保存到：{path}")
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"无法写入默认 config.json: {e}")
+            self.params_dialog.nav_status_label.setText("默认配置保存失败!")
 
     def _compute_scale(self):
         """
@@ -1407,6 +1517,7 @@ class NavigationModeWidget(QWidget):
             self._use_unified_navigation_loop()
             # --- 启动导航 ---
             print("DEBUG: '开始导航' button clicked.")
+            start_event_log_session("navigation")
 
             # 检查配置是否就绪
             if not self.nav_config.game_screen_center:
@@ -1424,6 +1535,8 @@ class NavigationModeWidget(QWidget):
             # 应用最新参数到核心模块
             self._apply_config_to_core()
             self._current_player_local_pos = None
+            if self.nav_core:
+                self.nav_core.request_full_map_localization("navigation_start")
             if hasattr(self.app_context, 'tracker') and self.app_context.tracker:
                 self.app_context.tracker.reset()
 
@@ -1539,6 +1652,7 @@ class NavigationModeWidget(QWidget):
                 now_ms=now_ms,
                 lookahead_distance=lookahead,
                 manual_event_only=bool(self.portal_test_controller.active and not self.auto_navigation_enabled),
+                frame_registration=getattr(self.nav_core, "last_frame_registration", None),
             )
 
         if global_x is not None and global_y is not None:
@@ -1588,6 +1702,18 @@ class NavigationModeWidget(QWidget):
                 current_guide_index=None,
                 current_target_kind=intent.task_kind,
             )
+            if intent.metadata.get("force_relocalize"):
+                reason = intent.metadata.get("relocalize_reason") or "coordinate_recovery"
+                self.nav_core.request_global_relocalization(reason)
+                event_log(
+                    "navigation forced global relocalization",
+                    reason=reason,
+                    score=intent.metadata.get("relocalize_score"),
+                    player=intent.player_pos,
+                    task=intent.task_id,
+                )
+                self.status_label.setText(f"{self.status_label.text()} | 正在重新定位")
+                return
             self._execute_navigation_intent(intent, now_ms)
             if intent.metadata.get("terminal") and self.portal_test_controller.active:
                 self._set_portal_manual_test_active(False, reason=intent.message)

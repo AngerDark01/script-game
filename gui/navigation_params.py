@@ -72,10 +72,29 @@ class NavConfig:
     movement_max_click_radius: int = 360
     auto_click_cooldown_ms: int = 260
     auto_min_click_target_delta: float = 8.0
+    anchor_arrival_radius: int = 26
+    movement_progress_timeout_ms: int = 1200
+    movement_min_progress_delta: float = 12.0
+    movement_max_recover_attempts: int = 2
+    movement_path_deviation_threshold: float = 96.0
+    event_approach_enabled: bool = True
+    event_visible_margin: int = 30
+    event_approach_lookahead: int = 36
+    event_approach_click_cooldown_ms: int = 800
+    event_stop_radius: int = 18
+    event_settle_ms: int = 800
+    event_stable_frames: int = 2
+    event_max_motion_per_frame: float = 8.0
     bottom_click_guard_pixels: int = 300
     nav_wall_erode_iterations: int = 1
     path_start_clear_radius: int = 30
     path_walkable_snap_radius: int = 18
+    wall_match_close_kernel_size: int = 3
+    coordinate_visual_check_interval_ms: int = 800
+    coordinate_visual_check_margin: int = 140
+    coordinate_visual_match_min_confidence: float = 0.72
+    coordinate_visual_mismatch_threshold: float = 24.0
+    coordinate_visual_mismatch_frames: int = 3
     nav_preferences: NavPreferences = field(default_factory=NavPreferences)
     recognizer_params: RecognizerParams = field(default_factory=RecognizerParams)
 
@@ -100,10 +119,32 @@ class NavConfig:
             movement_max_click_radius=data.get("movement_max_click_radius", 360),
             auto_click_cooldown_ms=data.get("auto_click_cooldown_ms", 260),
             auto_min_click_target_delta=data.get("auto_min_click_target_delta", 8.0),
+            anchor_arrival_radius=data.get("anchor_arrival_radius", 26),
+            movement_progress_timeout_ms=data.get("movement_progress_timeout_ms", 1200),
+            movement_min_progress_delta=data.get("movement_min_progress_delta", 12.0),
+            movement_max_recover_attempts=data.get("movement_max_recover_attempts", 2),
+            movement_path_deviation_threshold=data.get("movement_path_deviation_threshold", 96.0),
+            event_approach_enabled=data.get("event_approach_enabled", True),
+            event_visible_margin=data.get("event_visible_margin", 30),
+            event_approach_lookahead=data.get("event_approach_lookahead", 36),
+            event_approach_click_cooldown_ms=data.get("event_approach_click_cooldown_ms", 800),
+            event_stop_radius=data.get("event_stop_radius", 18),
+            event_settle_ms=data.get("event_settle_ms", 800),
+            event_stable_frames=data.get("event_stable_frames", 2),
+            event_max_motion_per_frame=data.get("event_max_motion_per_frame", 8.0),
             bottom_click_guard_pixels=data.get("bottom_click_guard_pixels", 300),
             nav_wall_erode_iterations=data.get("nav_wall_erode_iterations", 1),
             path_start_clear_radius=data.get("path_start_clear_radius", 30),
             path_walkable_snap_radius=data.get("path_walkable_snap_radius", 18),
+            wall_match_close_kernel_size=data.get(
+                "wall_match_close_kernel_size",
+                data.get("stitcher_params", {}).get("wall_close_kernel_size", 3),
+            ),
+            coordinate_visual_check_interval_ms=data.get("coordinate_visual_check_interval_ms", 800),
+            coordinate_visual_check_margin=data.get("coordinate_visual_check_margin", 140),
+            coordinate_visual_match_min_confidence=data.get("coordinate_visual_match_min_confidence", 0.72),
+            coordinate_visual_mismatch_threshold=data.get("coordinate_visual_mismatch_threshold", 24.0),
+            coordinate_visual_mismatch_frames=data.get("coordinate_visual_mismatch_frames", 3),
             nav_preferences=NavPreferences(**nav_prefs_data),
             recognizer_params=RecognizerParams(**rec_params_data)
         )
@@ -122,10 +163,29 @@ class NavConfig:
             "movement_max_click_radius": self.movement_max_click_radius,
             "auto_click_cooldown_ms": self.auto_click_cooldown_ms,
             "auto_min_click_target_delta": self.auto_min_click_target_delta,
+            "anchor_arrival_radius": self.anchor_arrival_radius,
+            "movement_progress_timeout_ms": self.movement_progress_timeout_ms,
+            "movement_min_progress_delta": self.movement_min_progress_delta,
+            "movement_max_recover_attempts": self.movement_max_recover_attempts,
+            "movement_path_deviation_threshold": self.movement_path_deviation_threshold,
+            "event_approach_enabled": self.event_approach_enabled,
+            "event_visible_margin": self.event_visible_margin,
+            "event_approach_lookahead": self.event_approach_lookahead,
+            "event_approach_click_cooldown_ms": self.event_approach_click_cooldown_ms,
+            "event_stop_radius": self.event_stop_radius,
+            "event_settle_ms": self.event_settle_ms,
+            "event_stable_frames": self.event_stable_frames,
+            "event_max_motion_per_frame": self.event_max_motion_per_frame,
             "bottom_click_guard_pixels": self.bottom_click_guard_pixels,
             "nav_wall_erode_iterations": self.nav_wall_erode_iterations,
             "path_start_clear_radius": self.path_start_clear_radius,
             "path_walkable_snap_radius": self.path_walkable_snap_radius,
+            "wall_match_close_kernel_size": self.wall_match_close_kernel_size,
+            "coordinate_visual_check_interval_ms": self.coordinate_visual_check_interval_ms,
+            "coordinate_visual_check_margin": self.coordinate_visual_check_margin,
+            "coordinate_visual_match_min_confidence": self.coordinate_visual_match_min_confidence,
+            "coordinate_visual_mismatch_threshold": self.coordinate_visual_mismatch_threshold,
+            "coordinate_visual_mismatch_frames": self.coordinate_visual_mismatch_frames,
             "nav_preferences": self.__dict__['nav_preferences'].__dict__,
             "recognizer_params": self.__dict__['recognizer_params'].__dict__,
         }

@@ -14,9 +14,27 @@ DEFAULT_EVENT_CONFIG = {
             "enabled": True,
             "priority": 100,
             "interaction": "key",
+            "detector_mode": "feature_then_template",
             "minimap_threshold": 0.74,
             "max_candidates": 2,
             "min_blue_ratio": 0.08,
+            "feature_detector_enabled": True,
+            "feature_hue_min": 82,
+            "feature_hue_max": 136,
+            "feature_sat_min": 55,
+            "feature_val_min": 95,
+            "feature_min_blue_pixels": 36,
+            "feature_max_blue_pixels": 420,
+            "shape_outer_sat_max": 115,
+            "shape_outer_val_min": 105,
+            "shape_min_blue_score": 0.28,
+            "shape_min_outer_score": 0.18,
+            "shape_min_shape_score": 0.30,
+            "shape_min_outer_pixels": 14,
+            "shape_signature_min_outer_score": 0.45,
+            "shape_signature_min_edge_score": 0.40,
+            "shape_signature_min_color_score": 0.82,
+            "shape_signature_score_scale": 1.30,
             "stable_frames": 3,
             "localization_cluster_radius": 56,
             "stable_variance": 1600,
@@ -55,7 +73,9 @@ class EventSystemConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> "EventSystemConfig":
+        raw_data = data or {}
         merged = _deep_merge(copy.deepcopy(DEFAULT_EVENT_CONFIG), data or {})
+        _apply_legacy_portal_detector_mode(raw_data, merged)
         return cls(
             enabled=bool(merged.get("enabled", True)),
             profile=str(merged.get("profile", "default")),
@@ -81,6 +101,18 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             base[key] = value
     return base
+
+
+def _apply_legacy_portal_detector_mode(raw_data: dict, merged: dict) -> None:
+    raw_portal = ((raw_data.get("events") or {}).get("portal") or {}) if isinstance(raw_data, dict) else {}
+    if not isinstance(raw_portal, dict):
+        return
+    if "detector_mode" in raw_portal or "feature_detector_enabled" not in raw_portal:
+        return
+    portal = (merged.get("events") or {}).get("portal")
+    if not isinstance(portal, dict):
+        return
+    portal["detector_mode"] = "feature_then_template" if bool(raw_portal.get("feature_detector_enabled")) else "template"
 
 
 def event_config_path(map_folder) -> Path:

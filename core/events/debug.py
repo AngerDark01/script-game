@@ -7,23 +7,48 @@ from pathlib import Path
 from typing import Any
 
 _EVENT_LOG_PATH = Path(__file__).resolve().parents[2] / "logs" / "event_runtime.log"
-_EVENT_SESSION_STARTED = False
+_EVENT_RUN_DIR = Path(__file__).resolve().parents[2] / "logs" / "event_runs"
+_EVENT_SESSION_PID = os.getpid()
+_EVENT_SESSION_STAMP = ""
+_EVENT_SESSION_PATH = _EVENT_RUN_DIR / f"{_EVENT_SESSION_STAMP}_pid{_EVENT_SESSION_PID}_event_runtime.log"
+_EVENT_STARTED_PATHS: set[Path] = set()
+
+
+def start_event_log_session(label: str = "event") -> Path:
+    """Start a new logical event log session without changing caller log format."""
+    global _EVENT_SESSION_STAMP, _EVENT_SESSION_PATH
+    _EVENT_SESSION_STAMP = _new_session_stamp()
+    safe_label = _sanitize_topic(label or "event") or "event"
+    _EVENT_SESSION_PATH = _EVENT_RUN_DIR / f"{_EVENT_SESSION_STAMP}_pid{_EVENT_SESSION_PID}_{safe_label}.log"
+    _EVENT_STARTED_PATHS.discard(_EVENT_LOG_PATH)
+    line = _build_line(
+        "event log session started",
+        {
+            "label": safe_label,
+            "archive": _EVENT_SESSION_PATH.name,
+        },
+    )
+    _write_event_line(_EVENT_LOG_PATH, line)
+    _write_event_line(_EVENT_SESSION_PATH, line)
+    print(line, flush=True)
+    return _EVENT_SESSION_PATH
 
 
 def event_log(message: str, **fields: Any) -> None:
     """Write one compact event diagnostic to the event file and runtime output."""
-    global _EVENT_SESSION_STARTED
-    suffix = _format_fields(fields)
-    timestamp = time.strftime("%H:%M:%S")
-    millis = int((time.time() % 1) * 1000)
-    line = f"[Event {timestamp}.{millis:03d} pid={os.getpid()}] {message}{suffix}"
-    _EVENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    mode = "a" if _EVENT_SESSION_STARTED else "w"
-    with _EVENT_LOG_PATH.open(mode, encoding="utf-8") as handle:
-        if not _EVENT_SESSION_STARTED:
-            handle.write(f"=== event session {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
-            _EVENT_SESSION_STARTED = True
-        handle.write(line + "\n")
+    global _EVENT_SESSION_STAMP, _EVENT_SESSION_PATH
+    if not _EVENT_SESSION_STAMP:
+        _EVENT_SESSION_STAMP = _new_session_stamp()
+        _EVENT_SESSION_PATH = _EVENT_RUN_DIR / f"{_EVENT_SESSION_STAMP}_pid{_EVENT_SESSION_PID}_event_runtime.log"
+    line = _build_line(message, fields)
+    _write_event_line(_EVENT_LOG_PATH, line)
+    _write_event_line(_EVENT_SESSION_PATH, line)
+    topic = _event_topic(message, fields)
+    if topic:
+        _write_event_line(
+            _EVENT_RUN_DIR / f"{_EVENT_SESSION_STAMP}_pid{_EVENT_SESSION_PID}_event_{topic}.log",
+            line,
+        )
     print(line, flush=True)
 
 
@@ -78,3 +103,75 @@ def _format_value(value: Any) -> str:
     if isinstance(value, dict):
         return "{" + ",".join(f"{key}:{_format_value(val)}" for key, val in value.items()) + "}"
     return str(value)
+
+
+def _build_line(message: str, fields: dict[str, Any]) -> str:
+    suffix = _format_fields(fields)
+    timestamp = time.strftime("%H:%M:%S")
+    millis = int((time.time() % 1) * 1000)
+    return f"[Event {timestamp}.{millis:03d} pid={os.getpid()}] {message}{suffix}"
+
+
+def _new_session_stamp() -> str:
+    now = time.time()
+    return f"{time.strftime('%Y%m%d_%H%M%S', time.localtime(now))}_{int((now % 1) * 1000):03d}"
+
+
+def _write_event_line(path: Path, line: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if path in _EVENT_STARTED_PATHS else "w"
+    with path.open(mode, encoding="utf-8") as handle:
+        if path not in _EVENT_STARTED_PATHS:
+            handle.write(
+                "=== event session "
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"pid={_EVENT_SESSION_PID} file={path.name} ===\n"
+            )
+            _EVENT_STARTED_PATHS.add(path)
+        handle.write(line + "\n")
+
+
+def _event_topic(message: str, fields: dict[str, Any]) -> str | None:
+    explicit = fields.get("event") or fields.get("event_type")
+    topic = _topic_from_value(explicit)
+    if topic:
+        return topic
+
+    for key in ("id", "entry_id", "exit_id", "task", "selected", "previous"):
+        topic = _topic_from_value(fields.get(key))
+        if topic:
+            return topic
+
+    lowered = str(message).lower()
+    if "portal" in lowered:
+        return "portal"
+    if lowered.startswith("nav ") or lowered.startswith("navigation "):
+        return "navigation"
+    if "localization" in lowered or "relocalization" in lowered:
+        return "localization"
+    return None
+
+
+def _topic_from_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = _format_value(value).lower()
+    if not text:
+        return None
+    if "event=portal" in text or text.startswith("portal:") or text == "portal":
+        return "portal"
+    if text.startswith("event:portal"):
+        return "portal"
+    if text.startswith("required:") or text.startswith("exit:") or text.startswith("nav"):
+        return "navigation"
+    return _sanitize_topic(text) if text in {"portal", "navigation", "localization"} else None
+
+
+def _sanitize_topic(value: str) -> str:
+    allowed = []
+    for char in value.lower():
+        if char.isalnum() or char in ("_", "-"):
+            allowed.append(char)
+        elif char in (":", " ", "."):
+            allowed.append("_")
+    return "".join(allowed).strip("_")[:48]

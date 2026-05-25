@@ -154,8 +154,18 @@ class EventAction:
         return cls(type=EventActionType.PRESS_KEY, key=str(key), reason=reason)
 
     @classmethod
-    def wait(cls, wait_ms: int, reason: str = "") -> "EventAction":
-        return cls(type=EventActionType.WAIT, wait_ms=int(wait_ms), reason=reason)
+    def wait(
+        cls,
+        wait_ms: int,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> "EventAction":
+        return cls(
+            type=EventActionType.WAIT,
+            wait_ms=int(wait_ms),
+            reason=reason,
+            metadata=dict(metadata or {}),
+        )
 
     @classmethod
     def complete(cls, reason: str = "", metadata: dict[str, Any] | None = None) -> "EventAction":

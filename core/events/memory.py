@@ -150,23 +150,28 @@ class EventMemory:
         exit_pos: tuple[int, int] | None,
         now_ms: int,
         config,
+        exit_task_id: str | None = None,
+        exit_player_pos: tuple[int, int] | None = None,
     ) -> tuple[EventTask, EventTask | None]:
         event_config = config.event(entry_task.event_type) if hasattr(config, "event") else {}
         session_id = f"teleport:{entry_task.id}:{int(now_ms)}"
-        exit_task = self._find_session_exit_task(entry_task, exit_pos, event_config)
+        exit_task = self._find_task_by_id(exit_task_id) if exit_task_id else None
+        if exit_task is None:
+            exit_task = self._find_session_exit_task(entry_task, exit_pos, event_config)
 
-        exit_player_pos = _int_pos(exit_pos)
+        exit_player_pos = _int_pos(exit_player_pos) or _int_pos(exit_pos)
+        normalized_exit_pos = _int_pos(exit_pos) or exit_player_pos
         entry_task.metadata["teleport_session_id"] = session_id
         entry_task.metadata["teleport_role"] = "entry"
         if exit_player_pos is not None:
             entry_task.metadata["teleport_exit_player_pos"] = exit_player_pos
         entry_task.mark_completed(now_ms)
 
-        if exit_player_pos is not None and exit_task is None:
+        if normalized_exit_pos is not None and exit_task is None:
             exit_task = EventTask(
                 id=self._new_id(entry_task.event_type),
                 event_type=entry_task.event_type,
-                global_pos=exit_player_pos,
+                global_pos=normalized_exit_pos,
                 first_seen_ms=int(now_ms),
                 last_seen_ms=int(now_ms),
                 priority=int(event_config.get("priority", 0)),
@@ -177,6 +182,8 @@ class EventMemory:
 
         if exit_task is not None:
             exit_task.last_seen_ms = int(now_ms)
+            if normalized_exit_pos is not None:
+                exit_task.global_pos = normalized_exit_pos
             exit_task.metadata["teleport_session_id"] = session_id
             exit_task.metadata["teleport_role"] = "exit"
             exit_task.metadata["complete_reason"] = "teleport exit"
@@ -196,6 +203,7 @@ class EventMemory:
             entry_pos=entry_task.global_pos,
             exit_pos=exit_task.global_pos if exit_task is not None else None,
             exit_player_pos=exit_player_pos,
+            exit_task_id=exit_task_id,
         )
         return entry_task, exit_task
 
@@ -296,6 +304,14 @@ class EventMemory:
         value = f"{event_type}:{self._next_id}"
         self._next_id += 1
         return value
+
+    def _find_task_by_id(self, task_id: str | None) -> EventTask | None:
+        if not task_id:
+            return None
+        for task in self._tasks:
+            if str(task.id) == str(task_id):
+                return task
+        return None
 
     def _find_matching_task(
         self,

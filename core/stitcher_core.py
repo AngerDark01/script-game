@@ -184,6 +184,7 @@ class MapStitcher:
             current_pos=np.array([self.current_x, self.current_y]),
             canvas_size=self.canvas_size,
             draw_scale=self.draw_scale,
+            wall_close_kernel_size=self.wall_close_kernel_size,
         )
         print(f"地图数据已保存至: {folder_path}")
 

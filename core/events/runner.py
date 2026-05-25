@@ -45,6 +45,8 @@ class EventRunner:
                 self.memory.complete_teleport_session(
                     task,
                     exit_pos=metadata.get("exit_pos"),
+                    exit_task_id=metadata.get("exit_task_id"),
+                    exit_player_pos=metadata.get("exit_player_pos"),
                     now_ms=tick.now_ms,
                     config=config,
                 )

@@ -8,9 +8,27 @@ class PortalEventConfig:
     enabled: bool = True
     priority: int = 100
     interaction: str = "key"
+    detector_mode: str = "feature_then_template"
     minimap_threshold: float = 0.74
     max_candidates: int = 2
     min_blue_ratio: float = 0.08
+    feature_detector_enabled: bool = True
+    feature_hue_min: int = 82
+    feature_hue_max: int = 136
+    feature_sat_min: int = 55
+    feature_val_min: int = 95
+    feature_min_blue_pixels: int = 36
+    feature_max_blue_pixels: int = 420
+    shape_outer_sat_max: int = 115
+    shape_outer_val_min: int = 105
+    shape_min_blue_score: float = 0.28
+    shape_min_outer_score: float = 0.18
+    shape_min_shape_score: float = 0.30
+    shape_min_outer_pixels: int = 14
+    shape_signature_min_outer_score: float = 0.45
+    shape_signature_min_edge_score: float = 0.40
+    shape_signature_min_color_score: float = 0.82
+    shape_signature_score_scale: float = 1.30
     stable_frames: int = 3
     localization_cluster_radius: int = 56
     stable_variance: float = 1600.0
@@ -36,13 +54,34 @@ class PortalEventConfig:
     @classmethod
     def from_dict(cls, data: dict | None):
         values = data or {}
+        detector_mode = str(values.get("detector_mode", "") or "").strip()
+        if not detector_mode:
+            detector_mode = "feature_then_template" if bool(values.get("feature_detector_enabled", True)) else "template"
         return cls(
             enabled=bool(values.get("enabled", True)),
             priority=int(values.get("priority", 100)),
             interaction=str(values.get("interaction", "key")),
+            detector_mode=detector_mode,
             minimap_threshold=float(values.get("minimap_threshold", 0.74)),
             max_candidates=int(values.get("max_candidates", 2)),
             min_blue_ratio=float(values.get("min_blue_ratio", 0.08)),
+            feature_detector_enabled=bool(values.get("feature_detector_enabled", True)),
+            feature_hue_min=int(values.get("feature_hue_min", 82)),
+            feature_hue_max=int(values.get("feature_hue_max", 136)),
+            feature_sat_min=int(values.get("feature_sat_min", 55)),
+            feature_val_min=int(values.get("feature_val_min", 95)),
+            feature_min_blue_pixels=int(values.get("feature_min_blue_pixels", 36)),
+            feature_max_blue_pixels=int(values.get("feature_max_blue_pixels", 420)),
+            shape_outer_sat_max=int(values.get("shape_outer_sat_max", 115)),
+            shape_outer_val_min=int(values.get("shape_outer_val_min", 105)),
+            shape_min_blue_score=float(values.get("shape_min_blue_score", 0.28)),
+            shape_min_outer_score=float(values.get("shape_min_outer_score", 0.18)),
+            shape_min_shape_score=float(values.get("shape_min_shape_score", 0.30)),
+            shape_min_outer_pixels=int(values.get("shape_min_outer_pixels", 14)),
+            shape_signature_min_outer_score=float(values.get("shape_signature_min_outer_score", 0.45)),
+            shape_signature_min_edge_score=float(values.get("shape_signature_min_edge_score", 0.40)),
+            shape_signature_min_color_score=float(values.get("shape_signature_min_color_score", 0.82)),
+            shape_signature_score_scale=float(values.get("shape_signature_score_scale", 1.30)),
             stable_frames=int(values.get("stable_frames", values.get("confirm_frames", 3))),
             localization_cluster_radius=int(values.get("localization_cluster_radius", 56)),
             stable_variance=float(values.get("stable_variance", 1600.0)),

@@ -2159,3 +2159,433 @@ ext_anchor=(3020,2383) 进入 nchor_probe，说明该辅助锚点 A* 不可达�
 **CODEBASE.md 更新内容：** 记录 `gui/navigation_params.py` 严格字段契约和 `player_clear_radius` 当前字段。
 **验证命令：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\navigation_params.py gui\modes\navigation_mode.py gui\modes\mapping_widget.py`; `D:\ACloud\.venv\Scripts\python.exe -c "import json; from gui.navigation_params import NavConfig; data=json.load(open('config.json', encoding='utf-8')); cfg=NavConfig.from_dict(data); print(cfg.recognizer_params.player_clear_radius)"`
 **验证结果：** 编译通过；当前 `config.json` 加载输出 `20`。
+
+## [SYNC] 2026-05-24 12:20 — 锚点推进配置与导航参数分页
+
+### A. SYNC 范围声明
+**触发任务：** 用户确认调整方案：解决锚点规划成功但点击停住的问题，把锚点半径做成配置，把导航参数前端按功能分页，并新增“保存为默认配置”。
+**直接变更文件：** `core/navigation_tasks/movement_executor.py`, `gui/navigation_params.py`, `gui/dialogs/nav_params_dialog.py`, `gui/modes/navigation/map_runtime.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 自动导航、事件 `MOVE_TO` 和手动传送门测试继续共用 `MovementExecutor`；新增配置字段写入地图 config，并可合并保存到项目根默认 config。
+
+### C. SYNC 结果
+**代码变化：**
+- `MovementExecutor` 新增 `anchor_arrival_radius` 和 `force_replan`；锚点/探测/兜底路径目标未到达时，冷却结束后允许重复点击，不再被 `auto_min_click_target_delta` 卡住。
+- 卡住恢复目标从最终任务目标改为当前 `path_goal`，避免“走锚点”和“恢复朝终点”互相打架；恢复次数耗尽后下一帧显式重规划。
+- `NavConfig` 新增锚点半径、卡住判定间隔、最小有效进度、恢复尝试次数、路径偏离阈值字段，并接入 `_configure_navigation_task_controller()`。
+- `NavParametersDialog` 改为 5 个功能页：定位识别、识别算法、移动点击、路径/A*、地图/调试；关键参数行增加可见说明和 tooltip。
+- 新增“保存为默认配置”按钮，写入项目根 `config.json` 时保留绘图模式的 `stitcher_params` 等非导航字段；地图配置缺失时会读取根默认配置作为 fallback。
+
+**CODEBASE.md 更新内容：** 更新 §2/§4 `nav_params_dialog.py` 与 `map_runtime.py` 职责，§6 导航参数保存加载流，§8 `NavConfig` 字段，§10 `MovementExecutor` 当前行为，§16 dialog 热点状态。
+
+**验证命令：**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\movement_executor.py gui\navigation_params.py gui\dialogs\nav_params_dialog.py gui\modes\navigation\map_runtime.py gui\modes\navigation_mode.py`
+- `D:\ACloud\.venv\Scripts\python.exe -c "import sys; from PySide6.QtWidgets import QApplication; from gui.dialogs.nav_params_dialog import NavParametersDialog; from gui.navigation_params import NavConfig; app=QApplication.instance() or QApplication(sys.argv); d=NavParametersDialog(); d.set_config_to_ui(NavConfig(), (0,0)); print(d.nav_tabs.count(), d.nav_anchor_arrival_radius_spin.value(), d.nav_movement_progress_timeout_spin.value())"`
+- `D:\ACloud\.venv\Scripts\python.exe -c "import json; from gui.navigation_params import NavConfig; data=json.load(open('config.json', encoding='utf-8')); cfg=NavConfig.from_dict(data); print(cfg.anchor_arrival_radius, cfg.movement_progress_timeout_ms, cfg.movement_min_progress_delta, cfg.movement_max_recover_attempts, cfg.movement_path_deviation_threshold)"`
+
+**验证结果：** 编译通过；参数弹窗可实例化并显示 5 个分页；当前根配置加载新字段默认值输出 `26 1200 12.0 2 96.0`。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/movement_executor.py` | 浅读 | (partial) | 2 | 确认锚点路径点击抑制、卡住恢复目标和强制重规划行为已调整。 |
+| `gui/navigation_params.py` | (partial) | (partial) | 3 | 确认新增移动执行器调参字段进入地图 config 序列化契约。 |
+| `gui/dialogs/nav_params_dialog.py` | (partial) | (partial) | 3 | 确认导航参数 UI 已分页，新增锚点/卡住参数控件和默认保存信号。 |
+| `gui/modes/navigation/map_runtime.py` | 深度完整 | (partial) | 2 | 确认新增根默认配置保存/缺省读取 helper，保留地图配置优先级。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 19 | 确认新增默认保存槽和 MovementExecutor 新参数下发。 |
+## [SYNC] 2026-05-24 13:50 - 坐标失准独立诊断日志
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈现有日志没有打印坐标匹配不准确的关键证据，需要新增独立日志，并先构思识别坐标失准后重新匹配定位的方案。
+**直接变更文件：** `core/navigation_tasks/coordinate_diagnostics.py`, `core/navigation_tasks/controller.py`, `gui/modes/navigation_mode.py`, `docs/plans/2026-05-24-coordinate-drift-diagnostics.md`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 导航行为不变；`NavigationTaskController` 额外接收 `FrameRegistration` 并把 raw/trusted/control/target/route projection 写到独立日志，后续用这些证据决定是否启用强制全局重匹配。
+
+### C. SYNC 结果
+**代码变化：**
+- 新增 `CoordinateDiagnostics`，文件只写 `logs/coordinate_diagnostics.log`，不打印到控制台，避免再次污染 `runtime.log`。
+- `NavigationTaskController.update()` 接收 `frame_registration`，每帧在定位有效或无效时记录诊断候选，但不修改 `observe_localization()` 的接受规则。
+- `_navigation_loop_unified()` 将 `nav_core.last_frame_registration` 传给任务控制器，使日志能看到 `reg_source/reg_conf/reg_origin/reg_local/reg_meta`。
+- 新增方案文档，明确下一阶段重匹配应由连续 `route projection deviation`、`raw control gap`、`near target not completed` 等证据触发，而不是引入固定偏移参数。
+
+**验证命令：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\coordinate_diagnostics.py core\navigation_tasks\controller.py gui\modes\navigation_mode.py`
+**验证结果：** 编译通过；本轮未运行逻辑测试，等待真实游戏导航日志反馈。
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/coordinate_diagnostics.py` | PENDING | 浅读 | 1 | 新增坐标失准诊断模块，记录 raw/control/target/route deviation/registration evidence。 |
+| `core/navigation_tasks/controller.py` | (partial) | (partial) | 追加 | 确认统一任务控制器接入诊断采样但不改变任务选择和移动输出。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 追加 | 确认导航循环把当前帧配准契约传入任务控制器。 |
+| `docs/plans/2026-05-24-coordinate-drift-diagnostics.md` | PENDING | 浅读 | 1 | 新增坐标漂移检测和未来强制全局重匹配方案记录。 |
+## [SYNC] 2026-05-24 14:05 - 近锚点精确点击
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈快到下一个锚点时仍频繁普通点击，角色会绕锚点转圈；期望近锚点时点击锚点本身，到达后再规划下一个锚点。
+**直接变更文件：** `core/navigation_tasks/models.py`, `core/navigation_tasks/movement_executor.py`, `core/navigation_tasks/controller.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 普通 required/exit/event MOVE_TO 仍共用 `MovementExecutor`；只在 `anchor_step/anchor_probe` 当前 path_goal 的近距离阶段改变点击方式，避免 `movement_min_click_radius` 放大近锚点点击。
+
+### C. SYNC 结果
+**代码变化：**
+- `MovementStep` 新增 `force_click_target`，用于把移动执行器的“精确点击目标”意图传到 UI 输入层。
+- `MovementExecutor` 在当前路径为 `anchor_step/anchor_probe` 且人物接近 `path_goal` 但尚未进入 `anchor_arrival_radius` 时，将 `subgoal` 固定为 `path_goal`，并标记 `force_click_target=True`。
+- 近锚点阶段点击冷却提升到至少 650ms，并在 2.2s 内抑制 stuck recovery，避免刚靠近锚点就左右探针造成绕圈；若仍未到达，恢复机制会重新接管。
+- `NavigationTaskController` 把 `step.force_click_target` 放入 `NavigationIntent.metadata`，沿用现有 `_execute_navigation_intent()` 的 `click_map_target_once()` 分支，因此不会走普通移动最小半径。
+
+**验证命令：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\coordinate_diagnostics.py core\navigation_tasks\models.py core\navigation_tasks\movement_executor.py core\navigation_tasks\controller.py gui\modes\navigation_mode.py`
+**验证结果：** 编译通过；未运行逻辑测试，等待真实导航日志确认是否出现 `nav movement exact path-goal click` 且绕锚点现象减少。
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/models.py` | 浅读 | 浅读 | 追加 | 新增 MovementStep.force_click_target 作为执行器到 UI 输入层的精确点击标志。 |
+| `core/navigation_tasks/movement_executor.py` | (partial) | (partial) | 追加 | 近锚点阶段改为精确 path_goal 点击，并短暂抑制恢复探针。 |
+| `core/navigation_tasks/controller.py` | (partial) | (partial) | 追加 | 将 force_click_target 透传到 NavigationIntent.metadata。 |
+
+## [SYNC] 2026-05-24 18:25 - 坐标漂移自动重定位恢复
+
+### A. SYNC 范围声明
+**触发任务：** 用户确认核心问题是需要可靠界定定位偏移，并把“重新定位”作为特殊恢复事件触发一次，不能使用固定偏移参数。
+**直接变更文件：** `core/navigation_tasks/coordinate_diagnostics.py`, `core/navigation_core.py`, `core/navigation_tasks/controller.py`, `gui/modes/navigation_mode.py`, `docs/plans/2026-05-24-coordinate-drift-diagnostics.md`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 自动导航和传送门事件继续共用统一任务控制器；坐标恢复是导航内部机制，不进入 `EventCoordinator`，不会与 portal 等业务事件竞争调度。
+
+### C. SYNC 结果
+**代码变化：**
+- `CoordinateDiagnostics` 从只记录日志升级为漂移恢复状态机：对 `reg_source=f2f` 的 `route_deviation`、`raw_control_gap`、`raw_jump`、`near_target_stall` 等信号按时间窗打分，达到阈值后生成 `CoordinateRelocalizationRequest`。
+- `NavigationTaskController.update()` 消费恢复请求后返回 `WAIT` 意图并带 `metadata.force_relocalize=True`，本帧不输出移动点击；强制重定位成功帧使用 `force_snap=True` 把 `trusted/control` 硬重置到新坐标，并重置 `MovementExecutor`。
+- `NavigationCore.request_global_relocalization()` 清空 F2F 跟踪状态；下一帧 `localize()` 跳过 F2F 和局部搜索，直接完整 `wall_layer` 模板匹配，并在 `FrameRegistration.metadata` 标记 `forced_global`。
+- `NavigationModeWidget._navigation_loop_unified()` 收到强制重定位 intent 后调用导航核心、记录 `navigation forced global relocalization`，并在执行输入前返回，避免偏移状态继续点击。
+- 方案文档更新为当前已实现流程，列出 `coordinate relocalization requested/forced/accepted/rejected` 等关键日志。
+
+**CODEBASE.md 更新内容：** 更新 §2 目录结构、§4 `navigation_tasks` 与 `navigation_core` 边界、§5 `NavigationTaskController.update()` 行为、§18 坐标漂移诊断从“只诊断”改为“诊断 + 内部重定位恢复”。
+
+**验证命令：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\coordinate_diagnostics.py core\navigation_core.py core\navigation_tasks\controller.py gui\modes\navigation_mode.py`
+**验证结果：** 编译通过；未运行逻辑测试，等待真实游戏导航日志确认是否出现恢复链路日志并降低偏移。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/coordinate_diagnostics.py` | 浅读 | (partial) | 2 | 新增恢复请求状态机、信号打分、强制/接受/拒绝日志。 |
+| `core/navigation_core.py` | (partial) | (partial) | 18 | 新增强制全局模板匹配入口，保留原始 wall_layer 定位体系。 |
+| `core/navigation_tasks/controller.py` | (partial) | (partial) | 追加 | 坐标恢复请求转成 WAIT intent；强制匹配成功后硬重置 control/trusted。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 20 | 导航循环消费 force_relocalize intent，并在输入执行前返回。 |
+| `docs/plans/2026-05-24-coordinate-drift-diagnostics.md` | 浅读 | 浅读 | 2 | 从未来方案更新为当前已实现恢复流程和日志说明。 |
+
+## [Round] 2026-05-24 18:46 - Portal missing-detection probe task split
+
+### A. 本轮目标（阅读前声明）
+**目标文件：** core/events/types/portal/minimap_detector.py, core/events/detectors/template_matcher.py, utils/event_icon_probe.py, core/events/position_stabilizer.py, core/events/memory.py
+**本轮想弄清楚：** 不可识别传送门到底是模板匹配失败、颜色过滤失败、定位投影失败、事件记忆/冷却过滤，还是日志/UI 缺少必要证据。
+
+### C. 本轮发现
+**关键发现：** (verified) `D:\ACloud\image` 下两张静态图已用于 `utils/event_icon_probe.py --image` 探针。`95705f16-9696-402c-b008-82f8f7d87651.png` 在原模板 `portal_minimap_01/02` 下无 accepted hit：最佳分数分别为 `0.5597` 和 `0.4444`，但 `_portal_color_check()` 均为 `color-ok`，说明失败发生在模板匹配分数层，不是蓝色过滤、定位投影、memory 冷却或同帧候选上限。`fd4615e6-a089-403f-b2aa-26fceeafc952.png` 在原模板下可识别两个传送门：`0.8398`、`0.7921`。
+
+**修订的旧结论：** (verified) “同帧候选上限导致只能识别两个传送门”不是这两张图失败的原因；小图远距离/裁剪外观下原模板本身低分。`max_candidates` 仍可能影响同帧多事件数量，但这次静态探针没有证明它是根因。
+
+**代码变化：** (verified) 新增正式小地图模板 `assets/event_templates/portal/minimap/portal_minimap_03.png` 和 `portal_minimap_04.png`，来自小图中上/下两个传送门的 32x32 裁剪；`core/events/types/portal/assets.py` 接入四模板列表。`core/events/types/portal/definition.py` 把 `max_candidates`、`min_blue_ratio` 暴露为事件管理 UI 可编辑参数；`gui/dialogs/event_manager_dialog.py` 在当前配置摘要中显示这两个值。
+
+**验证结果：** (verified) 四模板回跑静态探针：小图命中 `portal_minimap_03=0.9901`、`portal_minimap_04=0.9881`；大图仍命中原模板 `portal_minimap_01=0.8398`、`portal_minimap_02=0.7921`，新增模板在大图中低于阈值，未抢占原模板。编译命令 `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\types\portal\assets.py core\events\types\portal\definition.py gui\dialogs\event_manager_dialog.py utils\event_icon_probe.py` 通过。
+
+**新疑问：** (partial) 新增裁剪模板能覆盖这两张静态图，但真实运行仍需要观察 `logs/event_runtime.log` 中是否出现 `portal minimap hits` 且 task 能进入 localization stable；若仍漏检，下一步应保存 raw minimap frame 而不是用聊天截图继续调参。
+
+**更新了 CODEBASE.md：** §2 新增 `portal_minimap_03/04` 资产说明；§4 更新 `utils/event_icon_probe.py` 静态图片探针能力；§6 更新事件图标探针 flow；§13 记录当前四模板传送门识别行为。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/types/portal/minimap_detector.py` | (partial) | (partial) | 追加 | 确认 detector 先做模板匹配，再做 `_portal_color_check()`；本次小图失败发生在模板分数阈值前。 |
+| `core/events/detectors/template_matcher.py` | (partial) | (partial) | 追加 | 确认匹配分数为灰度/边缘组合，并支持 alpha mask；本次未改算法，只扩展模板资产。 |
+| `utils/event_icon_probe.py` | (partial) | (partial) | 追加 | 静态 `--image` 探针可复用运行时 matcher 和 portal color check，能区分模板低分与颜色过滤。 |
+| `core/events/position_stabilizer.py` | (partial) | (partial) | 追加 | 确认定位投影只消费 accepted `EventDetection`；静态小图原模板无 detection，因此未进入此层。 |
+| `core/events/memory.py` | (partial) | (partial) | 追加 | 确认 memory/cooldown 只消费 stable observation；静态小图原模板无 detection，不是 memory 抑制。 |
+| `core/events/types/portal/assets.py` | PENDING | 浅读 | 1 | 四个小地图模板资产路径集中定义，`PortalMinimapDetector` 初始化时按存在性加载。 |
+| `core/events/types/portal/definition.py` | (partial) | (partial) | 追加 | 传送门事件 schema 新增 `max_candidates`、`min_blue_ratio`，避免关键识别参数只藏在代码里。 |
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | 追加 | 当前配置摘要新增候选数量和蓝色比例，方便测试时确认 UI/配置值。 |
+
+## [SYNC] 2026-05-24 19:15 - Portal recognition algorithm feature redesign
+
+### A. SYNC 范围声明
+**触发任务：** 用户指出继续新增整块模板不可持续，要求优化匹配算法，最好把传送门本体抠出来再做特征匹配，避免每个传送门都要单独模板。
+**直接变更文件：** 预计 `core/events/types/portal/minimap_feature_matcher.py`, `core/events/types/portal/minimap_detector.py`, `core/events/types/portal/config.py`, `core/events/types/portal/definition.py`, `core/events/config.py`, `gui/dialogs/event_manager_dialog.py`, `utils/event_icon_probe.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 传送门事件仍输出 `EventDetection`，后续 `EventPositionStabilizer`、`EventMemory`、导航到事件点、传送门 handler 不变；识别层从整块模板匹配改为颜色候选/形状过滤/抠图特征确认。
+
+### C. SYNC 结果
+**根因闭环：** (verified) 上一轮静态探针证明小图原整块模板最佳分数只有 `0.5597/0.4444`，但蓝色过滤通过；本轮单独验证蓝色二值特征匹配，使用原始 `portal_minimap_01/02` 两个模板即可在小图和大图同时命中，说明稳定特征是传送门蓝色本体结构，而不是周围背景像素。
+
+**代码变化：**
+- 新增 `core/events/types/portal/minimap_feature_matcher.py`：从模板和 raw minimap 中提取 HSV 蓝/青二值 mask，做多尺度 `TM_CCOEFF_NORMED` 匹配，并用蓝色像素数量和 density score 过滤候选。
+- `PortalMinimapDetector.detect()` 优先调用 feature matcher，只有 feature 无命中时才回退旧整块模板匹配；输出 metadata 增加 `detector`, `mask_score`, `density_score`, `feature_blue_pixels` 等诊断字段。
+- `PortalMinimapDetector.detect()` 还新增节流 `portal minimap no hits` 诊断日志，打印 feature 模板数、raw frame 蓝色特征像素数量和当前 feature 阈值，避免“没识别”时没有证据。
+- 删除上一轮临时新增的 `portal_minimap_03/04` 整块模板资产，运行时继续只依赖原始两个 canonical 模板，避免模板堆积。
+- `PortalEventConfig`、`DEFAULT_EVENT_CONFIG` 和事件 UI schema 新增 `feature_hue_min/max`, `feature_sat_min`, `feature_val_min`, `feature_min_blue_pixels`, `feature_max_blue_pixels`，关键识别参数可在事件管理中调整。
+- `utils/event_icon_probe.py` 新增 `--portal-feature-detector` 和对应 HSV/像素阈值参数，用于离线验证运行时 feature 算法。
+
+**验证结果：**
+- 编译通过：`D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\config.py core\events\types\portal\minimap_feature_matcher.py core\events\types\portal\minimap_detector.py core\events\types\portal\config.py core\events\types\portal\definition.py gui\dialogs\event_manager_dialog.py utils\event_icon_probe.py`
+- 静态 feature 探针通过：`95705f16-9696-402c-b008-82f8f7d87651.png` 命中 `(54,83)` score `0.9017` 和 `(79,116)` score `0.7782`；`fd4615e6-a089-403f-b2aa-26fceeafc952.png` 命中 `(259,127)` score `0.9286` 和 `(281,153)` score `0.9088`。
+
+**CODEBASE.md 更新内容：** §2 新增 `minimap_feature_matcher.py` 并移除临时 03/04 模板说明；§4 更新 portal 事件包和探针职责；§5 记录 feature matcher 与 detector 算法；§6 更新事件图标探针 flow；§8 更新 portal 识别参数；§13 更新当前 portal 行为。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/events/types/portal/minimap_feature_matcher.py` | PENDING | 浅读 | 1 | 新增蓝色本体二值特征匹配，避免整块背景模板低分漏检。 |
+| `core/events/types/portal/minimap_detector.py` | (partial) | (partial) | 追加 | detector 识别链改为 feature first、template fallback，后续 EventDetection 契约不变。 |
+| `core/events/types/portal/config.py` | (partial) | (partial) | 追加 | 新增 portal feature HSV/像素阈值配置，from_dict 保持旧配置兼容默认值。 |
+| `core/events/types/portal/definition.py` | (partial) | (partial) | 追加 | 事件管理 schema 暴露 feature 识别参数。 |
+| `core/events/config.py` | 浅读 | 浅读 | 追加 | 默认 event_config 合并新增 feature 参数，旧地图配置读取时自动补默认值。 |
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | 追加 | 当前配置摘要显示部分 feature 参数，便于测试时确认值。 |
+| `utils/event_icon_probe.py` | (partial) | (partial) | 追加 | 新增 `--portal-feature-detector` 静态/实时探针模式，复用运行时 feature matcher。 |
+
+## [SYNC] 2026-05-24 20:28 - Coordinate relocalization over-trigger diagnosis
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈最新导航日志中重新定位触发过于频繁，要求先看日志确认原因。
+**直接变更文件：** `core/navigation_tasks/coordinate_diagnostics.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** `NavigationTaskController` 仍通过同一 `CoordinateRelocalizationRequest` 转成 `WAIT + force_relocalize` intent；`NavigationCore.request_global_relocalization()` 和 GUI 消费路径不变。
+
+### C. SYNC 结果
+**根因闭环：** (verified) `logs/coordinate_diagnostics.log` 中频繁请求主要来自 `route_deviation` 重复入队：例如 `20:13:35`, `20:13:39`, `20:13:52`, `20:13:59`, `20:14:06`, `20:14:14` 都是 `reason=route_deviation score=3 signals=(route_deviation,route_deviation,route_deviation)`。这说明诊断器把路线投影偏差/导航 fallback 当成坐标漂移证据，而不是定位匹配本身必然错误。另一个放大器是 `long_f2f_tracking` 每帧入队，日志中出现 `score=9` 和 `score=20` 的情况，实际只是同一上下文信号重复叠分。
+
+**代码变化：**
+- `CoordinateDiagnostics._register_recovery_signal()` 改为按唯一 signal name 取最大 severity 计分，避免同一 `route_deviation` 或 `long_f2f_tracking` 在 2.6 秒窗口内刷分。
+- `long_f2f_tracking` 改为 severity 0，仅作为上下文，不再放大恢复分数。
+- 新增 primary signal 策略：只有 `raw_jump` 或 `raw_control_gap` 这类真实坐标异常可以触发强制重定位；`route_deviation`、`near_target_stall` 没有 primary 时只记录 `coordinate relocalization suppressed`。
+- `raw_jump` severity 提升到 3，可直接触发一次重定位；`raw_control_gap` 根据 gap 大小给 1/2 分，需要和上下文信号组合才触发。
+- 强制重定位 accepted/rejected 后清空 `_signals` 和 `_near_target_since_ms`，避免旧的 near-target 计时在重定位后继续触发。
+
+**验证结果：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\coordinate_diagnostics.py` 通过；未做逻辑测试，等待真实游戏导航日志确认 `coordinate relocalization suppressed` 增加、`navigation forced global relocalization` 降低。
+
+**CODEBASE.md 更新内容：** §5 `NavigationTaskController.update()` 诊断步骤说明；§18 坐标漂移诊断恢复策略。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/coordinate_diagnostics.py` | (partial) | (partial) | 追加 | 确认过触发过频根因并改为唯一信号计分 + primary signal 门控。 |
+| `CODEBASE.md` | 文档 | 文档 | 追加 | 更新坐标恢复策略描述，明确 route/near/f2f 不再单独强制重定位。 |
+| `ITERATION_LOG.md` | 文档 | 文档 | 追加 | 记录本次日志根因、代码变更和编译结果。 |
+
+## [SYNC] 2026-05-24 20:46 - Visual-consistency relocalization trigger
+
+### A. SYNC 范围声明
+**触发任务：** 用户要求废弃当前频繁触发的路线/锚点偏差重定位逻辑，改为“截图实际位置 A 与导航图人物位置 B 有稳定差异”才触发重定位。
+**直接变更文件：** `core/navigation_core.py`, `core/navigation_tasks/coordinate_diagnostics.py`, `gui/navigation_params.py`, `gui/dialogs/nav_params_dialog.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** `NavigationTaskController` 的 relocalization intent、`NavigationCore.request_global_relocalization()`、GUI 消费 `force_relocalize` 的路径不变；变化只在“何时请求重定位”的证据来源。
+
+### C. SYNC 结果
+**根因修正：** (verified) 之前的恢复逻辑把 `route_deviation`、`near_target_stall` 等导航规划现象当成重定位证据。新逻辑不再使用路线、锚点、A* fallback 作为强制重定位条件。
+
+**代码变化：**
+- `NavigationCore.localize()` 的 F2F 分支新增视觉一致性校验：定期把当前截图提取出的 `wall_mask` 放大到地图尺度，只在当前人物点附近的小窗口里做 `cv2.matchTemplate`，得到截图本帧最应该贴到大地图上的 `visual_player`。
+- F2F 的 `FrameRegistration.metadata` 新增 `visual_check`, `visual_conf`, `visual_expected_score`, `visual_player`, `visual_delta`, `visual_delta_dist`, `visual_mismatch`，用于日志判断“截图位置 A”和“导航位置 B”是否稳定不同。
+- `CoordinateDiagnostics` 删除路线偏差、近目标卡住、raw-control smoothing gap、long F2F duration 对重定位的触发作用；它们只写诊断日志。
+- 新 primary signals 只剩 `visual_mismatch` 和 `raw_jump`。`visual_mismatch` 必须连续达到配置帧数才触发；`raw_jump` 保留为极端跳变保险。
+- 导航参数新增并可保存：`coordinate_visual_check_interval_ms`, `coordinate_visual_check_margin`, `coordinate_visual_match_min_confidence`, `coordinate_visual_mismatch_threshold`, `coordinate_visual_mismatch_frames`。
+- 参数面板“定位/运行”页新增视觉校验相关控件；`NavigationModeWidget._configure_navigation_task_controller()` 会把这些值同步到 `NavigationCore` 和 `CoordinateDiagnostics`。
+
+**验证结果：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_core.py core\navigation_tasks\coordinate_diagnostics.py gui\navigation_params.py gui\dialogs\nav_params_dialog.py gui\modes\navigation_mode.py` 通过；未运行逻辑测试，等待真实游戏导航日志确认 `visual coordinate mismatch` 和 `coordinate relocalization requested reason=visual_mismatch` 是否符合肉眼偏移。
+
+**CODEBASE.md 更新内容：** §5 `NavigationTaskController.update()` 诊断步骤；§8 `NavConfig` 新增视觉校验参数；§18 坐标漂移诊断改为视觉一致性触发。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_core.py` | (partial) | (partial) | 追加 | F2F 跟踪新增局部视觉模板校验，将截图最佳贴图位置写入 FrameRegistration metadata。 |
+| `core/navigation_tasks/coordinate_diagnostics.py` | (partial) | (partial) | 追加 | 重定位触发源改为 visual_mismatch/raw_jump；路线偏差和近目标卡住只保留诊断。 |
+| `gui/navigation_params.py` | (partial) | (partial) | 追加 | NavConfig 新增视觉校验阈值字段和 config.json 序列化。 |
+| `gui/dialogs/nav_params_dialog.py` | (partial) | (partial) | 追加 | 参数面板新增视觉校验间隔、搜索边距、最低置信度、偏移阈值、连续帧数控件。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 追加 | 将视觉校验配置同步到 NavigationCore 和 CoordinateDiagnostics。 |
+
+## [SYNC] 2026-05-24 21:30 - Portal-trigger relocalization and completion
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈传送门按下 `D` 后重定位卡住，且成对传送门传入/传出状态没有正确完成，事件绕回重复执行。
+**直接变更文件：** 待调查后确定，预计涉及 `core/navigation_core.py`, `core/events/types/portal/handler.py`, `core/events/runner.py`, `core/events/memory.py`, `gui/modes/navigation_mode.py`。
+**预计连带影响：** 复用开始导航同款全图定位路径；传送门事件在等待传送结果时应允许大跳变定位；事件完成时应同时关闭 entry/exit portal task。
+
+### C. SYNC 结果
+**根因确认：** (verified) 最新 `coordinate_diagnostics.log` 显示传送门按 `D` 后进入 `template_match_failed/jump_rejected` 循环；普通定位把传送后的合法大位移当成异常跳变拒绝，导致 `PortalEventHandler.wait_result` 一直拿不到新的有效 `player_global_pos`。
+**代码变化：**
+- `NavigationCore` 新增 `request_full_map_localization()`，`request_global_relocalization()` 作为兼容别名；强制重定位现在走与开始导航一致的全图模板匹配阈值，不再使用额外更高的 `force_global_min_confidence`。
+- `PortalEventHandler` 在按 `D` 后等待传送完成阶段返回带 `force_relocalize=True` 的 WAIT action，请求下一帧全图定位；完成判断改为优先识别已知出口门，其次大距离位移，最后小地图环境变化。
+- `EventAction.wait()` 支持 metadata；`NavigationTaskController._update_event_task()` 会把 WAIT metadata 透传给 GUI。
+- `NavigationTaskController` 在 `forced_reason=portal_wait_result` 的强制定位成功后保留当前 active event，避免传送后调度器切到出口门或静态路线，保证原入口 handler 有机会完成 teleport session。
+- `EventRunner` 和 `EventMemory.complete_teleport_session()` 增加 `exit_task_id` / `exit_player_pos` 传递，优先按已知出口 task id 标记出口完成，再 fallback 到坐标半径查找或 synthetic exit。
+**验证结果：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_core.py core\events\models.py core\events\types\portal\handler.py core\events\runner.py core\events\memory.py core\navigation_tasks\controller.py gui\modes\navigation_mode.py` 通过。未做逻辑自动测试，等待真实游戏运行日志验证。
+**CODEBASE.md 更新内容：** §4 `core/navigation_core.py`、§13 portal flow、§17 坐标诊断恢复说明，补充 full-map localization、portal wait-result recovery 和 exit task id 完成语义。
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_core.py` | (partial) | (partial) | 追加 | 确认强制重定位现在复用开始导航的全图模板匹配阈值，并绕过普通 jump rejection。|
+| `core/events/types/portal/handler.py` | (partial) | (partial) | 追加 | 确认传送门等待结果阶段会请求全图定位，完成 metadata 携带 known exit id/player pos。|
+| `core/events/memory.py` | (partial) | (partial) | 追加 | 确认 teleport session 优先用 exit_task_id 标记出口，否则按坐标查找/创建 synthetic exit。|
+| `core/navigation_tasks/controller.py` | (partial) | (partial) | 追加 | 确认 WAIT action metadata 透传，并在 portal_wait_result 重定位成功时保留 active event。|
+
+## [SYNC] 2026-05-24 22:10 - Relocalization regression and portal false-positive guard
+
+### A. SYNC 范围声明
+**触发任务：** 用户反馈开始导航定位和重定位都失效，并怀疑是否与前面高清绘图/墙体逻辑改动有关；同时地图上出现三处不应存在的传送门标记。
+**直接变更文件：** `core/navigation_core.py`, `core/stitcher_core.py`, `gui/navigation_params.py`, `gui/modes/navigation/map_runtime.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 定位匹配必须继续使用原始 `wall_layer`，A* 侵蚀只影响 `nav_wall_layer`；导航保存配置不能破坏建图参数；传送门误报应优先限制在识别层。
+
+### C. SYNC 结果
+**关键发现：** (verified) 最新日志对应 `map_data/大佬A`，该地图 `map_data.npz` 和 `config.json` 的 `draw_scale` 都是 3.0，因此不是当前这张图的简单倍率错配。A* 的 `nav_wall_erode_iterations` 只派生 `nav_wall_layer`，定位仍匹配原始 `wall_layer`，所以墙体侵蚀本身不应导致 `conf=0.14~0.16`。但导航保存配置此前会覆盖地图 `config.json`，丢失 `stitcher_params` 等建图专属参数；这会破坏“绘图环境与导航环境完全一致”的可追溯性。假传送门日志明确来自 `source=minimap_feature+wall_registration`，即蓝色 feature detector 误报，而不是定位投影阶段凭空生成。
+**代码变化：**
+- `NavigationCore` 记录 `map_draw_scale`，导航运行时以 `map_data.npz` 的 draw scale 为权威；`NavigationModeWidget._apply_config_to_core()` 发现配置倍率不一致时记录 `navigation draw_scale config mismatch` 并使用地图包值。
+- `MapStitcher.save_map_package()` 新增保存 `wall_close_kernel_size`；`NavigationCore` 加载后用它作为 `wall_match_close_kernel_size`，让实时定位模板复现建图时的墙体闭运算。旧地图没有该字段时仍回退 3。
+- `NavigationCore.localize()` 的模板匹配失败会节流打印 `Localization template match failed`，包含置信度、阈值、full_map/forced、draw_scale/map_draw_scale、mask 尺寸和特征数、搜索区域、闭运算核，便于下一次实测判断是截图窗口、识别参数还是地图墙层不一致。
+- `save_nav_config()` 改为合并写回，保留现有地图配置里的 mapping-only 字段和已有 recognizer 字段，避免导航页保存把建图配置覆盖掉。
+- 传送门 feature detector 已保持默认关闭，默认运行只走模板匹配 + 蓝色校验；feature detector 后续只能显式开启。
+**验证结果：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_core.py core\stitcher_core.py gui\navigation_params.py gui\modes\navigation\map_runtime.py gui\modes\navigation_mode.py core\events\config.py core\events\types\portal\config.py core\events\types\portal\minimap_detector.py` 通过。实时截图探针在当前桌面没有抓到小地图特征，不能作为游戏内匹配结论；需要用户重新运行游戏内导航后看新增定位失败日志。
+**CODEBASE.md 更新内容：** 更新 `core/navigation_core.py` 注意事项、portal 当前识别默认策略、地图保存流、导航 map_runtime 保存语义。
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_core.py` | (partial) | (partial) | 追加 | 明确 draw_scale 来源、墙体闭运算复现、全图匹配失败诊断日志和 jump rejection 边界。 |
+| `core/stitcher_core.py` | (partial) | (partial) | 追加 | 地图包新增保存 `wall_close_kernel_size`，支持导航复现建图墙体模板处理。 |
+| `gui/modes/navigation/map_runtime.py` | (partial) | (partial) | 追加 | 导航保存配置改为 merge，防止丢失建图字段。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 追加 | `_apply_config_to_core()` 以地图包 draw_scale 为准，并记录倍率不一致。 |
+| `core/events/types/portal/minimap_detector.py` | (partial) | (partial) | 追加 | 误报来源确认是 opt-in feature detector，默认模板路径保留。 |
+
+## [SYNC] 2026-05-25 12:40 - Event approach stabilization gate
+
+### A. SYNC 范围声明
+**触发任务：** 用户确认先优化事件靠近逻辑：事件进入真实游戏视野后先用短距离 A* 收敛并停稳，再允许传送门 handler 点击/按 `D`。
+**直接变更文件：** `core/navigation_tasks/event_approach.py`, `core/navigation_tasks/controller.py`, `core/navigation_tasks/movement_executor.py`, `gui/navigation_params.py`, `gui/dialogs/nav_params_dialog.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`。
+**预计连带影响：** 自动导航和手动“测试传送门”都走同一个 `NavigationTaskController.update()`，因此同一套事件靠近/停稳门控会同时影响真实导航和事件测试；传送门 handler 本身不直接负责靠近策略。
+
+### C. SYNC 结果
+**关键发现：** (verified) 旧链路在 `_update_event_task()` 中先调用 `event_coordinator.run_task()`，所以 `PortalEventHandler` 可以在角色刚进入半径或还未停稳时推进到 `portal_point_click -> press D`。事件靠近属于导航层职责，放入 portal handler 会让后续随机事件重复造轮子。
+
+**代码变化：**
+- 新增 `core/navigation_tasks/event_approach.py`，提供 `EventApproachController` 和 `EventApproachConfig`。它在事件 handler 前执行：真实视野判定、远距离 A*+锚点、真实视野内短 lookahead A*、停靠半径、停稳时间、稳定帧数判断。
+- `NavigationTaskController._update_event_task()` 在 `event_coordinator.run_task()` 前接入门控。任务未 released 时只返回移动/等待 intent；ready 后记录 `event approach released`，同一任务后续不再被门控打断，避免 portal `wait_result` 被重新拦截。
+- `MovementExecutor.step()` 增加单次 `click_cooldown_ms` override，事件近距离阶段可以使用更慢点击节奏，不污染普通路线和锚点配置。
+- `NavConfig` 新增事件靠近参数：`event_approach_enabled`, `event_visible_margin`, `event_approach_lookahead`, `event_approach_click_cooldown_ms`, `event_stop_radius`, `event_settle_ms`, `event_stable_frames`, `event_max_motion_per_frame`。
+- `NavParametersDialog` 新增“事件靠近”页，把上述参数做成 UI 可调并可保存；`NavigationModeWidget._configure_navigation_task_controller()` 把配置同步给 `EventApproachController`。
+
+**验证结果：** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\navigation_tasks\event_approach.py core\navigation_tasks\movement_executor.py core\navigation_tasks\controller.py gui\navigation_params.py gui\dialogs\nav_params_dialog.py gui\modes\navigation_mode.py` 通过；`git diff --check` 无空白错误，仅有既有 CRLF 提示。未跑逻辑测试，等待游戏内通过 `event approach far/approach/settling/ready/released` 日志确认。
+
+**CODEBASE.md 更新内容：** §15 事件四阶段方法论补充事件靠近门控；新增 §19 事件靠近停稳层，记录模块职责、执行链路、关键参数和风险。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/navigation_tasks/event_approach.py` | PENDING | (partial) | 1 | 新增事件靠近门控，确认远距离锚点导航、真实视野内直接 A*、停稳释放三个阶段。 |
+| `core/navigation_tasks/controller.py` | (partial) | (partial) | 追加 | 事件 handler 前新增 approach gate，COMPLETE/FAIL 会清理 released 状态。 |
+| `core/navigation_tasks/movement_executor.py` | (partial) | (partial) | 追加 | `step()` 新增 per-call 点击冷却 override，避免事件近距离节奏影响普通导航。 |
+| `gui/navigation_params.py` | (partial) | (partial) | 追加 | NavConfig 新增事件靠近参数和 config.json 序列化。 |
+| `gui/dialogs/nav_params_dialog.py` | (partial) | (partial) | 追加 | 参数面板新增“事件靠近”页，暴露真实视野边距、lookahead、冷却、停靠/停稳参数。 |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | 追加 | `_configure_navigation_task_controller()` 同步事件靠近配置；事件测试重置会清空 approach runtime。 |
+## [SYNC] 2026-05-25 20:45 - Portal minimap detection default
+
+### A. SYNC scope
+**Task:** Diagnose why portal minimap events no longer appear on the current map/session after recent navigation and event changes.
+**Direct files changed:** `core/events/config.py`, `core/events/types/portal/config.py`, `core/events/types/portal/definition.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** New maps without `event_config.json` now use the portal blue-body feature matcher by default; the old gray/edge full-template matcher remains the fallback. Existing saved configs with explicit `feature_detector_enabled=false` still keep that override.
+
+### C. SYNC result
+**Root cause:** (verified) Latest `logs/event_runtime.log` repeatedly showed `portal minimap no hits source=template feature_enabled=False` while `feature_blue_pixels` stayed in the configured valid range. A live probe on the same minimap frame showed the full-template path had best score `0.6021`, below runtime threshold `0.74`, but `--portal-feature-detector` found the portal at score `0.9206`.
+**Code change:** `DEFAULT_EVENT_CONFIG["events"]["portal"]["feature_detector_enabled"]` and `PortalEventConfig.feature_detector_enabled` now default to `True`; `PortalEventConfig.from_dict()` also falls back to `True` when the key is absent. The event UI label is now `portal blue feature detector` instead of `experimental feature detector`.
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\config.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\minimap_detector.py core\events\types\portal\minimap_feature_matcher.py` passed. Live probe evidence: template path no accepted hit above `0.74`; feature path accepted hits at `0.9206` and `0.7511`.
+**CODEBASE.md updated:** Portal minimap detection default now states feature-first, template-fallback, with UI kill switch for false positives.
+
+## [SYNC] 2026-05-25 22:27 - Portal minimap shape+color probe
+
+### A. SYNC scope
+**Task:** User asked to replace the loose small-minimap event probe with a shape + color algorithm first, before changing runtime portal detection.
+**Direct files changed:** `core/events/types/portal/minimap_shape_color_matcher.py`, `utils/event_icon_probe.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Adds a stricter probe path for portal minimap recognition. Runtime `PortalMinimapDetector` still uses the existing feature-first/template-fallback logic until the user approves integration.
+
+### C. SYNC result
+**Root cause context:** (verified) The current blue-body feature matcher can over-accept local blue patterns because its validation is mostly blue mask structure and blue-pixel density. A recent false portal around global `(4192,2800)` came from `source=minimap_feature+wall_registration`, so the next probe needs to verify not only blue color but also the portal's white/gray outer ring and combined icon shape.
+
+**Code change:**
+- Added `core/events/types/portal/minimap_shape_color_matcher.py`.
+- Added `--portal-shape-color-detector` to `utils/event_icon_probe.py`.
+- Added probe parameters for HSV blue core, white/gray outer ring, minimum blue/outer/combined shape scores, and minimum outer pixels.
+- Probe output now saves `minimap_portal_shape_blue_mask_*`, `minimap_portal_shape_outer_mask_*`, `minimap_portal_shape_combined_mask_*`, a boxed debug image, and accepted/rejected candidate crops.
+- Candidate scoring combines blue core, outer ring, combined shape, edge, and masked HSV color similarity. Candidate gates record reject reasons such as `score`, `blue_shape`, `outer_shape`, `combined_shape`, `blue_pixels_low/high`, and `outer_pixels_low`.
+- Duplicate merge now sorts by `(accepted, score)` so an accepted candidate is not displaced by a same-location rejected candidate with a higher raw response.
+
+**Verification:**
+- Syntax check passed: `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\types\portal\minimap_shape_color_matcher.py utils\event_icon_probe.py`.
+- Static probe command passed on `D:\ACloud\image\95705f16-9696-402c-b008-82f8f7d87651.png` and `D:\ACloud\image\fd4615e6-a089-403f-b2aa-26fceeafc952.png`.
+- Shape+color result on image 1: accepted one real portal at center `(54,83)` score `0.7522`; rejected the old lower blue false-looking candidate at `(79,117)` score `0.6406` because total score was below threshold.
+- Shape+color result on image 2: accepted two real portals at centers `(258,127)` score `0.8816` and `(281,153)` score `0.8610`; rejected unrelated blue candidates at `(66,68)` and `(54,45)`.
+- Old `--portal-feature-detector` comparison on the same images accepted two candidates on image 1, including the lower blue object that shape+color rejected, confirming the stricter probe reduces this class of false positive.
+- Live one-frame probe saved debug output but found no candidate; this is inconclusive because the current live minimap frame may not contain a portal.
+
+**CODEBASE.md updated:** Added `minimap_shape_color_matcher.py`, updated `event_icon_probe.py` responsibilities, event icon probe flow, portal package notes, and reusable capability list.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `core/events/types/portal/minimap_shape_color_matcher.py` | PENDING | (partial) | 1 | New strict portal minimap probe algorithm; not yet wired into runtime detector. |
+| `utils/event_icon_probe.py` | (partial) | (partial) | appended | Added shape+color probe mode, static/live image support remains unchanged. |
+| `core/events/types/portal/minimap_detector.py` | (partial) | unchanged | appended | Runtime detector intentionally not changed in this round. |
+
+## [SYNC] 2026-05-25 22:40 - Portal detector mode selector
+
+### A. SYNC scope
+**Task:** User approved wiring shape+color into runtime, but explicitly asked not to replace existing algorithms. All current minimap portal algorithms should be selectable from the event manager panel for HITL comparison before convergence.
+**Direct files changed:** `core/events/config.py`, `core/events/types/portal/config.py`, `core/events/types/portal/definition.py`, `core/events/types/portal/minimap_detector.py`, `gui/dialogs/event_manager_dialog.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Portal event detection can be switched between `template`, `feature`, `feature_then_template`, and `shape_color` without changing event memory, localization, navigation, or handler logic.
+
+### C. SYNC result
+**Code change:**
+- `PortalEventConfig` now has `detector_mode`, defaulting to `feature_then_template`.
+- `EventSystemConfig.from_dict()` preserves old saved-map behavior: if old config explicitly has `feature_detector_enabled=false` and no `detector_mode`, it maps to `detector_mode=template`; otherwise absent mode defaults to `feature_then_template`.
+- `PortalEventDefinition.config_schema()` exposes `detector_mode` as a choice field in the event manager. `feature_detector_enabled` remains in config but is no longer editable in the UI.
+- Added shape+color runtime parameters to the event schema: `shape_outer_sat_max`, `shape_outer_val_min`, `shape_min_blue_score`, `shape_min_outer_score`, `shape_min_shape_score`, and `shape_min_outer_pixels`.
+- `PortalMinimapDetector.detect()` now dispatches by mode:
+  - `template`: old full-image gray/edge template matching only.
+  - `feature`: blue/cyan portal-body feature matcher only.
+  - `feature_then_template`: feature first, then old template fallback.
+  - `shape_color`: strict shape+color matcher only.
+- Runtime logs now include `mode`, shape score fields, and `portal minimap shape-color rejected` when shape+color found candidates but rejected all of them.
+- Event manager summary row now shows `detector_mode` and key shape thresholds.
+
+**Verification:**
+- Compile passed: `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\config.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\minimap_detector.py core\events\types\portal\minimap_shape_color_matcher.py gui\dialogs\event_manager_dialog.py utils\event_icon_probe.py`.
+- Config compatibility check passed:
+  - empty config -> `feature_then_template`
+  - old `feature_detector_enabled=false` -> `template`
+  - old `feature_detector_enabled=true` -> `feature_then_template`
+  - explicit `detector_mode=shape_color` wins even if legacy bool is false
+- Offline detector dispatch on the two saved images passed:
+  - `template`: misses the small image, accepts two portals on the large image.
+  - `feature`: accepts two candidates on the small image including the lower blue false-looking candidate, accepts two portals on the large image.
+  - `feature_then_template`: same as feature on these images because feature hits first.
+  - `shape_color`: accepts one real portal on the small image and two real portals on the large image.
+
+**CODEBASE.md updated:** Portal detector docs now describe selectable modes, shape+color runtime wiring, config compatibility, and new shape thresholds.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `core/events/types/portal/minimap_detector.py` | (partial) | (partial) | appended | Runtime detector now supports four selectable minimap recognition modes. |
+| `core/events/types/portal/config.py` | (partial) | (partial) | appended | Added `detector_mode` and shape+color threshold fields. |
+| `core/events/config.py` | shallow | shallow | appended | Added default detector mode plus legacy config mapping. |
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Summary displays selected detector mode and shape thresholds. |
+
+## [SYNC] 2026-05-25 23:05 - Event manager dialog visibility guard
+
+### A. SYNC scope
+**Task:** User reports that after clicking "测试传送门" and the event finishes, the event manager panel disappears and cannot be reopened from the main UI. Also requested an explanation of current portal recognition algorithms.
+**Direct files changed:** `gui/dialogs/event_manager_dialog.py`, `gui/modes/navigation_mode.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Event manager can be reopened after manual event test, regardless of game-input window mode or previous close/hide state. No change to event detection, movement, or portal handler logic.
+
+### C. SYNC result
+**Root cause hypothesis:** (verified from code shape, not yet HITL confirmed) `EventManagerDialog` was constructed as a child dialog of `NavigationModeWidget`. Manual portal testing enables game-input window mode, removes topmost from the main window and lowers it. A child dialog can follow the parent window into a hidden/non-activatable layer; after that, `show/raise/activateWindow()` on the existing child object may not make it findable.
+
+**Code change:**
+- `EventManagerDialog` now uses `Qt.Tool` and `WA_DeleteOnClose=False`.
+- `NavigationModeWidget` now creates the event dialog through `_ensure_event_dialog()` instead of assuming the original object is always valid.
+- `_ensure_event_dialog()` reconnects signals and rebinds the manual portal test button when needed.
+- `toggle_event_dialog()` ensures the dialog exists before refresh/show.
+- `_show_owned_dialog()` restores minimized state, moves newly shown dialogs near the main window, then calls `show/raise/activateWindow`.
+
+**Verification:** `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\dialogs\event_manager_dialog.py gui\modes\navigation_mode.py` passed. Needs user HITL confirmation after running a manual portal test and reopening "事件管理".
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Dialog is now a tool window and not deleted on close. |
+| `gui/modes/navigation_mode.py` | (partial) | (partial) | appended | Event manager lifecycle now uses ensure/rebind/show guard. |

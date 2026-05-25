@@ -31,6 +31,10 @@ def resolve_map_folder(file_path: str | Path, map_name: str) -> str:
 def load_nav_config(map_folder_path: str) -> tuple[NavConfig, bool]:
     config_path = Path(map_folder_path) / "config.json"
     if not config_path.exists():
+        default_path = default_nav_config_path_from_map_folder(map_folder_path)
+        if default_path.exists():
+            with default_path.open("r", encoding="utf-8") as handle:
+                return NavConfig.from_dict(json.load(handle)), False
         return NavConfig(), False
     with config_path.open("r", encoding="utf-8") as handle:
         return NavConfig.from_dict(json.load(handle)), True
@@ -38,8 +42,49 @@ def load_nav_config(map_folder_path: str) -> tuple[NavConfig, bool]:
 
 def save_nav_config(map_folder_path: str, nav_config: NavConfig) -> None:
     config_path = Path(map_folder_path) / "config.json"
+    existing: dict = {}
+    if config_path.exists():
+        try:
+            with config_path.open("r", encoding="utf-8") as handle:
+                existing = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+    updated = dict(existing)
+    nav_data = nav_config.to_dict()
+    existing_recognizer = dict(existing.get("recognizer_params", {}) or {})
+    existing_recognizer.update(nav_data.pop("recognizer_params", {}) or {})
+    updated.update(nav_data)
+    updated["recognizer_params"] = existing_recognizer
     with config_path.open("w", encoding="utf-8") as handle:
-        json.dump(nav_config.to_dict(), handle, indent=4, ensure_ascii=False)
+        json.dump(updated, handle, indent=4, ensure_ascii=False)
+
+
+def default_nav_config_path_from_file(file_path: str | Path) -> Path:
+    return project_root_from_file(file_path) / "config.json"
+
+
+def default_nav_config_path_from_map_folder(map_folder_path: str | Path) -> Path:
+    return Path(map_folder_path).resolve().parents[1] / "config.json"
+
+
+def save_default_nav_config(file_path: str | Path, nav_config: NavConfig) -> Path:
+    """Merge navigation defaults into the project root config without dropping mapping-only fields."""
+    config_path = default_nav_config_path_from_file(file_path)
+    existing: dict = {}
+    if config_path.exists():
+        with config_path.open("r", encoding="utf-8") as handle:
+            existing = json.load(handle)
+
+    updated = dict(existing)
+    nav_data = nav_config.to_dict()
+    existing_recognizer = dict(existing.get("recognizer_params", {}) or {})
+    existing_recognizer.update(nav_data.pop("recognizer_params", {}) or {})
+    updated.update(nav_data)
+    updated["recognizer_params"] = existing_recognizer
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        json.dump(updated, handle, indent=4, ensure_ascii=False)
+    return config_path
 
 
 def physical_center_from_logical(logical_center, scale: tuple[float, float]) -> tuple[int, int] | None:
@@ -79,4 +124,3 @@ def build_capture_geometry(nav_config: NavConfig | None, capture_center_physical
     }
     player_pos = (rect["width"] // 2, rect["height"] // 2)
     return rect, player_pos, capture_center_physical
-

@@ -1,6 +1,7 @@
 import os
 import cv2
 import numpy as np
+import time
 from core.events.models import FrameRegistration
 from core.navigation_obstacles import derive_navigation_wall_layer
 from .recognizer_optimized import HSVRecognizer
@@ -24,7 +25,11 @@ class NavigationCore:
         self.center_offset_y = center_offset_y
         self.nav_wall_erode_iterations = max(0, int(nav_wall_erode_iterations))
         self.draw_scale = 2.0
+        self.map_draw_scale = self.draw_scale
+        self.wall_match_close_kernel_size = 3
+        self.map_wall_match_close_kernel_size = self.wall_match_close_kernel_size
         self.last_frame_registration = FrameRegistration(valid=False, draw_scale=self.draw_scale)
+        self._last_template_fail_log_ms = 0
         
         if not os.path.exists(self.map_data_path):
             raise FileNotFoundError(f"Map data not found at: {self.map_data_path}")
@@ -67,6 +72,13 @@ class NavigationCore:
         self.relocalize_confidence_threshold = 0.72
         self.relocalize_max_jump = 220.0
         self.local_search_radius = 800
+        self.force_global_relocalization = False
+        self.force_global_relocalization_reason = ""
+        self.visual_check_interval_ms = 800
+        self.visual_check_margin = 140
+        self.visual_check_min_confidence = 0.72
+        self.visual_mismatch_threshold = 24.0
+        self._last_visual_check_ms = 0
         
         # 手动偏移校准
         self.manual_offset = (0, 0)
@@ -125,7 +137,11 @@ class NavigationCore:
             self.canvas_size = int(data['canvas_size']) if 'canvas_size' in data else 10000
             if 'draw_scale' in data:
                 self.draw_scale = float(data['draw_scale'])
+                self.map_draw_scale = self.draw_scale
                 self._clear_frame_registration(0.0, "map_loaded")
+            if 'wall_close_kernel_size' in data:
+                self.wall_match_close_kernel_size = max(1, int(data['wall_close_kernel_size']))
+                self.map_wall_match_close_kernel_size = self.wall_match_close_kernel_size
 
             # 如果有保存的最后位置，可以作为初始猜测 (可选)
             if 'current_pos' in data:
@@ -159,8 +175,33 @@ class NavigationCore:
         # 相反，我们依靠下一帧的 localize 中的局部搜索逻辑来"吸附"到正确位置
         self.prev_mask = None
         self.prev_wall_mask = None
+        self._last_visual_check_ms = 0
         
         print(f"Initial hint set to: {pos}. Waiting for next frame to snap.")
+
+    def request_full_map_localization(self, reason: str = ""):
+        """Force the next frame through the same full-map match path used on navigation start."""
+        self.force_global_relocalization = True
+        self.force_global_relocalization_reason = str(reason or "coordinate_recovery")
+        self.is_localized = False
+        self.prev_mask = None
+        self.prev_wall_mask = None
+        self._last_visual_check_ms = 0
+
+    def request_global_relocalization(self, reason: str = ""):
+        """Backward-compatible name for full-map localization recovery."""
+        self.request_full_map_localization(reason)
+
+    def _is_full_map_localization(self, force_global: bool) -> bool:
+        return bool(force_global) or not (self.is_localized and self.current_pos is not None)
+
+    def _template_match_required_confidence(self, *, full_map: bool) -> float:
+        if full_map:
+            return float(self.confidence_threshold)
+        required_conf = float(self.confidence_threshold)
+        if self.last_good_pos is not None:
+            required_conf = max(required_conf, float(self.relocalize_confidence_threshold))
+        return required_conf
 
     def _estimate_displacement(self, img1, img2):
         """核心相位相关计算 (从 StitcherCore 复用)"""
@@ -181,6 +222,121 @@ class NavigationCore:
             return shift, response
         except:
             return None, 0.0
+
+    def _wall_close_kernel(self):
+        size = max(1, int(getattr(self, "wall_match_close_kernel_size", 3)))
+        if size % 2 == 0:
+            size += 1
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+
+    def _standardize_wall_template(self, wall_mask_scaled):
+        if int(getattr(self, "wall_match_close_kernel_size", 3)) <= 1:
+            return wall_mask_scaled
+        return cv2.morphologyEx(wall_mask_scaled, cv2.MORPH_CLOSE, self._wall_close_kernel())
+
+    def _log_template_match_failure(
+        self,
+        *,
+        max_val,
+        required_conf,
+        full_map_localization,
+        force_global,
+        force_global_reason,
+        wall_mask,
+        wall_mask_scaled,
+        search_area,
+        wall_feature_count,
+    ):
+        now_ms = int(time.monotonic() * 1000)
+        if self._last_template_fail_log_ms and now_ms - self._last_template_fail_log_ms < 1500:
+            return
+        self._last_template_fail_log_ms = now_ms
+        print(
+            "Localization template match failed: "
+            f"conf={float(max_val):.3f}, required={float(required_conf):.3f}, "
+            f"full_map={bool(full_map_localization)}, forced={bool(force_global)}, "
+            f"reason={force_global_reason or 'normal'}, "
+            f"draw_scale={float(self.draw_scale):.3f}, "
+            f"map_draw_scale={float(getattr(self, 'map_draw_scale', self.draw_scale)):.3f}, "
+            f"wall_features={int(wall_feature_count)}, "
+            f"raw_mask={tuple(int(v) for v in wall_mask.shape)}, "
+            f"scaled_mask={tuple(int(v) for v in wall_mask_scaled.shape)}, "
+            f"scaled_features={int(cv2.countNonZero(wall_mask_scaled))}, "
+            f"search={tuple(int(v) for v in search_area.shape)}, "
+            f"close_kernel={int(getattr(self, 'wall_match_close_kernel_size', 3))}"
+        )
+
+    def _visual_check_position(self, wall_mask, player_pos, expected_player_global_pos):
+        """Check whether the current minimap frame best aligns near the tracked global position."""
+        if not self.visual_check_interval_ms:
+            return {}
+        now_ms = int(time.monotonic() * 1000)
+        if self._last_visual_check_ms and now_ms - self._last_visual_check_ms < int(self.visual_check_interval_ms):
+            return {}
+        self._last_visual_check_ms = now_ms
+
+        try:
+            h_raw, w_raw = wall_mask.shape
+            h_scaled = int(h_raw * self.draw_scale)
+            w_scaled = int(w_raw * self.draw_scale)
+            if h_scaled <= 0 or w_scaled <= 0:
+                return {"visual_check": "failed", "visual_fail_reason": "invalid_template_size"}
+
+            wall_mask_scaled = cv2.resize(wall_mask, (w_scaled, h_scaled), interpolation=cv2.INTER_NEAREST)
+            wall_mask_scaled = self._standardize_wall_template(wall_mask_scaled)
+            if wall_mask_scaled.dtype != np.uint8:
+                wall_mask_scaled = wall_mask_scaled.astype(np.uint8)
+
+            player_x_scaled = int(player_pos[0] * self.draw_scale)
+            player_y_scaled = int(player_pos[1] * self.draw_scale)
+            expected_x = float(expected_player_global_pos[0])
+            expected_y = float(expected_player_global_pos[1])
+            expected_left = int(round(expected_x - player_x_scaled))
+            expected_top = int(round(expected_y - player_y_scaled))
+            margin = max(0, int(self.visual_check_margin))
+
+            map_h, map_w = self.wall_layer.shape[:2]
+            x1 = max(0, expected_left - margin)
+            y1 = max(0, expected_top - margin)
+            x2 = min(map_w, expected_left + w_scaled + margin)
+            y2 = min(map_h, expected_top + h_scaled + margin)
+            search_area = self.wall_layer[y1:y2, x1:x2]
+            if search_area.shape[0] < h_scaled or search_area.shape[1] < w_scaled:
+                return {"visual_check": "failed", "visual_fail_reason": "search_area_too_small"}
+            if search_area.dtype != np.uint8:
+                search_area = search_area.astype(np.uint8)
+
+            result = cv2.matchTemplate(search_area, wall_mask_scaled, cv2.TM_CCOEFF_NORMED)
+            if result.size <= 0:
+                return {"visual_check": "failed", "visual_fail_reason": "empty_result"}
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            best_left = int(x1 + max_loc[0])
+            best_top = int(y1 + max_loc[1])
+            best_player = (float(best_left + player_x_scaled), float(best_top + player_y_scaled))
+            delta = (best_player[0] - expected_x, best_player[1] - expected_y)
+            delta_dist = float(np.hypot(delta[0], delta[1]))
+
+            expected_score = None
+            expected_rx = expected_left - x1
+            expected_ry = expected_top - y1
+            if 0 <= expected_rx < result.shape[1] and 0 <= expected_ry < result.shape[0]:
+                expected_score = float(result[expected_ry, expected_rx])
+
+            mismatch = (
+                float(max_val) >= float(self.visual_check_min_confidence)
+                and delta_dist >= float(self.visual_mismatch_threshold)
+            )
+            return {
+                "visual_check": "ok",
+                "visual_conf": float(max_val),
+                "visual_expected_score": expected_score,
+                "visual_player": best_player,
+                "visual_delta": (float(delta[0]), float(delta[1])),
+                "visual_delta_dist": delta_dist,
+                "visual_mismatch": bool(mismatch),
+            }
+        except Exception as exc:
+            return {"visual_check": "failed", "visual_fail_reason": str(exc)}
 
     def localize(self, minimap_img, player_pos=None):
         """
@@ -223,6 +379,8 @@ class NavigationCore:
             
         # 检查特征是否足够 (如果全是黑的，匹配也没意义)
         self.last_player_local_pos = player_pos
+        force_global = bool(self.force_global_relocalization)
+        force_global_reason = str(self.force_global_relocalization_reason or "")
 
         match_feature_count = cv2.countNonZero(match_mask)
         wall_feature_count = cv2.countNonZero(wall_mask)
@@ -232,9 +390,14 @@ class NavigationCore:
             self._clear_frame_registration(0.0, "low_features")
             return None, None, 0.0
 
+        if force_global:
+            self.force_global_relocalization = False
+            self.force_global_relocalization_reason = ""
+        full_map_localization = self._is_full_map_localization(force_global)
+
         # === 策略分支 ===
         # 如果已经定位且有上一帧，优先使用 F2F 跟踪 (响应最快)
-        if self.is_localized and self.prev_wall_mask is not None and self.current_pos is not None:
+        if not force_global and self.is_localized and self.prev_wall_mask is not None and self.current_pos is not None:
             shift, qual = self._estimate_displacement(self.prev_wall_mask, wall_mask)
             if shift is not None:
                 dx, dy = shift
@@ -270,13 +433,18 @@ class NavigationCore:
                 self.last_good_pos = self.current_pos
                 self.prev_mask = match_mask
                 self.prev_wall_mask = wall_mask
+                metadata = {
+                    "shift": (float(dx), float(dy)),
+                    "shift_dist": float(shift_dist),
+                }
+                metadata.update(self._visual_check_position(wall_mask, player_pos, self.current_pos))
                 self._set_frame_registration(
                     self.current_pos,
                     player_pos,
                     minimap_img.shape,
                     qual,
                     "f2f",
-                    {"shift": (float(dx), float(dy)), "shift_dist": float(shift_dist)},
+                    metadata,
                 )
 
                 return self.current_pos[0], self.current_pos[1], qual
@@ -288,7 +456,7 @@ class NavigationCore:
         search_area = self.wall_layer
         top_left_offset = (0, 0) # 搜索区域在全局地图中的偏移
         
-        if self.is_localized and self.current_pos is not None:
+        if not full_map_localization:
             # 局部搜索模式 (Hint Mode 或 F2F 丢失后的恢复)
             cx, cy = int(self.current_pos[0]), int(self.current_pos[1])
             r = self.local_search_radius
@@ -329,8 +497,7 @@ class NavigationCore:
             wall_mask_scaled = cv2.resize(wall_mask, (w_scaled, h_scaled), interpolation=cv2.INTER_NEAREST)
             
             # 简单的形态学处理 (与 StitcherCore 保持一致)
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            wall_mask_scaled = cv2.morphologyEx(wall_mask_scaled, cv2.MORPH_CLOSE, kernel)
+            wall_mask_scaled = self._standardize_wall_template(wall_mask_scaled)
             
             # 类型转换
             if search_area.dtype != np.uint8:
@@ -351,9 +518,7 @@ class NavigationCore:
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             # 4. 解析结果
-            required_conf = self.confidence_threshold
-            if self.last_good_pos is not None:
-                required_conf = max(required_conf, self.relocalize_confidence_threshold)
+            required_conf = self._template_match_required_confidence(full_map=full_map_localization)
 
             if max_val >= required_conf:
                 # max_loc 是在 search_area 中的坐标 (x, y)
@@ -366,7 +531,7 @@ class NavigationCore:
 
                 if self.last_good_pos is not None:
                     jump = np.hypot(center_x - self.last_good_pos[0], center_y - self.last_good_pos[1])
-                    if jump > self.relocalize_max_jump and max_val < 0.9:
+                    if jump > self.relocalize_max_jump and max_val < 0.9 and not full_map_localization:
                         print(
                             f"Relocalization rejected: jump={jump:.1f}px, conf={max_val:.2f}, "
                             f"last_good=({self.last_good_pos[0]:.1f}, {self.last_good_pos[1]:.1f})"
@@ -413,11 +578,24 @@ class NavigationCore:
                             int(top_left_offset[1] + max_loc[1]),
                         ),
                         "search_offset": (int(top_left_offset[0]), int(top_left_offset[1])),
+                        "forced_global": bool(force_global),
+                        "forced_reason": force_global_reason,
                     },
                 )
 
                 return center_x, center_y, max_val
             else:
+                self._log_template_match_failure(
+                    max_val=max_val,
+                    required_conf=required_conf,
+                    full_map_localization=full_map_localization,
+                    force_global=force_global,
+                    force_global_reason=force_global_reason,
+                    wall_mask=wall_mask,
+                    wall_mask_scaled=wall_mask_scaled,
+                    search_area=search_area,
+                    wall_feature_count=wall_feature_count,
+                )
                 # 匹配失败
                 # 如果是局部搜索失败，下次应该尝试全局搜索
                 if self.is_localized:

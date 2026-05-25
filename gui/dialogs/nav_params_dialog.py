@@ -21,7 +21,7 @@ import dataclasses
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QGroupBox, QFormLayout, QGridLayout, QHBoxLayout,
     QApplication, QPushButton, QLabel, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QLineEdit, QWidget
+    QLineEdit, QWidget, QTabWidget
 )
 from PySide6.QtCore import Qt, Signal, QSignalBlocker
 
@@ -57,6 +57,7 @@ class NavParametersDialog(QDialog):
     parameters_changed = Signal(NavConfig)
     # 保存请求信号，当用户点击保存按钮时发出
     save_requested = Signal()
+    save_default_requested = Signal()
 
     def __init__(self, parent=None):
         """
@@ -93,6 +94,28 @@ class NavParametersDialog(QDialog):
         """
         # 创建主布局
         dialog_layout = QVBoxLayout(self)
+        self.nav_tabs = QTabWidget()
+        dialog_layout.addWidget(self.nav_tabs, 1)
+
+        positioning_tab = QWidget()
+        positioning_layout = QVBoxLayout(positioning_tab)
+        recognition_tab = QWidget()
+        recognition_layout = QVBoxLayout(recognition_tab)
+        movement_tab = QWidget()
+        movement_layout = QVBoxLayout(movement_tab)
+        path_tab = QWidget()
+        path_layout = QVBoxLayout(path_tab)
+        event_tab = QWidget()
+        event_layout = QVBoxLayout(event_tab)
+        map_tab = QWidget()
+        map_layout = QVBoxLayout(map_tab)
+
+        self.nav_tabs.addTab(positioning_tab, "定位识别")
+        self.nav_tabs.addTab(recognition_tab, "识别算法")
+        self.nav_tabs.addTab(movement_tab, "移动点击")
+        self.nav_tabs.addTab(path_tab, "路径/A*")
+        self.nav_tabs.addTab(event_tab, "事件靠近")
+        self.nav_tabs.addTab(map_tab, "地图/调试")
 
         # ==================== 可调节参数区域 ====================
         # 创建识别参数组，用于设置 HSV 颜色识别范围
@@ -115,7 +138,7 @@ class NavParametersDialog(QDialog):
         hsv_layout.addRow("玩家 HSV Min:", self.nav_player_hsv_min_edit)
         hsv_layout.addRow("玩家 HSV Max:", self.nav_player_hsv_max_edit)
 
-        dialog_layout.addWidget(adjustable_group)
+        positioning_layout.addWidget(adjustable_group)
 
         # ==================== 算法开关区域 ====================
         # 创建算法开关组，用于启用/禁用各种图像处理算法
@@ -142,7 +165,8 @@ class NavParametersDialog(QDialog):
         flags_layout.addWidget(self.nav_chk_sat_filter_enabled, 3, 0)
         flags_layout.addWidget(self.nav_chk_transparent_mode, 3, 1)
 
-        dialog_layout.addWidget(flags_group)
+        positioning_layout.addWidget(flags_group)
+        positioning_layout.addStretch(1)
 
         # ==================== 算法数值区域 ====================
         # 创建算法数值组，用于调节各种算法的参数值
@@ -264,12 +288,18 @@ class NavParametersDialog(QDialog):
         numerical_layout.addRow("K Ratio (兼容):", self.nav_k_ratio_spin)
         numerical_layout.addRow("Y Bias (兼容):", self.nav_y_bias_spin)
 
-        dialog_layout.addWidget(numerical_group)
+        recognition_layout.addWidget(numerical_group)
+        recognition_layout.addStretch(1)
 
         # ==================== 只读信息区域 ====================
-        # 创建地图与运动控制组，显示只读信息和运动控制参数
-        info_group = QGroupBox("地图与运动控制")
-        info_layout = QFormLayout(info_group)
+        screen_group = QGroupBox("屏幕点击映射")
+        screen_layout = QFormLayout(screen_group)
+        obstacle_group = QGroupBox("路径与障碍")
+        obstacle_layout = QFormLayout(obstacle_group)
+        event_group = QGroupBox("事件靠近/停稳")
+        event_form_layout = QFormLayout(event_group)
+        runtime_group = QGroupBox("地图与调试")
+        runtime_layout = QFormLayout(runtime_group)
 
         # 角色屏幕坐标显示（只读）
         self.nav_screen_center_x = QLineEdit("N/A")
@@ -308,6 +338,59 @@ class NavParametersDialog(QDialog):
         self.nav_auto_min_target_delta_spin.setSingleStep(1.0)
         self.nav_auto_min_target_delta_spin.setDecimals(1)
 
+        self.nav_anchor_arrival_radius_spin = QSpinBox()
+        self.nav_anchor_arrival_radius_spin.setRange(4, 200)
+        self.nav_anchor_arrival_radius_spin.setSingleStep(2)
+
+        self.nav_movement_progress_timeout_spin = QSpinBox()
+        self.nav_movement_progress_timeout_spin.setRange(200, 10000)
+        self.nav_movement_progress_timeout_spin.setSingleStep(100)
+
+        self.nav_movement_min_progress_delta_spin = QDoubleSpinBox()
+        self.nav_movement_min_progress_delta_spin.setRange(0.0, 200.0)
+        self.nav_movement_min_progress_delta_spin.setSingleStep(1.0)
+        self.nav_movement_min_progress_delta_spin.setDecimals(1)
+
+        self.nav_movement_max_recover_attempts_spin = QSpinBox()
+        self.nav_movement_max_recover_attempts_spin.setRange(0, 10)
+        self.nav_movement_max_recover_attempts_spin.setSingleStep(1)
+
+        self.nav_movement_path_deviation_threshold_spin = QDoubleSpinBox()
+        self.nav_movement_path_deviation_threshold_spin.setRange(8.0, 400.0)
+        self.nav_movement_path_deviation_threshold_spin.setSingleStep(4.0)
+        self.nav_movement_path_deviation_threshold_spin.setDecimals(1)
+
+        self.nav_event_approach_enabled_chk = QCheckBox("启用事件靠近停稳层")
+
+        self.nav_event_visible_margin_spin = QSpinBox()
+        self.nav_event_visible_margin_spin.setRange(0, 500)
+        self.nav_event_visible_margin_spin.setSingleStep(5)
+
+        self.nav_event_approach_lookahead_spin = QSpinBox()
+        self.nav_event_approach_lookahead_spin.setRange(8, 240)
+        self.nav_event_approach_lookahead_spin.setSingleStep(2)
+
+        self.nav_event_approach_click_cooldown_spin = QSpinBox()
+        self.nav_event_approach_click_cooldown_spin.setRange(120, 3000)
+        self.nav_event_approach_click_cooldown_spin.setSingleStep(50)
+
+        self.nav_event_stop_radius_spin = QSpinBox()
+        self.nav_event_stop_radius_spin.setRange(4, 160)
+        self.nav_event_stop_radius_spin.setSingleStep(2)
+
+        self.nav_event_settle_ms_spin = QSpinBox()
+        self.nav_event_settle_ms_spin.setRange(0, 5000)
+        self.nav_event_settle_ms_spin.setSingleStep(100)
+
+        self.nav_event_stable_frames_spin = QSpinBox()
+        self.nav_event_stable_frames_spin.setRange(1, 20)
+        self.nav_event_stable_frames_spin.setSingleStep(1)
+
+        self.nav_event_max_motion_per_frame_spin = QDoubleSpinBox()
+        self.nav_event_max_motion_per_frame_spin.setRange(0.0, 80.0)
+        self.nav_event_max_motion_per_frame_spin.setSingleStep(1.0)
+        self.nav_event_max_motion_per_frame_spin.setDecimals(1)
+
         self.nav_bottom_click_guard_spin = QSpinBox()
         self.nav_bottom_click_guard_spin.setRange(0, 1200)
         self.nav_bottom_click_guard_spin.setSingleStep(20)
@@ -343,44 +426,153 @@ class NavParametersDialog(QDialog):
         self.nav_fps_spin.setRange(1, 60)
         self.nav_fps_spin.setSingleStep(1)
 
+        self.nav_visual_check_interval_spin = QSpinBox()
+        self.nav_visual_check_interval_spin.setRange(0, 10000)
+        self.nav_visual_check_interval_spin.setSingleStep(100)
+
+        self.nav_visual_check_margin_spin = QSpinBox()
+        self.nav_visual_check_margin_spin.setRange(40, 600)
+        self.nav_visual_check_margin_spin.setSingleStep(10)
+
+        self.nav_visual_match_min_conf_spin = QDoubleSpinBox()
+        self.nav_visual_match_min_conf_spin.setRange(0.1, 0.99)
+        self.nav_visual_match_min_conf_spin.setSingleStep(0.01)
+        self.nav_visual_match_min_conf_spin.setDecimals(2)
+
+        self.nav_visual_mismatch_threshold_spin = QDoubleSpinBox()
+        self.nav_visual_mismatch_threshold_spin.setRange(4.0, 200.0)
+        self.nav_visual_mismatch_threshold_spin.setSingleStep(2.0)
+        self.nav_visual_mismatch_threshold_spin.setDecimals(1)
+
+        self.nav_visual_mismatch_frames_spin = QSpinBox()
+        self.nav_visual_mismatch_frames_spin.setRange(1, 10)
+        self.nav_visual_mismatch_frames_spin.setSingleStep(1)
+
         # 调试幕布切换按钮
         self.nav_toggle_overlay_btn = QPushButton("切换调试幕布")
         self.nav_toggle_overlay_btn.setCheckable(True)
 
         # 将控件添加到布局中
-        info_layout.addRow("角色屏幕坐标 (X/Y):", screen_center_layout)
-        info_layout.addRow("运动映射比例:", self.nav_movement_scale_factor_spin)
-        info_layout.addRow("真实可见范围(地图像素):", self.nav_game_view_map_size_spin)
-        info_layout.addRow("最小点击半径(屏幕像素):", self.nav_movement_min_click_radius_spin)
-        info_layout.addRow("最大点击半径(屏幕像素):", self.nav_movement_max_click_radius_spin)
-        info_layout.addRow("自动点击冷却(ms):", self.nav_auto_click_cooldown_spin)
-        info_layout.addRow("自动点击目标变化阈值:", self.nav_auto_min_target_delta_spin)
-        info_layout.addRow("底部禁点区域(px):", self.nav_bottom_click_guard_spin)
-        info_layout.addRow("A* 墙体侵蚀次数:", self.nav_wall_erode_iterations_spin)
-        info_layout.addRow("A* 起点清空半径(地图像素):", self.nav_path_start_clear_radius_spin)
-        info_layout.addRow("A* 起终点吸附半径(地图像素):", self.nav_path_walkable_snap_radius_spin)
-        info_layout.addRow(self.nav_auto_click_radius_btn)
-        info_layout.addRow("地图精度 (Draw Scale):", self.nav_info_draw_scale)
-        info_layout.addRow("逻辑中心 (建图继承):", self.nav_info_logical_center)
-        info_layout.addRow("截图大小 (建图继承):", self.nav_monitor_size_spin)
-        info_layout.addRow("导航刷新率 (FPS):", self.nav_fps_spin)
-        info_layout.addRow(self.nav_toggle_overlay_btn)
+        self._add_helpful_row(screen_layout, "角色屏幕坐标 (X/Y)", screen_center_layout, "校准后的游戏人物中心屏幕坐标；点击映射以这里为原点。")
+        self._add_helpful_row(screen_layout, "运动映射比例", self.nav_movement_scale_factor_spin, "地图距离换算成屏幕点击距离的倍率；通常只做微调。")
+        self._add_helpful_row(screen_layout, "真实可见范围(地图像素)", self.nav_game_view_map_size_spin, "橙色框大小，表示主画面真实可交互视野，不参与定位。")
+        self._add_helpful_row(screen_layout, "最小点击半径(屏幕像素)", self.nav_movement_min_click_radius_spin, "点击点距离人物中心的下限，避免点得太近不移动。")
+        self._add_helpful_row(screen_layout, "最大点击半径(屏幕像素)", self.nav_movement_max_click_radius_spin, "点击点距离人物中心的上限，避免点到 UI 或视野外。")
+        self._add_helpful_row(screen_layout, "自动点击冷却(ms)", self.nav_auto_click_cooldown_spin, "自动导航两次移动点击之间的最小间隔。")
+        self._add_helpful_row(screen_layout, "自动点击目标变化阈值", self.nav_auto_min_target_delta_spin, "普通路径中子目标变化小于该值时会抑制重复点击；锚点推进阶段会绕过这个抑制。")
+        self._add_helpful_row(screen_layout, "底部禁点区域(px)", self.nav_bottom_click_guard_spin, "屏幕底部禁止点击高度，防止误点技能栏或 UI。")
+        screen_layout.addRow(self.nav_auto_click_radius_btn)
+        movement_layout.addWidget(screen_group)
+        movement_layout.addStretch(1)
 
-        dialog_layout.addWidget(info_group)
+        self._add_helpful_row(obstacle_layout, "A* 墙体侵蚀次数", self.nav_wall_erode_iterations_spin, "仅作用于导航障碍层，让视觉墙体变薄、窄通道更容易通过；不改变定位墙体。")
+        self._add_helpful_row(obstacle_layout, "A* 起点清空半径(地图像素)", self.nav_path_start_clear_radius_spin, "寻路前清空人物附近障碍，避免定位点贴墙时起点被判进墙。")
+        self._add_helpful_row(obstacle_layout, "A* 起终点吸附半径(地图像素)", self.nav_path_walkable_snap_radius_spin, "起点或目标落在障碍附近时，搜索半径内最近可走点。")
+        self._add_helpful_row(obstacle_layout, "锚点到达半径(地图像素)", self.nav_anchor_arrival_radius_spin, "距离当前辅助锚点小于该值时认为锚点已消费并切到下一个锚点。")
+        self._add_helpful_row(obstacle_layout, "卡住判定间隔(ms)", self.nav_movement_progress_timeout_spin, "在该时间内路径进度不足时触发恢复点击；调小会更快脱困。")
+        self._add_helpful_row(obstacle_layout, "最小有效进度(地图像素)", self.nav_movement_min_progress_delta_spin, "卡住判定窗口内至少要前进的路径距离，低于该值认为没有明显移动。")
+        self._add_helpful_row(obstacle_layout, "恢复尝试次数", self.nav_movement_max_recover_attempts_spin, "连续卡住时对当前锚点做侧向探测点击的次数，耗尽后强制重规划。")
+        self._add_helpful_row(obstacle_layout, "路径偏离阈值(地图像素)", self.nav_movement_path_deviation_threshold_spin, "人物离当前规划路径过远时立即重规划。")
+        path_layout.addWidget(obstacle_group)
+        path_layout.addStretch(1)
+
+        self._add_helpful_row(event_form_layout, "启用事件停稳层", self.nav_event_approach_enabled_chk, "启用后事件进入真实视野后先近距离收敛并停稳，再交给事件处理器触发。")
+        self._add_helpful_row(event_form_layout, "真实视野边距(地图像素)", self.nav_event_visible_margin_spin, "事件点进入橙色真实视野框外加该边距后，切换到近距离靠近逻辑。")
+        self._add_helpful_row(event_form_layout, "事件近距离 lookahead", self.nav_event_approach_lookahead_spin, "事件进入真实视野后的 A* 子目标前瞻距离；越小越收敛，越大越快但可能跑过。")
+        self._add_helpful_row(event_form_layout, "事件点击冷却(ms)", self.nav_event_approach_click_cooldown_spin, "事件近距离靠近阶段两次移动点击的最小间隔，调大可减少绕点。")
+        self._add_helpful_row(event_form_layout, "事件停靠半径(地图像素)", self.nav_event_stop_radius_spin, "人物距离事件前停靠点或事件中心小于该值时停止移动点击，开始等待停稳。")
+        self._add_helpful_row(event_form_layout, "停稳等待(ms)", self.nav_event_settle_ms_spin, "到达事件附近后等待多久再允许事件处理器点击或按键。")
+        self._add_helpful_row(event_form_layout, "停稳帧数", self.nav_event_stable_frames_spin, "连续多少帧位移足够小才认为角色已停稳。")
+        self._add_helpful_row(event_form_layout, "停稳最大位移/帧", self.nav_event_max_motion_per_frame_spin, "停稳判断中每帧允许的最大地图位移，过小会等待更久。")
+        event_layout.addWidget(event_group)
+        event_layout.addStretch(1)
+
+        self._add_helpful_row(runtime_layout, "地图精度 (Draw Scale)", self.nav_info_draw_scale, "当前地图绘制缩放，只读；必须与建图数据一致。")
+        self._add_helpful_row(runtime_layout, "逻辑中心 (建图继承)", self.nav_info_logical_center, "小地图截图区域，只读；定位必须与建图环境一致。")
+        self._add_helpful_row(runtime_layout, "截图大小 (建图继承)", self.nav_monitor_size_spin, "定位监视窗口大小，只读；来自建图配置。")
+        self._add_helpful_row(runtime_layout, "导航刷新率 (FPS)", self.nav_fps_spin, "导航循环刷新率；过高会增加 CPU 和点击判断频率。")
+        self._add_helpful_row(runtime_layout, "视觉校验间隔(ms)", self.nav_visual_check_interval_spin, "F2F 跟踪时隔多久用当前截图在大地图附近做一次模板校验；0 表示关闭自动视觉校验。")
+        self._add_helpful_row(runtime_layout, "视觉校验搜索边距", self.nav_visual_check_margin_spin, "围绕当前人物位置的模板搜索边距，越大越能发现偏移但越耗 CPU。")
+        self._add_helpful_row(runtime_layout, "视觉校验最低置信度", self.nav_visual_match_min_conf_spin, "截图贴回大地图的局部匹配分数低于该值时，不把偏移当作有效证据。")
+        self._add_helpful_row(runtime_layout, "视觉偏移阈值(地图像素)", self.nav_visual_mismatch_threshold_spin, "截图最佳贴图位置与当前导航人物点的距离超过该值，才算一次视觉偏移。")
+        self._add_helpful_row(runtime_layout, "视觉偏移连续帧数", self.nav_visual_mismatch_frames_spin, "连续多少次视觉校验都偏移，才触发一次强制重定位。")
+        runtime_layout.addRow(self.nav_toggle_overlay_btn)
+        map_layout.addWidget(runtime_group)
+        map_layout.addStretch(1)
+
+        self._apply_parameter_help()
 
         # ==================== 动作和状态区域 ====================
         # 创建底部动作栏，包含保存按钮和状态标签
         action_layout = QHBoxLayout()
         self.nav_save_btn = QPushButton("保存当前导航参数")
+        self.nav_save_default_btn = QPushButton("保存为默认配置")
         self.nav_status_label = QLabel("参数未加载")
         # 状态标签右对齐
         self.nav_status_label.setAlignment(Qt.AlignRight)
 
         action_layout.addWidget(self.nav_save_btn)
+        action_layout.addWidget(self.nav_save_default_btn)
         # 状态标签使用拉伸因子占据剩余空间
         action_layout.addWidget(self.nav_status_label, 1)
 
         dialog_layout.addLayout(action_layout)
+
+    def _add_helpful_row(self, layout: QFormLayout, label: str, widget, help_text: str):
+        label_widget = QLabel(f"{label}\n{help_text}")
+        label_widget.setWordWrap(True)
+        label_widget.setToolTip(help_text)
+        label_widget.setStyleSheet("QLabel { color: #3f3f3f; }")
+        if hasattr(widget, "setToolTip"):
+            widget.setToolTip(help_text)
+        layout.addRow(label_widget, widget)
+
+    def _apply_parameter_help(self):
+        help_map = {
+            self.nav_wall_hsv_min_edit: "墙体颜色 HSV 下限，影响墙体识别。",
+            self.nav_wall_hsv_max_edit: "墙体颜色 HSV 上限，影响墙体识别。",
+            self.nav_fog_hsv_min_edit: "迷雾颜色 HSV 下限，影响未探索区域识别。",
+            self.nav_fog_hsv_max_edit: "迷雾颜色 HSV 上限，影响未探索区域识别。",
+            self.nav_player_hsv_min_edit: "玩家图标 HSV 下限，影响人物定位。",
+            self.nav_player_hsv_max_edit: "玩家图标 HSV 上限，影响人物定位。",
+            self.nav_chk_enable_wall: "启用后识别墙体并参与建图/导航障碍处理。",
+            self.nav_chk_enable_fog: "启用后识别迷雾或未探索区域。",
+            self.nav_chk_clahe_enabled: "增强小地图局部对比度，过高可能放大噪声。",
+            self.nav_chk_deepen_enabled: "加深颜色差异，便于分离地图要素。",
+            self.nav_chk_gamma_enabled: "调整亮度曲线，适合小地图偏暗或偏亮时使用。",
+            self.nav_chk_tophat_enabled: "突出小地图细小高亮结构。",
+            self.nav_chk_sat_filter_enabled: "按饱和度过滤噪声或 UI 干扰。",
+            self.nav_chk_transparent_mode: "用于透明小地图或低对比度地图的特殊墙体判定。",
+            self.nav_clahe_clip_spin: "CLAHE 对比度限制，越高增强越强。",
+            self.nav_deepen_factor_spin: "颜色深化倍率，影响墙体和背景分离。",
+            self.nav_gamma_value_spin: "Gamma 校正值，影响亮度曲线。",
+            self.nav_tophat_strength_spin: "顶帽结果叠加强度，影响细节突出程度。",
+            self.nav_tophat_kernel_size_spin: "顶帽形态学核大小，需为奇数更稳定。",
+            self.nav_sat_filter_thresh_spin: "饱和度过滤阈值，低饱和区域会被压制。",
+            self.nav_edge_low_spin: "Canny 边缘低阈值。",
+            self.nav_edge_high_spin: "Canny 边缘高阈值。",
+            self.nav_blue_boost_spin: "蓝色通道增强倍率。",
+            self.nav_trans_sat_penalty_spin: "透明模式下低饱和区域惩罚强度。",
+            self.nav_trans_wall_thresh_spin: "透明模式墙体判定阈值。",
+            self.nav_sat_filter_radius_spin: "饱和度过滤的局部半径。",
+            self.nav_wall_weight_spin: "墙体颜色结果权重。",
+            self.nav_edge_weight_spin: "边缘检测结果权重。",
+            self.nav_clahe_grid_spin: "CLAHE 分块网格大小。",
+            self.nav_kernel_small_spin: "小形态学核大小，用于轻量开闭运算。",
+            self.nav_kernel_medium_spin: "中形态学核大小，用于更强的连通/去噪。",
+            self.nav_k_ratio_spin: "兼容旧配置，不作为当前定位修正依据。",
+            self.nav_y_bias_spin: "兼容旧配置，不作为当前定位修正依据。",
+            self.nav_event_approach_enabled_chk: "事件近距离靠近和停稳门控的总开关。",
+            self.nav_event_visible_margin_spin: "真实视野框额外边距，影响事件从远距离导航切入近距离收敛的时机。",
+            self.nav_event_approach_lookahead_spin: "事件近距离阶段的路径前瞻距离。",
+            self.nav_event_approach_click_cooldown_spin: "事件近距离阶段的点击节流。",
+            self.nav_event_stop_radius_spin: "事件触发前停止移动点击的半径。",
+            self.nav_event_settle_ms_spin: "事件触发前等待停稳的时间。",
+            self.nav_event_stable_frames_spin: "事件触发前要求的连续稳定帧数。",
+            self.nav_event_max_motion_per_frame_spin: "事件停稳判定允许的最大单帧位移。",
+        }
+        for widget, help_text in help_map.items():
+            widget.setToolTip(help_text)
 
     def _connect_signals(self):
         """
@@ -433,10 +625,28 @@ class NavParametersDialog(QDialog):
             self.nav_movement_max_click_radius_spin: (None, "movement_max_click_radius"),
             self.nav_auto_click_cooldown_spin: (None, "auto_click_cooldown_ms"),
             self.nav_auto_min_target_delta_spin: (None, "auto_min_click_target_delta"),
+            self.nav_anchor_arrival_radius_spin: (None, "anchor_arrival_radius"),
+            self.nav_movement_progress_timeout_spin: (None, "movement_progress_timeout_ms"),
+            self.nav_movement_min_progress_delta_spin: (None, "movement_min_progress_delta"),
+            self.nav_movement_max_recover_attempts_spin: (None, "movement_max_recover_attempts"),
+            self.nav_movement_path_deviation_threshold_spin: (None, "movement_path_deviation_threshold"),
+            self.nav_event_approach_enabled_chk: (None, "event_approach_enabled"),
+            self.nav_event_visible_margin_spin: (None, "event_visible_margin"),
+            self.nav_event_approach_lookahead_spin: (None, "event_approach_lookahead"),
+            self.nav_event_approach_click_cooldown_spin: (None, "event_approach_click_cooldown_ms"),
+            self.nav_event_stop_radius_spin: (None, "event_stop_radius"),
+            self.nav_event_settle_ms_spin: (None, "event_settle_ms"),
+            self.nav_event_stable_frames_spin: (None, "event_stable_frames"),
+            self.nav_event_max_motion_per_frame_spin: (None, "event_max_motion_per_frame"),
             self.nav_bottom_click_guard_spin: (None, "bottom_click_guard_pixels"),
             self.nav_wall_erode_iterations_spin: (None, "nav_wall_erode_iterations"),
             self.nav_path_start_clear_radius_spin: (None, "path_start_clear_radius"),
             self.nav_path_walkable_snap_radius_spin: (None, "path_walkable_snap_radius"),
+            self.nav_visual_check_interval_spin: (None, "coordinate_visual_check_interval_ms"),
+            self.nav_visual_check_margin_spin: (None, "coordinate_visual_check_margin"),
+            self.nav_visual_match_min_conf_spin: (None, "coordinate_visual_match_min_confidence"),
+            self.nav_visual_mismatch_threshold_spin: (None, "coordinate_visual_mismatch_threshold"),
+            self.nav_visual_mismatch_frames_spin: (None, "coordinate_visual_mismatch_frames"),
             self.nav_fps_spin: (None, "fps"),
         }
 
@@ -466,6 +676,7 @@ class NavParametersDialog(QDialog):
         # Action buttons are not disconnected by set_config_to_ui(), so connect them once.
         if not self._action_buttons_connected:
             self.nav_save_btn.clicked.connect(self.save_requested)
+            self.nav_save_default_btn.clicked.connect(self.save_default_requested)
             self.nav_auto_click_radius_btn.clicked.connect(self._auto_estimate_click_radius)
             self._action_buttons_connected = True
         self._signals_connected = True
@@ -640,10 +851,28 @@ class NavParametersDialog(QDialog):
         self.nav_movement_max_click_radius_spin.setValue(config.movement_max_click_radius)
         self.nav_auto_click_cooldown_spin.setValue(config.auto_click_cooldown_ms)
         self.nav_auto_min_target_delta_spin.setValue(config.auto_min_click_target_delta)
+        self.nav_anchor_arrival_radius_spin.setValue(config.anchor_arrival_radius)
+        self.nav_movement_progress_timeout_spin.setValue(config.movement_progress_timeout_ms)
+        self.nav_movement_min_progress_delta_spin.setValue(config.movement_min_progress_delta)
+        self.nav_movement_max_recover_attempts_spin.setValue(config.movement_max_recover_attempts)
+        self.nav_movement_path_deviation_threshold_spin.setValue(config.movement_path_deviation_threshold)
+        self.nav_event_approach_enabled_chk.setChecked(config.event_approach_enabled)
+        self.nav_event_visible_margin_spin.setValue(config.event_visible_margin)
+        self.nav_event_approach_lookahead_spin.setValue(config.event_approach_lookahead)
+        self.nav_event_approach_click_cooldown_spin.setValue(config.event_approach_click_cooldown_ms)
+        self.nav_event_stop_radius_spin.setValue(config.event_stop_radius)
+        self.nav_event_settle_ms_spin.setValue(config.event_settle_ms)
+        self.nav_event_stable_frames_spin.setValue(config.event_stable_frames)
+        self.nav_event_max_motion_per_frame_spin.setValue(config.event_max_motion_per_frame)
         self.nav_bottom_click_guard_spin.setValue(config.bottom_click_guard_pixels)
         self.nav_wall_erode_iterations_spin.setValue(config.nav_wall_erode_iterations)
         self.nav_path_start_clear_radius_spin.setValue(config.path_start_clear_radius)
         self.nav_path_walkable_snap_radius_spin.setValue(config.path_walkable_snap_radius)
+        self.nav_visual_check_interval_spin.setValue(config.coordinate_visual_check_interval_ms)
+        self.nav_visual_check_margin_spin.setValue(config.coordinate_visual_check_margin)
+        self.nav_visual_match_min_conf_spin.setValue(config.coordinate_visual_match_min_confidence)
+        self.nav_visual_mismatch_threshold_spin.setValue(config.coordinate_visual_mismatch_threshold)
+        self.nav_visual_mismatch_frames_spin.setValue(config.coordinate_visual_mismatch_frames)
 
         # 更新角色屏幕坐标显示
         if config.game_screen_center:

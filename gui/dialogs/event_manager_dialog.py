@@ -34,6 +34,8 @@ class EventManagerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("事件管理")
         self.setModal(False)
+        self.setWindowFlags(self.windowFlags() | Qt.Tool)
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
         self.resize(900, 680)
 
         self.registry = None
@@ -347,7 +349,17 @@ class EventManagerDialog(QDialog):
     def _format_current_values(self, values: dict) -> str:
         keys = [
             "interaction",
+            "detector_mode",
             "minimap_threshold",
+            "max_candidates",
+            "min_blue_ratio",
+            "feature_sat_min",
+            "feature_val_min",
+            "feature_min_blue_pixels",
+            "shape_min_outer_score",
+            "shape_min_shape_score",
+            "shape_signature_min_edge_score",
+            "shape_signature_min_color_score",
             "stable_frames",
             "arrival_radius",
             "interact_radius",

@@ -22,6 +22,7 @@ class MovementExecutor:
         click_cooldown_ms: int = 260,
         min_click_target_delta: float = 8.0,
         arrival_radius: float = 26.0,
+        anchor_arrival_radius: float | None = None,
         path_deviation_threshold: float = 96.0,
         min_progress_delta: float = 12.0,
         progress_timeout_ms: int = 1800,
@@ -30,6 +31,7 @@ class MovementExecutor:
         self.click_cooldown_ms = int(click_cooldown_ms)
         self.min_click_target_delta = float(min_click_target_delta)
         self.arrival_radius = float(arrival_radius)
+        self.anchor_arrival_radius = float(anchor_arrival_radius if anchor_arrival_radius is not None else arrival_radius)
         self.path_deviation_threshold = float(path_deviation_threshold)
         self.min_progress_delta = float(min_progress_delta)
         self.progress_timeout_ms = int(progress_timeout_ms)
@@ -51,6 +53,9 @@ class MovementExecutor:
         self.last_progress_ms = 0
         self.recover_attempts = 0
         self.probe_index = 0
+        self.force_replan = False
+        self.final_goal_key: tuple[int, int] | None = None
+        self.final_goal_since_ms = 0
 
     def step(
         self,
@@ -66,6 +71,7 @@ class MovementExecutor:
         route_context=None,
         soft_anchors=None,
         force_repeat_click: bool = False,
+        click_cooldown_ms: int | None = None,
     ) -> MovementStep | None:
         current = _float_point(current_pos)
         target = _float_point(target_pos)
@@ -110,11 +116,35 @@ class MovementExecutor:
         self.subgoal = _float_point(subgoal)
 
         deviation = float(projection["distance_to_path"])
-        cooldown_ready = self.last_click_ms == 0 or int(now_ms) - self.last_click_ms >= self.click_cooldown_ms
-        stuck = self._is_stuck(float(projection["distance"]), int(now_ms))
+        final_goal_click = self._should_use_exact_path_goal_click(current)
+        base_click_cooldown_ms = (
+            self.click_cooldown_ms
+            if click_cooldown_ms is None
+            else max(0, int(click_cooldown_ms))
+        )
+        if final_goal_click:
+            self.subgoal = _float_point(self.path_goal)
+            goal_key = _int_point(self.subgoal)
+            if self.final_goal_key != goal_key:
+                self.final_goal_key = goal_key
+                self.final_goal_since_ms = int(now_ms)
+            # Near an anchor, normal movement clicks are too large because the
+            # screen min radius is applied later. Click the mapped anchor point
+            # and give the character a short settle window before any recovery.
+            effective_cooldown_ms = max(base_click_cooldown_ms, 650)
+        else:
+            self.final_goal_key = None
+            self.final_goal_since_ms = 0
+            effective_cooldown_ms = base_click_cooldown_ms
+
+        cooldown_ready = self.last_click_ms == 0 or int(now_ms) - self.last_click_ms >= effective_cooldown_ms
+        suppress_recovery = final_goal_click and int(now_ms) - int(self.final_goal_since_ms) < 2200
+        stuck = False if suppress_recovery else self._is_stuck(float(projection["distance"]), int(now_ms))
         recovery_subgoal = None
+        stuck_replan_requested = False
         if stuck and cooldown_ready and self.recover_attempts < self.max_recover_attempts:
-            recovery_subgoal = self._recovery_probe(current, target, attempt=self.recover_attempts)
+            recovery_target = self._active_recovery_target(target)
+            recovery_subgoal = self._recovery_probe(current, recovery_target, attempt=self.recover_attempts)
             self.subgoal = _float_point(recovery_subgoal)
             self.recover_attempts += 1
             nav_log(
@@ -123,16 +153,18 @@ class MovementExecutor:
                 attempt=self.recover_attempts,
                 player=_int_point(current),
                 target=_int_point(target),
+                recovery_target=_int_point(recovery_target),
                 subgoal=_int_point(self.subgoal),
                 path_kind=self.path_kind,
                 progress=round(float(projection["distance"]), 1),
                 deviation=round(float(deviation), 1),
             )
         elif stuck and cooldown_ready:
-            self.last_plan_ms = 0
+            self.force_replan = True
             self.last_progress_value = None
             self.last_progress_ms = int(now_ms)
             self.recover_attempts = 0
+            stuck_replan_requested = True
             nav_log(
                 "nav movement stuck replan",
                 task=task_id,
@@ -148,20 +180,40 @@ class MovementExecutor:
             if self.last_click_target is None
             else point_distance(self.last_click_target, self.subgoal)
         )
+        active_goal_pending = self._active_path_goal_pending(current)
+        can_use_regular_click = (
+            not stuck_replan_requested
+            and (
+                bool(force_repeat_click)
+                or final_goal_click
+                or active_goal_pending
+                or self.last_click_target is None
+                or target_delta >= self.min_click_target_delta
+                or deviation >= self.path_deviation_threshold * 0.5
+            )
+        )
         should_click = cooldown_ready and (
             recovery_subgoal is not None
-            or
-            bool(force_repeat_click)
-            or self.last_click_target is None
-            or target_delta >= self.min_click_target_delta
-            or deviation >= self.path_deviation_threshold * 0.5
+            or can_use_regular_click
         )
+        if final_goal_click and should_click:
+            nav_log(
+                "nav movement exact path-goal click",
+                task=task_id,
+                path_kind=self.path_kind,
+                player=_int_point(current),
+                path_goal=_int_point(self.path_goal),
+                distance=round(float(point_distance(current, self.path_goal)), 1),
+                arrival_radius=round(float(self.anchor_arrival_radius), 1),
+                cooldown_ms=effective_cooldown_ms,
+            )
 
         return MovementStep(
             path=list(self.path),
             subgoal=self.subgoal,
             path_kind=self.path_kind,
             should_click=bool(should_click),
+            force_click_target=bool(final_goal_click and recovery_subgoal is None),
             deviation=deviation,
             reason="move along shared executor",
             task_id=str(task_id),
@@ -187,11 +239,11 @@ class MovementExecutor:
     ) -> None:
         target = _float_point(target_pos)
         target_changed = self.target is None or point_distance(self.target, target) > 12.0
-        needs_plan = target_changed or not self.path or len(self.path) < 2
+        needs_plan = self.force_replan or target_changed or not self.path or len(self.path) < 2
 
         if not needs_plan:
             if self.path_kind in {"anchor_step", "anchor_probe", "fallback"} and self.path_goal is not None:
-                if point_distance(current_pos, self.path_goal) <= self.arrival_radius:
+                if point_distance(current_pos, self.path_goal) <= self.anchor_arrival_radius:
                     needs_plan = True
             projection = project_point_onto_path(current_pos, self.path, self.path_lengths)
             if not needs_plan and (projection is None or float(projection["distance_to_path"]) > self.path_deviation_threshold):
@@ -219,10 +271,13 @@ class MovementExecutor:
         self.path_kind = path_kind
         self.path_goal = path[-1] if path else None
         self.last_plan_ms = int(now_ms)
+        self.force_replan = False
         self.subgoal = None
         self.last_progress_value = None
         self.last_progress_ms = int(now_ms)
         self.recover_attempts = 0
+        self.final_goal_key = None
+        self.final_goal_since_ms = 0
         next_anchor = self.path_anchor_points[0] if getattr(self, "path_anchor_points", None) else None
         nav_log(
             "nav movement planned",
@@ -301,12 +356,35 @@ class MovementExecutor:
             anchors = route_context.corridor_anchors(
                 current_pos,
                 target_pos,
-                reached_radius=self.arrival_radius,
-                target_margin=max(36.0, self.arrival_radius),
+                reached_radius=self.anchor_arrival_radius,
+                target_margin=max(36.0, self.anchor_arrival_radius),
             )
             if anchors:
                 return anchors
         return list(soft_anchors or [])
+
+    def _active_path_goal_pending(self, current_pos) -> bool:
+        if self.path_goal is None:
+            return False
+        if self.path_kind not in {"anchor_step", "anchor_probe", "fallback"}:
+            return False
+        return point_distance(current_pos, self.path_goal) > self.anchor_arrival_radius
+
+    def _should_use_exact_path_goal_click(self, current_pos) -> bool:
+        if self.path_goal is None:
+            return False
+        if self.path_kind not in {"anchor_step", "anchor_probe"}:
+            return False
+        distance = point_distance(current_pos, self.path_goal)
+        if distance <= self.anchor_arrival_radius:
+            return False
+        exact_click_radius = max(self.anchor_arrival_radius * 3.0, self.anchor_arrival_radius + 36.0)
+        return distance <= exact_click_radius
+
+    def _active_recovery_target(self, final_target):
+        if self.path_goal is not None and self.path_kind in {"anchor_step", "anchor_probe", "fallback"}:
+            return self.path_goal
+        return final_target
 
     def _local_probe(self, current_pos, target_pos):
         distance = point_distance(current_pos, target_pos)
@@ -356,7 +434,7 @@ class MovementExecutor:
         py = ux
         side_pattern = (-1.0, 1.0, 0.0)
         side = side_pattern[int(attempt) % len(side_pattern)]
-        forward = min(max(self.arrival_radius * 1.6, 36.0), 72.0)
+        forward = min(max(self.anchor_arrival_radius * 1.6, 36.0), 72.0)
         lateral = 58.0 if side else 0.0
         return (
             float(current_pos[0]) + ux * forward + px * side * lateral,

@@ -20,6 +20,7 @@ class PortalEventHandler(EventHandler):
         self.interact_pos = None
         self.interact_signature = None
         self.portal_point_click_ms = None
+        self.teleport_relocalize_requested = False
         self._last_state = None
         self._last_log_ms = 0
 
@@ -30,6 +31,7 @@ class PortalEventHandler(EventHandler):
         self.interact_pos = None
         self.interact_signature = None
         self.portal_point_click_ms = None
+        self.teleport_relocalize_requested = False
         self._last_state = None
         self._last_log_ms = 0
         event_log(
@@ -53,21 +55,21 @@ class PortalEventHandler(EventHandler):
                 )
                 return EventAction.wait(200, reason="portal waiting post-interact settle")
 
-            if self._teleport_completed(tick):
+            completion = self._teleport_completion(tick)
+            if completion is not None:
                 event_log(
                     "portal teleport completed",
                     id=task.id,
                     waited_ms=elapsed_ms,
                     player=tick.player_global_pos,
+                    completion=completion,
                 )
-                metadata = {"entry_pos": task.global_pos}
-                metadata["entry_task_id"] = task.id
-                metadata["completion_kind"] = "teleport"
-                if tick.player_global_pos is not None:
-                    metadata["exit_pos"] = (
-                        int(tick.player_global_pos[0]),
-                        int(tick.player_global_pos[1]),
-                    )
+                metadata = {
+                    "entry_pos": task.global_pos,
+                    "entry_task_id": task.id,
+                    "completion_kind": "teleport",
+                }
+                metadata.update(completion)
                 return EventAction.complete("portal teleport completed", metadata=metadata)
 
             if elapsed_ms >= int(self.config.teleport_timeout_ms):
@@ -86,7 +88,24 @@ class PortalEventHandler(EventHandler):
                 waited_ms=elapsed_ms,
                 player=tick.player_global_pos,
             )
-            return EventAction.wait(250, reason="portal waiting teleport completion")
+            if not self.teleport_relocalize_requested:
+                self.teleport_relocalize_requested = True
+                event_log(
+                    "portal request full-map localization",
+                    id=task.id,
+                    reason="portal_wait_result",
+                    waited_ms=elapsed_ms,
+                    player=tick.player_global_pos,
+                )
+            return EventAction.wait(
+                250,
+                reason="portal waiting teleport completion",
+                metadata={
+                    "force_relocalize": True,
+                    "relocalize_reason": "portal_wait_result",
+                    "relocalize_score": "event",
+                },
+            )
 
         if tick.player_global_pos is None:
             self._log_throttled(tick, "portal waiting localization", id=task.id)
@@ -188,23 +207,16 @@ class PortalEventHandler(EventHandler):
         self.interact_pos = None
         self.interact_signature = None
         self.portal_point_click_ms = None
+        self.teleport_relocalize_requested = False
         self._last_state = None
         self._last_log_ms = 0
 
-    def _teleport_completed(self, tick) -> bool:
+    def _teleport_completion(self, tick) -> dict | None:
         if self.interact_pos is not None and tick.player_global_pos is not None:
             distance = math.hypot(
                 float(tick.player_global_pos[0]) - float(self.interact_pos[0]),
                 float(tick.player_global_pos[1]) - float(self.interact_pos[1]),
             )
-            if distance >= float(self.config.teleport_min_distance):
-                event_log(
-                    "portal teleport position changed",
-                    distance=float(distance),
-                    threshold=int(self.config.teleport_min_distance),
-                )
-                return True
-
             exit_task, exit_distance = self._near_known_exit_portal(tick)
             if exit_task is not None:
                 event_log(
@@ -215,7 +227,24 @@ class PortalEventHandler(EventHandler):
                     exit_distance=float(exit_distance),
                     radius=int(self.config.exit_complete_radius),
                 )
-                return True
+                return {
+                    "completion_reason": "known_exit",
+                    "exit_task_id": getattr(exit_task, "id", None),
+                    "exit_pos": getattr(exit_task, "global_pos", None),
+                    "exit_player_pos": _int_pos(tick.player_global_pos),
+                }
+
+            if distance >= float(self.config.teleport_min_distance):
+                event_log(
+                    "portal teleport position changed",
+                    distance=float(distance),
+                    threshold=int(self.config.teleport_min_distance),
+                )
+                return {
+                    "completion_reason": "position_changed",
+                    "exit_pos": _int_pos(tick.player_global_pos),
+                    "exit_player_pos": _int_pos(tick.player_global_pos),
+                }
 
         current_signature = _minimap_environment_signature(tick.raw_minimap_frame, tick.player_local_minimap_pos)
         if self.interact_signature is not None and current_signature is not None:
@@ -226,8 +255,12 @@ class PortalEventHandler(EventHandler):
                     diff=float(diff),
                     threshold=float(self.config.environment_change_threshold),
                 )
-                return True
-        return False
+                return {
+                    "completion_reason": "environment_changed",
+                    "exit_pos": _int_pos(tick.player_global_pos),
+                    "exit_player_pos": _int_pos(tick.player_global_pos),
+                }
+        return None
 
     def _near_known_exit_portal(self, tick):
         if tick.player_global_pos is None:
@@ -250,14 +283,13 @@ class PortalEventHandler(EventHandler):
                 float(global_pos[0]) - float(tick.player_global_pos[0]),
                 float(global_pos[1]) - float(tick.player_global_pos[1]),
             )
-            entry_distance = 0.0
+            entry_distance = None
             if self.task is not None and getattr(self.task, "global_pos", None) is not None:
                 entry_distance = math.hypot(
                     float(self.task.global_pos[0]) - float(tick.player_global_pos[0]),
                     float(self.task.global_pos[1]) - float(tick.player_global_pos[1]),
                 )
-            closer_margin = max(8.0, float(getattr(self.config, "interact_radius", 36)))
-            if entry_distance > 0.0 and distance + closer_margin >= entry_distance:
+            if entry_distance is not None and distance >= entry_distance:
                 continue
             if distance <= radius and (best_distance is None or distance < best_distance):
                 best_task = task
@@ -303,3 +335,9 @@ def _signature_difference(before: np.ndarray, after: np.ndarray) -> float:
     if before.shape != after.shape:
         return 1.0
     return float(np.mean(np.abs(before - after)))
+
+
+def _int_pos(pos) -> tuple[int, int] | None:
+    if pos is None:
+        return None
+    return (int(pos[0]), int(pos[1]))
