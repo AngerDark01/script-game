@@ -7,6 +7,7 @@ from .models import (
     FrameContext,
     TargetDetection,
 )
+from .profiles import AlgorithmProfile, TargetProfile
 
 __all__ = [
     "BoundingBox",
@@ -14,4 +15,6 @@ __all__ = [
     "DetectionEvidence",
     "FrameContext",
     "TargetDetection",
+    "AlgorithmProfile",
+    "TargetProfile",
 ]
