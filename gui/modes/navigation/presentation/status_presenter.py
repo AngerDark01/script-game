@@ -37,15 +37,21 @@ def show_navigation_runtime_status(
     intent=None,
     event_status: str = "",
 ) -> None:
-    status_label.setText(
-        build_navigation_status_text(
+    status_text = build_navigation_status_text(
+        localized_pos=localized_pos,
+        confidence=confidence,
+        capture_rect=capture_rect,
+        intent=intent,
+        event_status=event_status,
+    )
+    status_label.setText(status_text)
+    if hasattr(status_label, "update_runtime"):
+        activity = event_status or getattr(intent, "message", "") or "跟踪中"
+        status_label.update_runtime(
             localized_pos=localized_pos,
             confidence=confidence,
-            capture_rect=capture_rect,
-            intent=intent,
-            event_status=event_status,
+            activity=activity,
         )
-    )
 
 
 def append_navigation_status_suffix(status_label, suffix: str | None) -> None:

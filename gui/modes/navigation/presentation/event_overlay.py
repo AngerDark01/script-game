@@ -37,7 +37,7 @@ def render_event_overlay(scene, nav_core, event_coordinator, items: list) -> lis
             mapped[1] - radius,
             radius * 2,
             radius * 2,
-            QPen(color, 3),
+            _cosmetic_pen(color, 3),
             QBrush(QColor(color.red(), color.green(), color.blue(), 80)),
         )
         marker.setZValue(6)
@@ -49,6 +49,12 @@ def render_event_overlay(scene, nav_core, event_coordinator, items: list) -> lis
         label.setZValue(6)
         items.append(label)
     return items
+
+
+def _cosmetic_pen(color, width: float) -> QPen:
+    pen = QPen(color, width)
+    pen.setCosmetic(True)
+    return pen
 
 
 def _render_player_center_mask_overlay(scene, nav_core, event_coordinator, items: list) -> None:

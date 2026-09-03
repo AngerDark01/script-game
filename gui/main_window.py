@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from .app_context import AppContext
+from .theme import app_stylesheet
 from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
 
@@ -14,8 +15,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("实时小地图拼接系统")
+        self.setWindowTitle("auto_modules · 实时小地图拼接系统")
         self.setGeometry(80, 80, 1100, 760)
+        self.setMinimumSize(460, 520)
+        self.setStyleSheet(app_stylesheet())
 
         # 1. 创建核心上下文
         self.app_context = AppContext(self)
@@ -36,11 +39,13 @@ class MainWindow(QMainWindow):
         # 模式切换按钮
         mode_layout = QHBoxLayout()
         self.mode_btn_mapping = QPushButton("🗺️ 绘图模式")
+        self.mode_btn_mapping.setProperty("role", "mode")
         self.mode_btn_mapping.setCheckable(True)
         self.mode_btn_mapping.setChecked(True)
         self.mode_btn_mapping.clicked.connect(lambda: self.switch_mode(0))
 
         self.mode_btn_nav = QPushButton("🧭 导航模式")
+        self.mode_btn_nav.setProperty("role", "mode")
         self.mode_btn_nav.setCheckable(True)
         self.mode_btn_nav.clicked.connect(lambda: self.switch_mode(1))
 
@@ -71,7 +76,7 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentIndex(index)
         for i, btn in enumerate(self.mode_buttons):
             btn.setChecked(i == index)
-            btn.setEnabled(i != index)
+            btn.setEnabled(True)
 
         if index == 1:
             self.nav_widget.refresh_map_list()

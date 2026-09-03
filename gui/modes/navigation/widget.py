@@ -230,6 +230,12 @@ class NavigationModeWidget(QWidget):
         self.map_folder_path = map_session.map_folder_path
         self.nav_config = map_session.nav_config
         self.nav_core = map_session.nav_core
+        self.status_label.set_hud_values(
+            map_name=self.map_combo.currentText(),
+            localization="等待定位",
+            confidence=None,
+            activity="地图已加载，可设置起点",
+        )
         self._capture_center_physical = map_session.capture_center_physical
         if hasattr(self, "sample_window_button"):
             self.sample_window_button.setEnabled(True)
