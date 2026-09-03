@@ -10,6 +10,7 @@ from .models import (
 from .profiles import AlgorithmProfile, TargetProfile
 from .registry import AlgorithmRegistry
 from .builtins import create_default_algorithm_registry
+from .pipeline import PerceptionPipeline, PerceptionRunResult
 
 __all__ = [
     "BoundingBox",
@@ -21,4 +22,6 @@ __all__ = [
     "TargetProfile",
     "AlgorithmRegistry",
     "create_default_algorithm_registry",
+    "PerceptionPipeline",
+    "PerceptionRunResult",
 ]
