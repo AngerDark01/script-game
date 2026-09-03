@@ -165,6 +165,13 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Verification: 42 focused provider/template/OCR/algorithm/engine/stage/pipeline tests passed; `compileall -q core/perception` passed. No GUI, capture, mapping, input, navigation, or workflow code changed.
 - P4 remains in progress for shape, feature, and motion adapters. The next slice should select one adapter and retain the same raw-provider-to-target-detection boundary.
 
+### 2026-09-04 - P4 shape adapter slice complete
+
+- `ShapeDetector` is a provider-free OpenCV contour detector. It thresholds a frame, optionally applies morphology, derives external contour geometry, filters by generic area/vertex/circularity/solidity settings, and emits standardized geometry evidence.
+- The default algorithm catalog now marks `shape` available because it uses only the existing OpenCV/NumPy baseline. It exposes editor metadata for thresholding, contour filters, and result limits. It does not modify target-specific Portal/Loot contour logic.
+- Verification: 36 focused shape/color/template/OCR/engine/stage tests passed; `compileall -q core/perception` and `git diff --check` passed.
+- P4 remains in progress for feature and motion adapters. A concrete optional OCR provider is separately being evaluated for fast text-box localization.
+
 ## Audit Notes
 
 - Targeted perception and navigation tests currently pass when run with the project virtual environment.

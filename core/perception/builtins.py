@@ -5,6 +5,7 @@ from typing import Any, Mapping
 from .algorithms.base import AlgorithmDescriptor, ParameterSpec
 from .algorithms.color import ColorRegionDetector
 from .algorithms.ocr_adapter import ProviderBackedOcrDetector
+from .algorithms.shape import ShapeDetector
 from .algorithms.template import TemplateDetector
 from .algorithms.template_adapter import ProviderBackedTemplateDetector
 from .models import CoordinateSpace
@@ -17,7 +18,8 @@ def create_default_algorithm_registry() -> AlgorithmRegistry:
     registry = AlgorithmRegistry()
     registry.register(_color_descriptor(), _create_color)
     registry.register(_template_descriptor(), _create_template)
-    for descriptor in (_shape_descriptor(), _feature_descriptor(), _ocr_descriptor()):
+    registry.register(_shape_descriptor(), _create_shape)
+    for descriptor in (_feature_descriptor(), _ocr_descriptor()):
         registry.register(descriptor, None)
     return registry
 
@@ -30,6 +32,12 @@ def _create_color(parameters: Mapping[str, Any]) -> ColorRegionDetector:
 
 def _create_template(parameters: Mapping[str, Any]) -> TemplateDetector:
     return create_template_detector(parameters)
+
+
+def _create_shape(parameters: Mapping[str, Any]) -> ShapeDetector:
+    values = dict(parameters)
+    target_type = str(values.pop("target_type", "target"))
+    return ShapeDetector(target_type=target_type, parameters=values)
 
 
 def create_template_detector(
@@ -121,9 +129,21 @@ def _shape_descriptor() -> AlgorithmDescriptor:
     return AlgorithmDescriptor(
         "shape",
         "Shape matching",
-        "Reserved for contour and geometric matching.",
+        "Find high-contrast contours selected by generic geometric criteria.",
         (CoordinateSpace.FULL_SCREEN, CoordinateSpace.GAME_WINDOW, CoordinateSpace.VIEWPORT),
-        status="unavailable",
+        (
+            ParameterSpec("threshold", "Gray threshold", "int", 128, 0, 255),
+            ParameterSpec("threshold_mode", "Threshold mode", "choice", "binary", choices=("binary", "binary_inverse")),
+            ParameterSpec("morphology_kernel", "Morphology kernel", "int", 0, 0, 31),
+            ParameterSpec("min_area", "Minimum area", "float", 1.0, 0.0),
+            ParameterSpec("max_area", "Maximum area (0 = unlimited)", "float", 0.0, 0.0),
+            ParameterSpec("min_vertices", "Minimum vertices", "int", 0, 0),
+            ParameterSpec("max_vertices", "Maximum vertices (0 = unlimited)", "int", 0, 0),
+            ParameterSpec("approximation_ratio", "Polygon approximation", "float", 0.02, 0.001, 1.0),
+            ParameterSpec("min_circularity", "Minimum circularity", "float", 0.0, 0.0, 1.0),
+            ParameterSpec("min_solidity", "Minimum solidity", "float", 0.0, 0.0, 1.0),
+            ParameterSpec("max_results", "Maximum results (0 = all)", "int", 0, 0),
+        ),
     )
 
 
