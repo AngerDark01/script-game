@@ -3797,8 +3797,8 @@ This section records the current game-agnostic perception seam. Progress belongs
 ```text
 PerceptionEngine.detect(frame, profile)
   -> DetectorRunner.run(frame, profile)
-  -> AlgorithmRegistry.create(algorithm_id, copied_parameters)
-  -> ColorRegionDetector.detect(frame) or TemplateDetector.detect(frame)
+  -> runtime factory override or AlgorithmRegistry.create(algorithm_id, copied_parameters)
+  -> ColorRegionDetector.detect(frame), TemplateDetector.detect(frame), or a provider-backed adapter
   -> fuse_candidates(candidates, merge_radius)
   -> ConfirmationTracker.observe(profile_key, candidates, required_frames, match_radius)
   -> select_candidate(candidates, strategy, reference)
@@ -3823,9 +3823,11 @@ PerceptionEngine.detect(frame, profile)
 
 `core/perception/algorithms/template_adapter.py` - `ProviderBackedTemplateDetector.__init__(target_type, provider, resource_id, parameters=None)` validates a non-empty resource ID and callable `provider.load`, calls `load(resource_id)` exactly once, requires a `TemplateResource`, stores provider/resource metadata, and constructs the unchanged `TemplateDetector` with only `resource.image`. `detect(frame)` delegates and returns the detector's `TargetDetection` list unchanged, preserving target type, coordinate space, bbox, confidence, source, and evidence. Provider exceptions propagate without path fallback; invalid provider output raises `TypeError`.
 
-`core/perception/algorithms/__init__.py` - Public algorithm package surface. It re-exports descriptor/parameter metadata, color/template detectors, and `ProviderBackedTemplateDetector`; importing it does not instantiate a detector or provider.
+`core/perception/algorithms/ocr_adapter.py` - `ProviderBackedOcrDetector.__init__(target_type, provider, parameters=None)` validates callable `recognize`, requires non-empty `text_query`, validates exact/contains/regex matching, confidence bounds, optional result cap, and optional provider-parameter mapping. `detect(frame)` calls the provider once with a fresh parameter copy, rejects invalid raw output, filters `OcrSpan` text and confidence, ranks matches by confidence, and converts them to geometry-preserving `TargetDetection` values with text, language, raw evidence metadata, capture time, and source `ocr`. Provider errors propagate; target selection, coordinate remapping, capture, GUI, and actions remain outside this module.
 
-`core/perception/builtins.py` - `create_default_algorithm_registry()` registers available color/template factories and explicit unavailable shape/feature/OCR descriptors. `_create_color()` copies parameters and injects `target_type`; `_create_template()` remains the no-provider compatibility wrapper. `create_template_detector(parameters, template_provider=None)` strips the target and resource-source fields, enforces exactly one of in-memory `template`, non-empty `template_path`, or `template_resource_id`, requires an explicit provider only for the resource-ID branch, then returns either unchanged `TemplateDetector` or `ProviderBackedTemplateDetector`. The registry itself remains provider-agnostic.
+`core/perception/algorithms/__init__.py` - Public algorithm package surface. It re-exports descriptor/parameter metadata, color/template detectors, `ProviderBackedTemplateDetector`, and `ProviderBackedOcrDetector`; importing it does not instantiate a detector or provider.
+
+`core/perception/builtins.py` - `create_default_algorithm_registry()` registers available color/template factories and explicit unavailable shape/feature/OCR descriptors. `_create_color()` copies parameters and injects `target_type`; `_create_template()` remains the no-provider compatibility wrapper. `create_template_detector(parameters, template_provider=None)` strips the target and resource-source fields, enforces exactly one of in-memory `template`, non-empty `template_path`, or `template_resource_id`, requires an explicit provider only for the resource-ID branch, then returns either unchanged `TemplateDetector` or `ProviderBackedTemplateDetector`. `create_ocr_detector(parameters, ocr_provider=None)` requires an explicit runtime provider and constructs `ProviderBackedOcrDetector`; its unavailable default descriptor still publishes editor metadata for query, matching, case sensitivity, confidence, and result cap. The registry itself remains provider-agnostic.
 
 `core/perception/registry.py` - `AlgorithmRegistry` owns descriptor/factory maps. `register()` rejects duplicate IDs and missing factories for available algorithms. `descriptor()` reports unknown IDs. `create()` rejects unavailable or factory-less algorithms and passes a deep-copied parameter mapping to the factory.
 
@@ -3849,7 +3851,7 @@ PerceptionEngine.detect(frame, profile)
 
 `core/perception/stages/selection.py` - Pure final-candidate policy. `select_candidate(candidates, strategy="confidence", reference=None)` returns `None` for no candidates; otherwise it keeps original upstream order for `first`, chooses minimum Euclidean center distance for `nearest` with a reference point, falls back to maximum confidence for `nearest` without a reference, and chooses maximum confidence for `confidence`. Any other non-empty strategy raises `ValueError`; it never maps coordinates or performs an action.
 
-`core/perception/engine.py` - Stable target-level `PerceptionEngine` core. The default `detect(frame, profile, reference=None)` validates `FrameContext` and `TargetProfile`, then `_run_stages()` invokes `DetectorRunner`, filters by `min_confidence`, fuses by non-negative `metadata.merge_radius` (default 12), confirms by raw `(game_id, scene_id, target_type)`, selects from confirmed detections, and assembles `PerceptionRunResult`. `__init__(registry=None, pipeline=None, algorithm_factories=None)` supports explicit runtime factory overrides (such as a provider-backed template closure) while rejecting overrides combined with a legacy Pipeline; provider objects never enter profile JSON. `detect_target()` resolves a game/scene/target profile first. `register_profile(profile, replace=False)` derives a stripped non-empty key, rejects accidental duplicates unless replacement is explicit, clears that key's confirmation track on a replacement, and stores `profile.copy()`. `unregister_profile()` also clears its track before returning a defensive copy; `resolve_profile()` raises explicit `KeyError` for unknown keys; `profiles()` returns insertion-ordered copies; `descriptors()` exposes the registry catalog. `reset_confirmation(profile=None)` clears direct tracker state; only an explicitly injected legacy Pipeline delegates to that Pipeline. The core keeps GUI, inputs, and workflows out.
+`core/perception/engine.py` - Stable target-level `PerceptionEngine` core. The default `detect(frame, profile, reference=None)` validates `FrameContext` and `TargetProfile`, then `_run_stages()` invokes `DetectorRunner`, filters by `min_confidence`, fuses by non-negative `metadata.merge_radius` (default 12), confirms by raw `(game_id, scene_id, target_type)`, selects from confirmed detections, and assembles `PerceptionRunResult`. `__init__(registry=None, pipeline=None, algorithm_factories=None)` supports explicit runtime factory overrides (such as provider-backed template or OCR closures) while rejecting overrides combined with a legacy Pipeline; provider objects never enter profile JSON. `detect_target()` resolves a game/scene/target profile first. `register_profile(profile, replace=False)` derives a stripped non-empty key, rejects accidental duplicates unless replacement is explicit, clears that key's confirmation track on a replacement, and stores `profile.copy()`. `unregister_profile()` also clears its track before returning a defensive copy; `resolve_profile()` raises explicit `KeyError` for unknown keys; `profiles()` returns insertion-ordered copies; `descriptors()` exposes the registry catalog. `reset_confirmation(profile=None)` clears direct tracker state; only an explicitly injected legacy Pipeline delegates to that Pipeline. The core keeps GUI, inputs, and workflows out.
 
 `core/spatial/models.py` and `core/spatial/calibration.py` - Explicit coordinate-space DTOs, window rectangles, affine transforms, anchor fitting, and registered mapping. These modules are recognition/action agnostic and currently do not replace `MotionController`.
 
@@ -3861,7 +3863,7 @@ PerceptionEngine.detect(frame, profile)
 
 ### Current risks and next seams
 
-- P2's engine/Pipeline ownership boundary is complete. P3 must add provider contracts without allowing resource acquisition, OCR, or feature backend concerns to leak into the stage APIs.
+- P2's engine/Pipeline ownership boundary is complete. P3 provider contracts and P4 template/OCR adapters preserve the rule that resource acquisition and backend execution do not leak into stage APIs.
 
 ### Perception regression contracts
 
@@ -3870,7 +3872,10 @@ PerceptionEngine.detect(frame, profile)
 `tests/test_perception_engine.py` verifies direct detection, profile key lookup, defensive registration, explicit missing keys, replacement confirmation reset, and the P2 ownership contract: a default engine still produces a selected result when `PerceptionPipeline.run()` is deliberately made unavailable.
 
 `tests/test_perception_pipeline.py` verifies current pipeline outcomes and the P2 compatibility contract: a Pipeline delegates the exact `frame`, `profile`, and `reference=None` to its associated Engine and returns the exact Engine result object.
-- Shape, feature, OCR, motion, and ML have descriptors but no concrete implementation/provider seam.
+
+`tests/test_perception_ocr_adapter.py` verifies provider invocation, exact/contains/regex predicates, confidence and result limits, validation/error propagation, factory and package surfaces, descriptor metadata, and runtime Engine composition without provider serialization.
+
+- Shape, feature, motion, and ML have descriptors but no concrete implementation/provider adapter. OCR has a provider-backed adapter but no bundled OCR backend.
 - The workbench currently calls the compatibility pipeline directly; P6 must route it through `PerceptionEngine`.
 - Runtime screenshot capture, window discovery, anchor calibration, and action mapping are not yet connected to the generic result contract.
 - Legacy Portal/Loot/minimap behavior remains outside this package and must be adapted one target at a time with regression tests.

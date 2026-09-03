@@ -4,10 +4,11 @@ from typing import Any, Mapping
 
 from .algorithms.base import AlgorithmDescriptor, ParameterSpec
 from .algorithms.color import ColorRegionDetector
+from .algorithms.ocr_adapter import ProviderBackedOcrDetector
 from .algorithms.template import TemplateDetector
 from .algorithms.template_adapter import ProviderBackedTemplateDetector
 from .models import CoordinateSpace
-from .providers import TemplateResourceProvider
+from .providers import OcrProvider, TemplateResourceProvider
 from .registry import AlgorithmRegistry
 
 
@@ -61,6 +62,23 @@ def create_template_detector(
     if has_path:
         return TemplateDetector(target_type=target_type, template=template_path, parameters=values)
     raise ValueError("template algorithm requires a template, template_path, or template_resource_id")
+
+
+def create_ocr_detector(
+    parameters: Mapping[str, Any],
+    *,
+    ocr_provider: OcrProvider | None = None,
+) -> ProviderBackedOcrDetector:
+    """Construct an OCR adapter only when an explicit runtime provider is supplied."""
+    if ocr_provider is None:
+        raise ValueError("OCR algorithm requires an explicit ocr_provider")
+    values = dict(parameters)
+    target_type = str(values.pop("target_type", "target"))
+    return ProviderBackedOcrDetector(
+        target_type=target_type,
+        provider=ocr_provider,
+        parameters=values,
+    )
 
 
 def _color_descriptor() -> AlgorithmDescriptor:
@@ -123,7 +141,14 @@ def _ocr_descriptor() -> AlgorithmDescriptor:
     return AlgorithmDescriptor(
         "ocr",
         "OCR",
-        "Reserved for an optional OCR provider.",
+        "Find configured text spans through an optional OCR provider.",
         (CoordinateSpace.FULL_SCREEN, CoordinateSpace.GAME_WINDOW, CoordinateSpace.VIEWPORT),
+        (
+            ParameterSpec("text_query", "Text query", "text", ""),
+            ParameterSpec("match_mode", "Match mode", "choice", "exact", choices=("exact", "contains", "regex")),
+            ParameterSpec("case_sensitive", "Case sensitive", "bool", False),
+            ParameterSpec("min_ocr_confidence", "Minimum OCR confidence", "float", 0.0, 0.0, 1.0),
+            ParameterSpec("max_results", "Maximum results (0 = all)", "int", 0, 0),
+        ),
         status="unavailable",
     )

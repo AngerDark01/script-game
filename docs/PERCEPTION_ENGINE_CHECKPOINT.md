@@ -6,7 +6,7 @@ This document is the recovery point for the reusable perception architecture. Up
 
 - Repository: `auto_modules`
 - Branch: `main`
-- Latest committed perception baseline: `6f60d12 feat: split perception decision stages`
+- Latest committed perception baseline: `ba862b6 feat: add reusable template algorithm adapters`
 - Earlier perception foundation commits: `1afb9f4` through `c6d0698`
 - Current worktree contains unrelated, uncommitted `virtual_gamepad/` changes. Do not mix them into perception commits.
 
@@ -156,6 +156,14 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - `PerceptionEngine` accepts runtime algorithm factory overrides, keeping provider objects outside `TargetProfile` and JSON serialization.
 - Verification: 32 focused provider/template/perception tests passed; package compilation and public import smoke checks passed.
 - P4 remains in progress for future shape, OCR, feature, and motion adapters. Next slice must choose one concrete adapter and retain the same provider/algorithm boundary.
+
+### 2026-09-04 - P4 OCR adapter slice complete
+
+- `ProviderBackedOcrDetector` invokes an explicit `OcrProvider` per frame, filters raw `OcrSpan` values with generic exact, contains, or regular-expression text matching, then emits geometry-preserving `TargetDetection` values.
+- The output retains original text, box, coordinate space, confidence, capture time, language, and raw span details. `min_ocr_confidence` filters spans before candidate fusion; optional `max_results` retains the strongest results, while `0` or omission keeps all matches.
+- `create_ocr_detector()` requires an explicit runtime provider. `PerceptionEngine.algorithm_factories` composes it without serializing the provider into `TargetProfile` JSON. No OCR package or runtime backend is bundled; the default descriptor remains discoverable but unavailable and now exposes generic editor metadata.
+- Verification: 42 focused provider/template/OCR/algorithm/engine/stage/pipeline tests passed; `compileall -q core/perception` passed. No GUI, capture, mapping, input, navigation, or workflow code changed.
+- P4 remains in progress for shape, feature, and motion adapters. The next slice should select one adapter and retain the same raw-provider-to-target-detection boundary.
 
 ## Audit Notes
 
