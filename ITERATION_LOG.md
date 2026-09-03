@@ -2998,3 +2998,56 @@ ext_anchor=(3020,2383) 进入 nchor_probe，说明该辅助锚点 A* 不可达�
 ### Next task
 
 Implement P1: `PerceptionEngine` facade and its contract tests. Write the failing test first, then add the smallest compatibility-backed implementation.
+
+## [P1] 2026-09-03 - Add the perception engine facade
+
+### A. Scope declaration
+
+**Task:** Add a named, GUI-free `PerceptionEngine` entry point that registers and resolves profiles by game/scene/target and delegates one detection call to the current compatibility pipeline.
+
+**Direct files:** `core/perception/engine.py`, `core/perception/__init__.py`, `tests/test_perception_engine.py`.
+
+**Expected impact:** New core API only. Existing `PerceptionPipeline`, Portal/Loot, minimap, navigation, input, and GUI behavior must remain unchanged until the facade tests pass.
+
+### B. Read target
+
+- `core/perception/pipeline.py`: current detector creation, confidence filtering, and fusion implementation retained behind the facade.
+- `core/perception/profiles.py`: immutable game/scene/target profile and copy contract.
+- `core/perception/registry.py`: algorithm catalog and factory seam.
+
+### C. Findings pending implementation
+
+- The engine must own profile lookup and validation rather than expose detector classes to callers.
+- Profile registration must store a defensive copy so later GUI edits cannot mutate the engine's active profile.
+- Missing hierarchy keys should fail explicitly with `KeyError`; direct profile detection should preserve the pipeline's result and error behavior.
+
+### Coverage update
+
+| File | Previous | Current | Reads | Note |
+|---|---|---|---:|---|
+| `core/perception/engine.py` | PENDING | PENDING | 0 | New facade; test contract before implementation. |
+| `core/perception/__init__.py` | partial | partial | 1 | Public export will add `PerceptionEngine`. |
+| `tests/test_perception_engine.py` | PENDING | PENDING | 0 | New contract tests to be written first. |
+
+### Next step
+
+Create the failing P1 tests and record the initial failure before adding any implementation.
+
+### C. P1 result
+
+- Initial test result: failed as expected because `PerceptionEngine` was not exported from `core.perception`.
+- Implementation: added `core/perception/engine.py` and exported `PerceptionEngine` from `core/perception/__init__.py`.
+- Behavior: profile registration, defensive resolution, duplicate rejection, explicit missing-profile errors, and target-level detection are covered.
+- Verification: `tests.test_perception_engine` passed 3/3; `compileall -q core/perception` passed.
+
+### Coverage update
+
+| File | Previous | Current | Reads | Note |
+|---|---|---|---:|---|
+| `core/perception/engine.py` | PENDING | partial | 1 | New facade with profile catalog and target-level detection contract. |
+| `core/perception/__init__.py` | partial | partial | 1 | Exports `PerceptionEngine` without changing existing exports. |
+| `tests/test_perception_engine.py` | PENDING | partial | 1 | Three contract tests cover detect, hierarchy lookup, defensive copy, and errors. |
+
+### Next task
+
+Start P2 by writing failing tests for separate detector runner, fusion, confirmation, and selection stages. Keep `PerceptionPipeline` as a compatibility shell while the engine adopts the new stages.

@@ -50,7 +50,6 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 
 ### Explicitly Missing
 
-- A named, stable `PerceptionEngine` facade.
 - Separate runner, fusion, confirmation, and selection modules.
 - Provider seams for frame input, OCR, template resources, and optional feature backends.
 - Real shape, OCR, feature, and motion implementations or provider contracts.
@@ -62,8 +61,8 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 
 | ID | Task | Status | Commit checkpoint |
 |---|---|---|---|
-| P0 | Checkpoint, plan, and codebase documentation | in progress | `docs: establish perception engine checkpoints` |
-| P1 | Perception engine contract and facade | pending | `feat: add perception engine facade` |
+| P0 | Checkpoint, plan, and codebase documentation | complete | `docs: establish perception engine checkpoints` |
+| P1 | Perception engine contract and facade | complete | `feat: add perception engine facade` |
 | P2 | Detector runner, fusion, confirmation, selection seams | pending | `feat: split perception decision stages` |
 | P3 | Frame/resource/OCR provider contracts | pending | `feat: add perception provider seams` |
 | P4 | Reusable algorithm adapters and capability states | pending | `feat: add perception algorithm adapters` |
@@ -90,6 +89,21 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Decision: introduce a named `PerceptionEngine` and deepen the internal stages behind it.
 - Decision: keep existing minimap-specific code as compatibility adapters until each target has regression coverage.
 - Next: implement P1 with a small public interface and tests before touching GUI or workflows.
+
+### 2026-09-03 - P1 started
+
+- Scope: add the first stable, GUI-free `PerceptionEngine` facade.
+- Contract: profiles are registered and resolved by `(game_id, scene_id, target_type)`; detection accepts a `FrameContext` and `TargetProfile` and returns `PerceptionRunResult`.
+- Compatibility rule: the current `PerceptionPipeline` remains the implementation behind the facade until P2 separates its decision stages.
+- Next: write the contract test, then implement only the facade and package export.
+
+### 2026-09-03 - P1 complete
+
+- Added `core/perception/engine.py` with a stable `PerceptionEngine` facade.
+- The facade registers defensive profile copies by `(game_id, scene_id, target_type)` and resolves them explicitly.
+- `detect()` validates the normalized frame/profile contract and delegates to the compatibility pipeline.
+- Tests: 3 P1 contract tests pass; compile check passes.
+- Next: P2 separates detector execution, fusion, multi-frame confirmation, and candidate selection behind engine-owned stages.
 
 ## Audit Notes
 
