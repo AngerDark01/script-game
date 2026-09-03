@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         self.nav_widget = NavigationModeWidget(self.app_context, self)
         self.stacked_widget.addWidget(self.nav_widget)
 
-        self.perception_button = QPushButton("Perception workbench")
+        self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
         self.perception_button.clicked.connect(self.open_perception_workbench)
         mode_layout.addWidget(self.perception_button)
