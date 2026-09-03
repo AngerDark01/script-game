@@ -3752,6 +3752,90 @@ After the event approach split, `EventApproachController` remains the stable nav
 
 `docs/plans/2026-05-24-coordinate-drift-diagnostics.md` records the current implemented relocalization strategy and the dedicated log events: `coordinate relocalization requested/forced/accepted/rejected`. Fixed global offset parameters remain prohibited.
 
+## 20. Perception Engine Modularization (current foundation)
+
+This section records the current game-agnostic perception seam. Progress belongs in `ITERATION_LOG.md`; this section describes the current code and its contracts.
+
+### C4 Level 1 - System context
+
+```text
++------------------+       +---------------------+       +------------------+
+| GUI / Workbench   | ----> | Perception Engine   | ----> | TargetDetection  |
++------------------+       +---------------------+       +------------------+
+                                      |
+                                      v
+                               CoordinateMapper
+                                      |
+                                      v
+                              Workflow / Action
+```
+
+### C4 Level 2 - Perception modules
+
+```text
++--------------------+     +-------------------+     +----------------------+
+| profiles.py         | --> | registry.py       | --> | pipeline.py          |
+| game/scene/target   |     | descriptor/factory |     | run/fuse candidates  |
++--------------------+     +-------------------+     +----------------------+
+          |                         |                         |
+          v                         v                         v
++--------------------+     +-------------------+     +----------------------+
+| algorithms/base.py  |     | builtins.py       |     | models.py            |
+| parameter metadata  |     | color/template    |     | frame/result/evidence|
++--------------------+     +-------------------+     +----------------------+
+```
+
+### C4 Level 3 - Current call path
+
+```text
+PerceptionWorkbenchDialog.run_detection()
+  -> PerceptionWorkbenchDialog._build_profile()
+  -> PerceptionPipeline.run(frame, profile)
+  -> AlgorithmRegistry.create(algorithm_id, parameters)
+  -> ColorRegionDetector.detect(frame) or TemplateDetector.detect(frame)
+  -> TargetDetection(...)
+  -> _fuse_candidates(candidates, merge_radius)
+  -> PerceptionRunResult(detections, by_algorithm, errors)
+```
+
+### Directory and file index
+
+`core/perception/__init__.py` - Public exports for generic models, profiles, registry, built-in registry factory, pipeline, and run result. It must not import GUI, input, navigation, or game-specific modules.
+
+`core/perception/models.py` - Data-only coordinate spaces, bounding boxes, frame context, evidence, and normalized target detections. `BoundingBox.center` derives a pixel-space center; `BoundingBox.normalized()` validates positive frame dimensions and returns relative rectangle values; dataclass validation rejects empty target types, invalid centers, or confidence outside 0..1.
+
+`core/perception/profiles.py` - Immutable `AlgorithmProfile` and `TargetProfile` configuration objects. `AlgorithmProfile.__post_init__()` validates identifiers and non-negative weight, then copies parameter/metadata dictionaries. `TargetProfile.__post_init__()` validates hierarchy identifiers, confidence range, confirmation frame count, and unique instance IDs. `to_dict()`/`from_dict()` preserve schema version and nested metadata; `copy()` deep-copies mutable descendants.
+
+`core/perception/profile_store.py` - Versioned JSON persistence. `load_target_profile(path)` reads UTF-8 JSON, requires an object, and delegates validation to `TargetProfile.from_dict()`. `save_target_profile(path, profile)` creates the parent directory, writes an indented UTF-8 temporary file, and atomically replaces the destination.
+
+`core/perception/algorithms/base.py` - `ParameterSpec` and `AlgorithmDescriptor` metadata consumed by future GUI adapters. Parameter construction validates supported kinds, numeric ranges, choice defaults, and unique descriptor parameter names. No image processing occurs here.
+
+`core/perception/algorithms/color.py` - `ColorRegionDetector.detect(frame)` converts grayscale/BGR/BGRA input to HSV, builds normal or hue-wrapping masks, optionally applies odd-sized open/close morphology, extracts external contours, filters area, computes fill-ratio confidence, and returns sorted `TargetDetection` values with area evidence. Invalid or empty frames return an empty list.
+
+`core/perception/algorithms/template.py` - `TemplateDetector.detect(frame)` converts input to BGR/gray/edges, iterates configured scales, combines grayscale and edge responses, optionally applies a BGRA alpha mask, extracts thresholded top-k hits with spatial suppression, merges duplicate scales, and returns bbox detections with score evidence. Low-texture templates use normalized squared difference to avoid correlation degeneracy.
+
+`core/perception/builtins.py` - `create_default_algorithm_registry()` registers available color/template factories and explicit unavailable shape/feature/OCR descriptors. Factory functions copy parameters, inject `target_type`, and require a template path for template instances.
+
+`core/perception/registry.py` - `AlgorithmRegistry` owns descriptor/factory maps. `register()` rejects duplicate IDs and missing factories for available algorithms. `descriptor()` reports unknown IDs. `create()` rejects unavailable or factory-less algorithms and passes a deep-copied parameter mapping to the factory.
+
+`core/perception/pipeline.py` - Compatibility execution pipeline. `PerceptionPipeline.run()` skips disabled profiles, creates detectors from the registry, records per-instance exceptions instead of aborting the whole run, filters candidates below `TargetProfile.min_confidence`, and fuses same-type/same-space candidates within configured `merge_radius`. `_merge_pair()` retains the higher-confidence primary result and concatenates evidence/source metadata. This module is scheduled to move behind `PerceptionEngine` and split into runner/fusion/confirmation/selection modules.
+
+`core/spatial/models.py` and `core/spatial/calibration.py` - Explicit coordinate-space DTOs, window rectangles, affine transforms, anchor fitting, and registered mapping. These modules are recognition/action agnostic and currently do not replace `MotionController`.
+
+`gui/dialogs/perception/dialog.py` - PySide6 profile editor and screenshot test bench. It owns editable profile fields, algorithm instance list, generated parameter editor, screenshot loading, engine/pipeline invocation, profile persistence dialogs, and result status. It must remain a GUI adapter and must not become a workflow or input module.
+
+`gui/dialogs/perception/parameter_form.py` - `ParameterEditor` maps `ParameterSpec.kind` to Qt controls and reads values back with explicit bool/choice/int/float/path/text conversions. It contains no core algorithm policy.
+
+`gui/dialogs/perception/preview.py` - `DetectionPreview` paints a pixmap and detection bounding boxes/confidences using source-space to display-space scaling. It does not alter detections or perform coordinate mapping for actions.
+
+### Current risks and next seams
+
+- `PerceptionPipeline` is still a shallow compatibility module: it owns several decisions that should become explicit engine stages.
+- Shape, feature, OCR, motion, and ML have descriptors but no concrete implementation/provider seam.
+- The workbench currently calls the compatibility pipeline directly; P6 must route it through `PerceptionEngine`.
+- Runtime screenshot capture, window discovery, anchor calibration, and action mapping are not yet connected to the generic result contract.
+- Legacy Portal/Loot/minimap behavior remains outside this package and must be adapted one target at a time with regression tests.
+
 ## 19. Event Approach Stabilization
 `core/navigation_tasks/event_approach/__init__.py` is the reusable navigation-layer gate for event trigger positioning. `EventApproachConfig` stores the user-tunable movement contract: `enabled`, `game_view_map_size`, `visible_margin`, `approach_lookahead`, `click_cooldown_ms`, `stop_radius`, `settle_ms`, `stable_frames`, and `max_motion_per_frame`. `EventApproachController.update()` returns an `EventApproachResult`; it now also marks `visible` and one-shot `became_visible` when the selected event task first enters the real-view box. It never calls an event handler directly.
 

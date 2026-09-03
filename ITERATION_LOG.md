@@ -2967,3 +2967,34 @@ ext_anchor=(3020,2383) 进入 nchor_probe，说明该辅助锚点 A* 不可达�
 | `gui/dialogs/color_picker/debug_output.py` | (partial) | (partial) | appended | Confirmed debug output remains gated by existing flag. |
 | `gui/dialogs/color_picker/hsv_ranges.py` | (partial) | (partial) | appended | Revalidated HSV sampling/calculation path through simulated click. |
 | `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated color picker layout/preview/helper architecture. |
+## [P0] 2026-09-03 - Establish perception engine checkpoints
+
+### A. Scope declaration
+
+**Task:** Reframe the modularization around the missing game-agnostic perception engine, create a persistent recovery document, and write the ordered implementation plan before further runtime changes.
+
+**Direct files:** `docs/PERCEPTION_ENGINE_CHECKPOINT.md`, `docs/plans/2026-09-03-perception-engine-implementation-plan.md`, `ITERATION_LOG.md`.
+
+**Expected impact:** Documentation only. No existing Portal, Loot, minimap, navigation, input, or GUI runtime behavior should change in this round.
+
+### C. Findings
+
+- (verified) `core/perception/models.py`, `profiles.py`, `registry.py`, `color.py`, `template.py`, and `pipeline.py` provide a useful foundation.
+- (verified) `PerceptionPipeline` currently combines detector creation, execution, confidence filtering, and spatial fusion in one module; it is not yet the requested named engine.
+- (verified) Shape, Feature, and OCR are registered as unavailable extension points, not complete adapters.
+- (verified) `gui/dialogs/perception/dialog.py` is a screenshot workbench, but it is not yet routed through an engine facade.
+- (partial) Full test discovery has unrelated legacy import-path failures; the release audit will classify them after the new engine work.
+
+### Coverage update
+
+| File | Previous | Current | Reads | Note |
+|---|---|---|---:|---|
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | PENDING | partial | 1 | New recovery document with baseline, architecture contract, ordered queue, and audit notes. |
+| `docs/plans/2026-09-03-perception-engine-implementation-plan.md` | PENDING | partial | 1 | Task-by-task implementation plan with test and commit gates. |
+| `core/perception/pipeline.py` | partial | partial | 1 | Confirmed as compatibility pipeline pending decomposition behind a named engine. |
+| `core/perception/registry.py` | partial | partial | 1 | Confirmed as algorithm catalog seam; provider registry still pending. |
+| `gui/dialogs/perception/dialog.py` | partial | partial | 1 | Confirmed as UI test bench; direct algorithm construction must move behind engine public API. |
+
+### Next task
+
+Implement P1: `PerceptionEngine` facade and its contract tests. Write the failing test first, then add the smallest compatibility-backed implementation.
