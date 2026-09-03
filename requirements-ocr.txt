@@ -1,0 +1,2 @@
+# Optional local OCR backend. Keep out of requirements.txt so unrelated users do not install ONNX Runtime.
+rapidocr-onnxruntime==1.4.4

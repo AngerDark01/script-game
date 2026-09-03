@@ -36,6 +36,17 @@ def _default_descriptors() -> tuple[ProviderDescriptor, ...]:
             status="unavailable",
         ),
         ProviderDescriptor(
+            "ocr.rapidocr_onnxruntime",
+            "RapidOCR (ONNX Runtime)",
+            ProviderCapability.OCR,
+            "Optional local OCR that returns text polygons for full-frame or ROI recognition.",
+            status="unavailable",
+            metadata={
+                "install_hint": "Install requirements-ocr.txt and compose RapidOcrProvider at runtime.",
+                "package": "rapidocr-onnxruntime",
+            },
+        ),
+        ProviderDescriptor(
             "feature.default",
             "Feature backend",
             ProviderCapability.FEATURE_BACKEND,

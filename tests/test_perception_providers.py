@@ -124,6 +124,8 @@ class DefaultProviderCatalogTests(unittest.TestCase):
         self.assertEqual(ProviderCapability.FRAME_SOURCE, descriptors["frame.screen"].capability)
         self.assertEqual(ProviderCapability.TEMPLATE_RESOURCE, descriptors["template.resource"].capability)
         self.assertEqual(ProviderCapability.OCR, descriptors["ocr.default"].capability)
+        self.assertEqual(ProviderCapability.OCR, descriptors["ocr.rapidocr_onnxruntime"].capability)
+        self.assertEqual("rapidocr-onnxruntime", descriptors["ocr.rapidocr_onnxruntime"].metadata["package"])
         self.assertEqual(ProviderCapability.FEATURE_BACKEND, descriptors["feature.default"].capability)
         self.assertTrue(all(descriptor.status == "unavailable" for descriptor in descriptors.values()))
         with self.assertRaises(ProviderUnavailableError):

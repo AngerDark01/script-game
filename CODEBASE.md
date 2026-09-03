@@ -3346,6 +3346,147 @@ Level 3: navigation click path
 副作用：无。
 调用关系：called by `portal_screen_probe.draw_candidates()` and `portal_screen_probe.main()`。
 
+### `RapidOcrProvider.__init__(self, *, engine_options: Mapping[str, Any] | None = None, backend_factory: Callable[[], Any] | None = None) -> None`
+行为：建立一个可复用但尚未启动的本地 OCR provider。`engine_options` 仅在以后创建实际 ONNX 引擎时使用；`backend_factory` 仅用于应用替换或测试。
+
+算法：
+1. 验证可选 `engine_options` 是 mapping，且可选 factory 可调用；不导入 RapidOCR，也不读取模型。
+2. 防御性复制 engine 参数，保存 factory，令 `_backend=None`。
+3. 创建一个 provider-local `RLock`，保证首次初始化和会改变 RapidOCR 阈值状态的一次调用不会交叉执行。
+
+副作用：仅分配实例内存和锁；不会访问文件、网络、屏幕或 ONNX。
+
+失败行为：非 mapping 配置抛 `TypeError`；非 callable factory 抛 `TypeError`。
+
+调用关系：由应用 composition 创建；随后由 `recognize()` 使用其缓存字段。
+
+### `RapidOcrProvider.recognize(self, frame: FrameContext, parameters: Mapping[str, Any] | None = None) -> tuple[OcrSpan, ...]`
+行为：把一张完整帧或指定 ROI 输入缓存的 RapidOCR，并把原始文字四边形规范化为原始帧坐标系中的 `OcrSpan`。
+
+算法：
+1. 验证 `frame`，复制 per-call 参数；依次解析 `roi`、语言标签和 `backend_options`，拒绝未声明的参数名。
+2. 调用 `_crop_to_roi()`；无 ROI 时保留原图与 `(0,0)` 偏移，存在 ROI 时得到切片、实际裁剪原点和裁剪元数据。
+3. 在 provider 锁内调用 `_get_backend_locked()`，随后执行 `backend(image, **backend_options)`；锁避免 RapidOCR 的可变 `text_score/box_thresh` 状态在并发帧间串扰。
+4. 通过 `_split_backend_output()` 读取 `(rows, elapsed_seconds)`；`None` rows 表示没有文字。
+5. 对每个返回行调用 `_to_ocr_span()`，用 ROI 偏移恢复四边形和 bbox，保留文字、置信度、时间和 provider 元数据。
+
+副作用：首次调用可能导入并初始化 ONNX 模型；随后只调用常驻模型，不执行点击、映射或配置持久化。
+
+失败行为：参数或 ROI 不合法抛 `TypeError`/`ValueError`；缺依赖抛 `ProviderUnavailableError`；推理或返回结构异常抛 `ProviderError`。这些错误由上层 `DetectorRunner` 按算法实例隔离。
+
+调用关系：被 `ProviderBackedOcrDetector.detect()` 间接调用；调用 `_pop_roi()`、`_pop_language()`、`_pop_backend_options()`、`_crop_to_roi()`、`_get_backend_locked()`、`_split_backend_output()` 和 `_to_ocr_span()`。
+
+### `RapidOcrProvider._get_backend_locked(self) -> Any`
+行为：在已持有 provider 锁时返回唯一可调用 OCR 引擎。
+
+算法：
+1. 若 `_backend` 已存在，直接返回，以避免每帧重新加载模型。
+2. 优先调用 injected `backend_factory`，否则调用 `_create_default_backend()`。
+3. 验证 factory 返回可调用对象，缓存并返回。
+
+副作用：第一次成功时写入 `_backend`；不重复初始化。
+
+失败行为：factory 结果不可调用时抛 `ProviderUnavailableError`；factory 自身错误保持原始异常语义。
+
+调用关系：仅由 `recognize()` 在锁内调用。
+
+### `RapidOcrProvider._create_default_backend(self) -> Any`
+行为：按需导入 optional package 并构建 `rapidocr_onnxruntime.RapidOCR`。
+
+算法：
+1. 用动态导入取得 `rapidocr_onnxruntime.RapidOCR`，避免 package import 时成为强制依赖。
+2. 缺模块或缺导出时，将 `ImportError`/`AttributeError` 包装为带安装提示的 `ProviderUnavailableError`。
+3. 以构造时复制的 `engine_options` 创建模型；初始化异常也包装为 `ProviderUnavailableError`。
+
+副作用：首次路径会加载 OCR/ONNX 运行时及模型资源。
+
+调用关系：由 `_get_backend_locked()` 在没有 injected factory 时调用。
+
+### `rapidocr._pop_roi(values: dict[str, Any]) -> tuple[float, float, float, float] | None`
+行为：从可变 per-call 参数中移除并验证 ROI。
+
+算法：接受 `BoundingBox`、带 `left/top/width/height` 的 mapping 或四项 sequence；转换为有限 float；只接受正宽高。缺字段、错误长度、非数字、无穷值和非正尺寸均被拒绝。
+
+副作用：从传入的临时参数字典删除 `roi`；原 profile 参数不受影响。
+
+失败行为：类型不支持抛 `TypeError`，内容不合法抛 `ValueError`。
+
+调用关系：仅由 `recognize()` 调用，结果交给 `_crop_to_roi()`。
+
+### `rapidocr._pop_language(values: dict[str, Any]) -> str | None` 与 `rapidocr._pop_backend_options(values: dict[str, Any]) -> dict[str, Any]`
+行为：提取可选语言结果标签和可安全转发给 RapidOCR 的调用参数。
+
+算法：语言 `None` 保持缺省，其余值转字符串并拒绝空值；`backend_options` 必须是 mapping，并复制后返回，使一次调用不能修改下一次调用或持久 profile。
+
+副作用：从临时参数字典移除对应键。
+
+失败行为：空语言抛 `ValueError`，非 mapping backend options 抛 `TypeError`。
+
+调用关系：仅由 `recognize()` 调用；语言写入 `_to_ocr_span()`，options 传给 backend。
+
+### `rapidocr._crop_to_roi(image: Any, roi: tuple[float, float, float, float] | None) -> tuple[Any, tuple[float, float], dict[str, int] | None]`
+行为：为 OCR 截取一个安全、可追溯的局部图像，并返回将局部点恢复到全图的偏移。
+
+算法：无 ROI 时直接返回原图和零偏移；否则从 array `shape` 取得图像边界，以 floor/ceil 将 float ROI 覆盖的像素范围规范化，裁剪到有效图像区域，检查相交面积后用二维切片取图。输出包含实际 `left/top/width/height`，而不是越界的请求值。
+
+副作用：无；切片视图不写回原图。
+
+失败行为：非 array-like 输入、空图、不可切片图像、或不与图像相交的 ROI 抛明确错误。
+
+调用关系：由 `recognize()` 调用；其偏移传递至 `_to_ocr_span()`。
+
+### `rapidocr._split_backend_output(raw_output: Any) -> tuple[Any, tuple[float, ...]]`
+行为：验证 RapidOCR 返回的 `(result_rows, elapsed_seconds)` 形状并规范化耗时元数据。
+
+算法：要求二元 tuple；结果 rows 可以为 `None`；耗时可为 `None` 或有限、非负的 numeric sequence，并转成 float tuple。
+
+副作用：无。
+
+失败行为：错误 tuple 结构、非 sequence 耗时、非数值、NaN/无穷/负耗时抛 `ProviderError`。
+
+调用关系：由 `recognize()` 调用；归一化耗时传给 `_to_ocr_span()`。
+
+### `rapidocr._to_ocr_span(raw_item: Any, *, coordinate_space: CoordinateSpace, offset: tuple[float, float], language: str | None, elapsed_seconds: tuple[float, ...], actual_roi: dict[str, int] | None) -> OcrSpan`
+行为：把一行 RapidOCR 结果转成无目标语义的 `OcrSpan`。
+
+算法：
+1. 要求行包含 polygon、非空 text 和 `0..1` confidence。
+2. 调用 `_normalize_polygon()` 得到已经加上 ROI 偏移的有限坐标点。
+3. 用 x/y 最小最大值构建 enclosing `BoundingBox`，拒绝零面积。
+4. 写入 stable provider id、完整 polygon、分阶段耗时和实际 ROI 元数据，构造 `OcrSpan`。
+
+副作用：无。
+
+失败行为：结果行、文字、置信度或 polygon 结构不符合契约时抛 `ProviderError`。
+
+调用关系：由 `recognize()` 对每行调用；其 `OcrSpan` 由 `ProviderBackedOcrDetector.detect()` 消费。
+
+### `rapidocr._normalize_polygon(raw_polygon: Any, offset: tuple[float, float]) -> tuple[tuple[float, float], ...]`
+行为：验证并平移 OCR 文字框的多边形顶点。
+
+算法：要求至少三个点、每点恰有两个有限数值；逐点转为 float 后加 ROI `(offset_x, offset_y)`，保持所有 backend polygon 点而不是假设轴对齐矩形。
+
+副作用：无。
+
+失败行为：点数量、点长度或坐标值不合法时抛 `ProviderError`。
+
+调用关系：仅由 `_to_ocr_span()` 调用。
+
+### `rapidocr._is_sequence(value: Any) -> bool`
+行为：区分可遍历 OCR 结构与不应按字符展开的 string/bytes；用于 ROI、backend rows、timings 和 polygon 的结构验证。
+
+副作用与失败行为：无；返回布尔值。
+
+调用关系：由所有 RapidOCR 参数/结果规范化 helpers 调用。
+
+### Flow: Generic OCR text location and target detection
+1. Application composition creates a long-lived `RapidOcrProvider(engine_options=...)` and captures it in `PerceptionEngine.algorithm_factories["ocr"]`. The input is a runtime-only provider; the output is a factory that can build `ProviderBackedOcrDetector`. It stores a provider reference only, never a model object in profile JSON.
+2. `PerceptionEngine.detect(frame: FrameContext, profile: TargetProfile)` calls `DetectorRunner.run()`, which copies one OCR `AlgorithmProfile.parameters`, injects the profile `target_type`, and calls the runtime factory. The output is a detector aligned to that target or an isolated instance error.
+3. `ProviderBackedOcrDetector.detect(frame)` defensively copies `provider_parameters` into `RapidOcrProvider.recognize()`. Its input is a frame image, coordinate space, optional ROI, and backend options; its output is target-agnostic `tuple[OcrSpan, ...]`. This hop never captures a screen, maps coordinates, or performs input.
+4. `RapidOcrProvider.recognize()` clips the ROI, invokes the cached ONNX engine, and sends the local polygons, text, confidence, and timings through `_to_ocr_span()`. Its output `OcrSpan` boxes use the original `FrameContext.coordinate_space`; ROI x/y offsets have already been restored. The only possible side effect is first-call model initialization.
+5. `ProviderBackedOcrDetector.detect()` applies exact/contains/regex, case, and OCR-confidence rules. Each surviving span becomes `TargetDetection(target_type, center, bbox, coordinate_space, text, evidence)`, which can enter generic selection/fusion without knowing it came from OCR.
+6. `PerceptionEngine._run_stages()` applies existing confidence filtering, geometry fusion, temporal confirmation, and selection, then returns `PerceptionRunResult`. A future `CoordinateMapper` and workflow consume the same standard detection contract used by template, shape, and color algorithms.
+
 ## 6. 完整数据流链路
 ### Flow: 自动导航移动点击
 1. `NavigationRuntimeFrameLoop.run()` 调用 `capture_navigation_localization_tick()` 获取 `capture_rect`、屏幕截图帧、玩家局部坐标和 `localized_pos=(global_x, global_y)`；副作用是更新定位核心状态，后续再更新地图上的玩家点、绿色定位框、橙色真实可见框和事件 marker。
@@ -3447,7 +3588,19 @@ Level 3: navigation click path
 
 `utils/portal_screen_probe.py`：独立大画面实体识别探针，依赖 Windows 窗口枚举、DPI awareness、`SquareScreenCapture` 和 OpenCV HSV/轮廓分析。当前只作为传送门事件第二阶段确认技术资产；当传送门实体离开视野或被遮挡时，零 accepted 是正确输出。
 
+### Optional integration: `rapidocr-onnxruntime`
+
+`core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the only integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. There is no network request, fixed timeout, retry loop, screen capture, or background service owned by this provider. A missing package, missing `RapidOCR` export, or engine initialization failure is converted to `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output is converted to `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
+
+The provider's supported call settings come from one OCR profile instance's `provider_parameters`: optional `roi`, result `language` label, and `backend_options` passed to RapidOCR. The catalog descriptor `ocr.rapidocr_onnxruntime` remains `unavailable` by default even if the optional package is installed; UI/application composition must intentionally instantiate `RapidOcrProvider` and inject it, so importing the generic perception core can never start a model unexpectedly.
+
 ## 8. 数据模型与契约
+### `RapidOcrProvider` provider contract
+
+`RapidOcrProvider(engine_options: Mapping[str, Any] | None, backend_factory: Callable[[], Any] | None)` is runtime composition state, never profile JSON. `recognize(frame: FrameContext, parameters: Mapping[str, Any] | None) -> tuple[OcrSpan, ...]` accepts only `roi`, `language`, and `backend_options` in `parameters`; all inputs are copied before use. `roi` is a `BoundingBox`, four-number sequence, or mapping with finite `left/top/width/height` and positive width/height. `language` is an optional non-empty string label. `backend_options` is a mapping passed to the backend per invocation.
+
+Each output `OcrSpan` uses `frame.coordinate_space` and has a positive-area `BoundingBox` enclosing its translated polygon. Metadata always contains `provider_id="ocr.rapidocr_onnxruntime"`, `polygon: tuple[tuple[float, float], ...]`, and `elapsed_seconds: tuple[float, ...]`; ROI calls additionally contain actual clipped integer `roi`. Missing runtime package/model is `ProviderUnavailableError`; bad input, crop, backend result, polygon, timing, or confidence has an explicit `TypeError`, `ValueError`, or `ProviderError` boundary.
+
 ### `NavConfig`
 字段：
 `draw_scale: float` - 建图/定位地图缩放。
@@ -3523,6 +3676,10 @@ P1 - `main.py` 的 UAC relaunch 会启动一个新的管理员进程并退出原
 P2 - `NavigationModeWidget._render_route_overlay()` 在自动导航每帧清空并重绘路线层。触发条件：高 FPS 或长路径。复现方式：地图视图卡顿或闪烁。建议：后续按路径/subgoal 变化缓存绘制。
 
 P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观。触发条件：其他事件或怪物使用大面积蓝紫特效，或传送门被怪物/场景遮挡。复现方式：debug 图中橙色候选很多但绿色 accepted 为 0，或绿色框落在非传送门实体。建议：正式事件系统中把它作为“小地图事件已发现后的二阶段确认”，并要求连续多帧稳定后再点击。
+
+P2 - `RapidOcrProvider.recognize()` serializes one cached RapidOCR model and performs CPU ONNX inference. Trigger condition: a full-resolution frame is requested every navigation tick, or many OCR profile instances use the same provider with expensive detector settings. Reproduction: provider metadata timings dominate a frame budget or recognition becomes delayed while other algorithms continue. Mitigation: use an instance-specific ROI for fixed text zones, set conservative RapidOCR `backend_options`/confidence thresholds, reuse one provider, and measure the recorded `elapsed_seconds` before adding parallel provider instances. Do not move OCR retries or actions into this module.
+
+P2 - `RapidOcrProvider._crop_to_roi()` clips requested ROI bounds to the actual image and maps the result back using integer crop origin. Trigger condition: a profile ROI lies wholly outside a resized/cropped game frame, or a caller accidentally consumes the local backend polygon as a full-frame point. Reproduction: recognition raises `RapidOCR ROI does not intersect the image`, or a target appears displaced by the ROI origin. Mitigation: configure ROI in the same `FrameContext.coordinate_space`, retain provider metadata `roi`/`polygon` in the workbench, and only pass the normalized `TargetDetection` onward.
 
 ## 10. Input Control Current Notes
 `core/input/win32_driver.py` is part of the movement chain. It wraps Win32 `SetCursorPos`, `WindowFromPoint`, `SetForegroundWindow`, `GetForegroundWindow`, `GetClipCursor`, and `mouse_event`; `click()` performs separate down/up events with a short hold instead of a combined instant click.
@@ -3799,6 +3956,9 @@ PerceptionEngine.detect(frame, profile)
   -> DetectorRunner.run(frame, profile)
   -> runtime factory override or AlgorithmRegistry.create(algorithm_id, copied_parameters)
   -> ColorRegionDetector.detect(frame), TemplateDetector.detect(frame), or a provider-backed adapter
+       -> for injected OCR: RapidOcrProvider.recognize(frame, provider_parameters)
+       -> OcrSpan(text, full-frame bbox, coordinate_space, confidence)
+       -> ProviderBackedOcrDetector.detect(frame)
   -> fuse_candidates(candidates, merge_radius)
   -> ConfirmationTracker.observe(profile_key, candidates, required_frames, match_radius)
   -> select_candidate(candidates, strategy, reference)
@@ -3839,11 +3999,13 @@ PerceptionEngine.detect(frame, profile)
 
 `core/perception/providers/contracts.py` - Dependency-light raw-provider contracts. `ProviderCapability` identifies frame source, template resource, OCR, and feature back-end roles; `ProviderDescriptor` validates ID/name/capability/status and defensively serializes metadata. `TemplateResource`, `OcrSpan`, and `FeatureMatch` carry asset/text/correspondence evidence without target semantics. `FrameSource`, `TemplateResourceProvider`, `OcrProvider`, and `FeatureBackend` Protocols return these DTOs or `FrameContext`. `ProviderRegistrationError`, `UnknownProviderError`, `ProviderCapabilityMismatchError`, and `ProviderUnavailableError` are disjoint failure categories for the upcoming registry. It imports existing perception models but no OCR, feature, capture, GUI, input, or action implementation.
 
-`core/perception/providers/__init__.py` - Public provider-contract surface. It re-exports the raw DTOs, capability enum, Protocols, and error taxonomy without constructing a provider or performing resource I/O.
+`core/perception/providers/__init__.py` - Public provider surface. It re-exports raw DTOs, capability enum, Protocols, error taxonomy, `RAPIDOCR_PROVIDER_ID`, and `RapidOcrProvider`. Importing it loads no optional OCR package, constructs no ONNX model, and performs no resource I/O.
+
+`core/perception/providers/rapidocr.py` - Optional local OCR implementation. `RapidOcrProvider` lazily imports and caches one `rapidocr_onnxruntime.RapidOCR` backend, serializes calls that may mutate RapidOCR threshold settings, accepts a whole `FrameContext.image` or a validated/clipped ROI, converts each returned polygon into an original-frame `BoundingBox`, and returns raw `OcrSpan` evidence. Its public per-call controls are `roi`, result-language label, and copied `backend_options`; it neither matches a target text nor accesses capture, GUI, coordinate mapping, input, or game workflows. Missing optional packages and malformed backend data become explicit provider failures.
 
 `core/perception/providers/registry.py` - Capability-safe provider catalog. `ProviderRegistry.register(descriptor, provider)` rejects duplicate IDs, rejects implementations for unavailable descriptors, and rejects missing implementations for available/experimental descriptors; it stores but never invokes an object provider. `descriptor(id)` raises `UnknownProviderError`; `descriptors(capability=None)` preserves registration order and filters by enum capability; `resolve(id, capability=None)` first validates the known descriptor, then expected capability, then availability before returning the identical object. It does not inspect Protocol conformance or transform raw evidence, which remains an adapter responsibility.
 
-`core/perception/providers/builtins.py` - Discovery-only default catalog. `create_default_provider_registry()` registers four stable unavailable descriptors (`frame.screen`, `template.resource`, `ocr.default`, `feature.default`) with no implementation. Construction has no filesystem, desktop, network, capture, OCR, ML, or feature-backend side effect; an application must explicitly register an available implementation before `resolve()` succeeds.
+`core/perception/providers/builtins.py` - Discovery-only default catalog. `create_default_provider_registry()` registers five stable unavailable descriptors (`frame.screen`, `template.resource`, `ocr.default`, `ocr.rapidocr_onnxruntime`, `feature.default`) with no implementation. The RapidOCR descriptor supplies an install hint only; construction has no filesystem, desktop, network, capture, OCR, ML, or feature-backend side effect. An application must explicitly compose an available implementation before `resolve()` succeeds.
 
 `core/perception/stages/runner.py` - Instance-isolated detector execution. `DetectorRunner.__init__(registry, factory_overrides=None)` stores optional runtime factory overrides without serializing or inspecting them. `run(frame, profile)` skips disabled `AlgorithmProfile` instances; for every enabled instance it copies parameters, overrides `target_type` with the profile target, creates a detector via an override (after descriptor validation) or `AlgorithmRegistry.create()`, normalizes a falsey detector result to an empty tuple, and rejects non-`TargetDetection` output or any detection whose target type differs from the enclosing profile. It returns `DetectorRunResult(candidates, by_algorithm, errors)`: a per-instance exception becomes `"ExceptionType: message"` in `errors` and does not abort later instances. It has no fusion, confirmation, selection, input, or GUI side effect.
 
@@ -3877,9 +4039,11 @@ PerceptionEngine.detect(frame, profile)
 
 `tests/test_perception_ocr_adapter.py` verifies provider invocation, exact/contains/regex predicates, confidence and result limits, validation/error propagation, factory and package surfaces, descriptor metadata, and runtime Engine composition without provider serialization.
 
+`tests/test_perception_rapidocr_provider.py` verifies lazy optional-backend initialization, polygon-to-box conversion, provider-parameter isolation, ROI crop plus full-frame coordinate restoration, malformed-output and missing-package errors, default catalog metadata, and the full `RapidOcrProvider -> OcrSpan -> ProviderBackedOcrDetector -> TargetDetection` chain. When the optional package is installed, it also recognizes a generated `ENTER MAP` image and asserts a plausible image-space location.
+
 `tests/test_perception_shape_algorithm.py` verifies synthetic circle localization, public/registry availability, rectangle vertex filtering, and invalid geometric-parameter rejection.
 
-- Feature, motion, and ML have descriptors but no concrete implementation/provider adapter. OCR has a provider-backed adapter but no bundled OCR backend; shape is a provider-free contour detector.
+- Feature, motion, and ML have descriptors but no concrete implementation/provider adapter. OCR has both a provider-backed adapter and optional RapidOCR implementation; shape is a provider-free contour detector.
 - The workbench currently calls the compatibility pipeline directly; P6 must route it through `PerceptionEngine`.
 - Runtime screenshot capture, window discovery, anchor calibration, and action mapping are not yet connected to the generic result contract.
 - Legacy Portal/Loot/minimap behavior remains outside this package and must be adapted one target at a time with regression tests.

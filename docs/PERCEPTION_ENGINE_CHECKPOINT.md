@@ -6,7 +6,7 @@ This document is the recovery point for the reusable perception architecture. Up
 
 - Repository: `auto_modules`
 - Branch: `main`
-- Latest committed perception baseline: `ba862b6 feat: add reusable template algorithm adapters`
+- Current perception implementation checkpoint: `feat: add optional RapidOCR provider` (the commit carrying this document).
 - Earlier perception foundation commits: `1afb9f4` through `c6d0698`
 - Current worktree contains unrelated, uncommitted `virtual_gamepad/` changes. Do not mix them into perception commits.
 
@@ -46,12 +46,13 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Color and template detector implementations.
 - Engine-owned runner, fusion, confirmation, and selection stages with a Pipeline forwarding bridge.
 - Typed frame/template/OCR/feature provider contracts, capability-safe registry, and discovery-only default catalog.
+- Optional `RapidOcrProvider`: cached local ONNX OCR, text-polygon-to-`OcrSpan` conversion, ROI crop/full-frame coordinate restoration, and a concrete provider-to-adapter regression suite.
 - Coordinate transform primitives in `core/spatial/`.
 - Screenshot-oriented GUI workbench in `gui/dialogs/perception/`.
 
 ### Explicitly Missing
 
-- Concrete frame capture, template resource, OCR, feature, shape, and motion adapters.
+- Concrete frame capture, template resource, feature, and motion adapters.
 - Runtime screen capture and automatic window/viewport calibration integration.
 - Portal, Loot, map-device, waystone, trial, and scene-transition bridges.
 - Workflow orchestration for the complete event chain.
@@ -171,6 +172,14 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - The default algorithm catalog now marks `shape` available because it uses only the existing OpenCV/NumPy baseline. It exposes editor metadata for thresholding, contour filters, and result limits. It does not modify target-specific Portal/Loot contour logic.
 - Verification: 36 focused shape/color/template/OCR/engine/stage tests passed; `compileall -q core/perception` and `git diff --check` passed.
 - P4 remains in progress for feature and motion adapters. A concrete optional OCR provider is separately being evaluated for fast text-box localization.
+
+### 2026-09-04 - P4 concrete RapidOCR provider slice complete
+
+- `core/perception/providers/rapidocr.py` adds the first executable OCR backend without changing the package's generic `OcrProvider` contract. It imports `rapidocr_onnxruntime` and creates the ONNX model only on the first `recognize()` call, then reuses that backend instance for subsequent frames.
+- A full frame or JSON-configurable ROI now produces `OcrSpan` values whose `BoundingBox`, polygon metadata, and coordinate space are always expressed in the original `FrameContext` space. ROI-local RapidOCR polygons are offset before leaving the provider, so downstream detection, mapping, and action modules do not need special ROI logic.
+- Per-instance OCR parameters still flow through `ProviderBackedOcrDetector`; RapidOCR receives only copied provider settings (`roi`, optional language label, and backend call options). Profiles remain serializable and do not contain a model object.
+- The dependency is intentionally optional in `requirements-ocr.txt`; importing `core.perception` remains side-effect-free for users who do not install OCR. The default provider catalog advertises `ocr.rapidocr_onnxruntime` as unavailable until application composition supplies a real provider.
+- Verification: a red import-contract test first failed as expected; 6 RapidOCR-focused tests then passed, including lazy engine-option application and a real generated-image text-location smoke test. Follow-up provider/catalog coverage passed 12/12; the complete perception suite now passes 68/68. The remaining P4 work is feature and motion adapters; GUI wiring remains P6.
 
 ## Audit Notes
 

@@ -17,6 +17,7 @@ from .contracts import (
     UnknownProviderError,
 )
 from .builtins import create_default_provider_registry
+from .rapidocr import RAPIDOCR_PROVIDER_ID, RapidOcrProvider
 from .registry import ProviderRegistry
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     "ProviderRegistrationError",
     "ProviderRegistry",
     "ProviderUnavailableError",
+    "RAPIDOCR_PROVIDER_ID",
+    "RapidOcrProvider",
     "TemplateResource",
     "TemplateResourceProvider",
     "UnknownProviderError",
