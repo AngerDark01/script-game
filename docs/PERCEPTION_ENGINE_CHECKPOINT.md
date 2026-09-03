@@ -6,7 +6,7 @@ This document is the recovery point for the reusable perception architecture. Up
 
 - Repository: `auto_modules`
 - Branch: `main`
-- Latest committed UI change: `b988851 fix: keep perception entry compact`
+- Latest committed perception baseline: `b5c7c04 feat: add perception engine facade`
 - Earlier perception foundation commits: `1afb9f4` through `c6d0698`
 - Current worktree contains unrelated, uncommitted `virtual_gamepad/` changes. Do not mix them into perception commits.
 
@@ -44,13 +44,12 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Versioned algorithm and target profiles in `core/perception/profiles.py` and `profile_store.py`.
 - Descriptor-based registry in `core/perception/registry.py`.
 - Color and template detector implementations.
-- Initial candidate fusion in `core/perception/pipeline.py`.
+- Engine-owned runner, fusion, confirmation, and selection stages with a Pipeline forwarding bridge.
 - Coordinate transform primitives in `core/spatial/`.
 - Screenshot-oriented GUI workbench in `gui/dialogs/perception/`.
 
 ### Explicitly Missing
 
-- Separate runner, fusion, confirmation, and selection modules.
 - Provider seams for frame input, OCR, template resources, and optional feature backends.
 - Real shape, OCR, feature, and motion implementations or provider contracts.
 - Runtime screen capture and automatic window/viewport calibration integration.
@@ -63,7 +62,7 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 |---|---|---|---|
 | P0 | Checkpoint, plan, and codebase documentation | complete | `docs: establish perception engine checkpoints` |
 | P1 | Perception engine contract and facade | complete | `feat: add perception engine facade` |
-| P2 | Detector runner, fusion, confirmation, selection seams | pending | `feat: split perception decision stages` |
+| P2 | Detector runner, fusion, confirmation, selection seams | complete | `feat: split perception decision stages` |
 | P3 | Frame/resource/OCR provider contracts | pending | `feat: add perception provider seams` |
 | P4 | Reusable algorithm adapters and capability states | pending | `feat: add perception algorithm adapters` |
 | P5 | Runtime coordinate mapping and calibration adapter | pending | `feat: connect runtime coordinate mapping` |
@@ -104,6 +103,29 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - `detect()` validates the normalized frame/profile contract and delegates to the compatibility pipeline.
 - Tests: 3 P1 contract tests pass; compile check passes.
 - Next: P2 separates detector execution, fusion, multi-frame confirmation, and candidate selection behind engine-owned stages.
+
+### 2026-09-03 - P2 started
+
+- Scope: extract the four decision stages currently combined in `PerceptionPipeline`.
+- Compatibility rule: `PerceptionPipeline` remains the public compatibility class and composes the new stages; existing callers and default one-frame behavior must remain unchanged.
+- Confirmation rule: profiles with `confirmation_frames > 1` expose `confirmed=False` until spatially stable candidates meet the configured frame count.
+- Selection rule: selection is an explicit result field and never triggers input actions.
+
+### 2026-09-03 - P2 completion gate: engine ownership
+
+- The runner, fusion, confirmation, and selection modules now exist and their targeted contract tests pass.
+- Review finding: the default `PerceptionEngine` still delegates to `PerceptionPipeline`, so the legacy layer still owns stage state.
+- Approved correction: the default engine will directly compose the four stages; `PerceptionPipeline` will forward `run()` and `reset_confirmation()` to an engine instance.
+- Detailed implementation/recovery plan: `docs/plans/2026-09-03-perception-engine-ownership-design.md`.
+- Do not mark P2 complete or start P3 until the direct-engine and compatibility-forwarding red/green tests both pass.
+
+### 2026-09-03 - P2 complete
+
+- Default `PerceptionEngine` directly owns `DetectorRunner`, candidate filtering/fusion, `ConfirmationTracker`, candidate selection, and confirmation reset.
+- `PerceptionPipeline` is now a source-compatible forwarding shell; it retains only registry ownership, an engine instance, `run()`, `reset_confirmation()`, and the old `_fuse_candidates()` import wrapper.
+- Target-type boundary, profile selection-policy validation, profile-replacement reset, direct-engine ownership, and Pipeline forwarding are all regression-tested.
+- Verification: 17 focused perception tests passed; `compileall -q core/perception`, public import smoke check, and `git diff --check` completed without errors.
+- Next: P3 provider seams for frames, templates, OCR, and feature backends. No GUI/legacy target/workflow bridge starts before those contracts exist.
 
 ## Audit Notes
 

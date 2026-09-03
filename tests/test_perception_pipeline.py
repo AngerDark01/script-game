@@ -1,7 +1,8 @@
 import unittest
+from unittest.mock import patch
 
 from core.perception.algorithms.base import AlgorithmDescriptor
-from core.perception.models import CoordinateSpace, DetectionEvidence, FrameContext, TargetDetection
+from core.perception.models import CoordinateSpace, DetectionEvidence, FrameContext, PerceptionRunResult, TargetDetection
 from core.perception.pipeline import PerceptionPipeline
 from core.perception.profiles import AlgorithmProfile, TargetProfile
 from core.perception.registry import AlgorithmRegistry
@@ -39,6 +40,19 @@ class PerceptionPipelineTests(unittest.TestCase):
         result = PerceptionPipeline(registry).run(FrameContext(image=object()), profile)
 
         self.assertEqual((), result.detections)
+
+    def test_pipeline_forwards_to_its_engine(self):
+        registry = AlgorithmRegistry()
+        pipeline = PerceptionPipeline(registry)
+        frame = FrameContext(image=object())
+        profile = TargetProfile("game", "scene", "map_device")
+        expected = PerceptionRunResult(())
+
+        with patch.object(pipeline.engine, "detect", return_value=expected) as detect:
+            actual = pipeline.run(frame, profile)
+
+        self.assertIs(expected, actual)
+        detect.assert_called_once_with(frame, profile, reference=None)
 
 
 class _FakeDetector:

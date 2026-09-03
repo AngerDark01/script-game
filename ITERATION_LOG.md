@@ -3051,3 +3051,357 @@ Create the failing P1 tests and record the initial failure before adding any imp
 ### Next task
 
 Start P2 by writing failing tests for separate detector runner, fusion, confirmation, and selection stages. Keep `PerceptionPipeline` as a compatibility shell while the engine adopts the new stages.
+
+## [P2] 2026-09-03 - Split perception decision stages
+
+### A. Scope declaration
+
+**Task:** Add independent detector runner, candidate fusion, multi-frame confirmation, and candidate selection modules; update `PerceptionPipeline` to compose them without changing legacy one-frame behavior.
+
+**Direct files:** `core/perception/stages/runner.py`, `fusion.py`, `confirmation.py`, `selection.py`, `core/perception/pipeline.py`, `core/perception/models.py`, `tests/test_perception_stages.py`, and affected perception tests.
+
+**Expected impact:** Core perception execution only. No GUI, input, navigation, Portal, Loot, or minimap code should change in this task.
+
+### B. Read target
+
+- `core/perception/pipeline.py`: current inline execution, filtering, fusion, and error behavior.
+- `core/perception/models.py`: stable `TargetDetection` and `PerceptionRunResult` data contracts.
+- `core/perception/profiles.py`: `confirmation_frames`, `selection_strategy`, and `metadata.merge_radius` configuration already exist.
+
+### C. Findings pending implementation
+
+- Stage interfaces must be data-only and independently testable.
+- `PerceptionRunResult` needs additive `selected` and `confirmed` fields so old callers reading `detections`, `by_algorithm`, and `errors` remain source-compatible.
+- Confirmation state must be keyed by target profile and match candidates by target type, coordinate space, and spatial distance.
+
+### Coverage update
+
+| File | Previous | Current | Reads | Note |
+|---|---|---|---:|---|
+| `core/perception/stages/runner.py` | PENDING | PENDING | 0 | New detector execution stage. |
+| `core/perception/stages/fusion.py` | PENDING | PENDING | 0 | New spatial candidate fusion stage. |
+| `core/perception/stages/confirmation.py` | PENDING | PENDING | 0 | New multi-frame stability stage. |
+| `core/perception/stages/selection.py` | PENDING | PENDING | 0 | New candidate selection policy stage. |
+| `core/perception/pipeline.py` | partial | partial | 1 | Compatibility shell to compose stages. |
+| `core/perception/models.py` | partial | partial | 1 | Additive run-result fields only. |
+| `tests/test_perception_stages.py` | PENDING | PENDING | 0 | Failing stage contract tests to be written first. |
+
+### Next step
+
+Create the failing P2 stage tests and record the missing-module failure before implementation.
+## [P2 review] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/stages/runner.py`：确认算法实例隔离、结果契约与异常收集是否符合通用引擎边界。
+- `core/perception/stages/fusion.py`：确认跨算法候选融合仅依据通用几何/置信度信息，不掺入游戏规则。
+- `core/perception/stages/confirmation.py`：确认跨帧确认状态不会污染不同游戏、场景或目标。
+
+**本轮要验证：** P2 的运行、融合、确认三段能独立组合；旧 `PerceptionPipeline` 兼容层没有把决策逻辑重新耦合进去；待确认的候选不会被误作为可执行结果。
+### C. 本轮发现
+
+**关键发现：** (verified) `DetectorRunner.run` 给每一个算法实例独立创建 detector、收集其输出，并把实例级异常转换为 `errors[instance_id]`；一次算法失败不会丢弃其它算法结果。`fuse_candidates` 只在 `target_type` 与 `coordinate_space` 一致且中心距离不大于半径时合并。`ConfirmationTracker.observe` 用调用方传入的 profile key 隔离轨迹，并在确认帧数大于 1 时只返回稳定轨迹。
+
+**修订的旧结论：** 原先把 P2 理解为“所有候选经过固定全局确认后再输出”；现确认它是按 profile key 维护的短期确认状态，且每个候选有独立计数，能同时支持多个可见目标。
+
+**新疑问：** `DetectorRunner.run` 当前信任 detector 返回的 `target_type`；需要在下一轮核查是否应该拒绝与 profile 目标不同的检测结果，避免错误配置跨目标污染。还需审查选择器与总装配层怎样处理“部分候选已确认”的情形。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/stages/runner.py` | 浅读 | 深度完整 | 1 | 验证了实例参数复制、异常隔离和输出类型检查。 |
+| `core/perception/stages/fusion.py` | 浅读 | 深度完整 | 1 | 验证了同类型同坐标空间的贪心半径融合和证据保留。 |
+| `core/perception/stages/confirmation.py` | 浅读 | 深度完整 | 1 | 验证了按 profile key 的稳定跟踪、空帧清除和单帧快捷路径。 |
+
+**下一轮计划：** 阅读 `selection.py`、`pipeline.py`、`engine.py`，核实 P2 的装配边界、兼容层和未知策略错误契约。
+## [P2 assembly review] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/stages/selection.py`：确认选择规则是可配置的通用策略，不会触发点击或混入工作流语义。
+- `core/perception/pipeline.py`：确认旧入口只做阶段编排与向后兼容，不重新实现 detector、融合或确认算法。
+- `core/perception/engine.py`：确认公共引擎 API 只提供识别与 profile 管理，且以安全的 profile key 隔离确认状态。
+
+**本轮要验证：** 选择、确认和结果组装对于“多目标、部分确认、未知策略、空结果、单算法错误”都有明确且可测试的行为；前端以后可以完全只依赖 `PerceptionEngine`。
+### C. 本轮发现
+
+**关键发现：** (verified) `PerceptionPipeline` 已只负责顺序编排：运行、置信度阈值、通用几何融合、按 `(game_id, scene_id, target_type)` 的时间确认、再选择一个候选。`select_candidate` 不产生输入副作用；`first` 保留上游顺序，`nearest` 有参考点时按距离，否则回退置信度，未知策略会明确抛出 `ValueError`。`PerceptionEngine` 校验公共输入类型、用深拷贝注册/返回 profile，并保持 GUI/输入/工作流依赖在外部。
+
+**修订的旧结论：** 原先担心旧 `PerceptionPipeline` 仍重复实现融合与算法执行；现确认其具体实现已迁出至 stage，并且旧 `_fuse_candidates` 只是兼容包装。
+
+**新疑问：** 替换一个已注册 profile 时，旧 profile 的 `ConfirmationTracker` 轨迹仍可能保留到新参数的第一帧；应在 `PerceptionEngine.register_profile(..., replace=True)` 成功替换后重置该 key 的确认状态。算法输出的 `target_type` 目前也未和 profile 做一致性校验，需由模型契约或 runner 明确处理。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/stages/selection.py` | 浅读 | 深度完整 | 1 | 验证了纯选择、nearest 回退和未知策略的失败契约。 |
+| `core/perception/pipeline.py` | 浅读 | 深度完整 | 1 | 验证了 stage 编排、阈值过滤、profile-key 确认和兼容包装。 |
+| `core/perception/engine.py` | 浅读 | 深度完整 | 1 | 验证了框架边界、输入检查、注册表防御拷贝及 key 约束。 |
+
+**下一轮计划：** 阅读 P2 测试、结果模型、profile 模型；先以测试固定“替换 profile 清除确认状态”和“错误目标类型不能越过 profile 边界”，再以最小修改完成 P2。
+## [P2 contract tests] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_stages.py`：确认现有 stage 行为覆盖了融合、确认、选择、错误隔离，并定义最小新增回归测试。
+- `core/perception/models.py`：确认 `PerceptionRunResult` 及 `TargetDetection` 的不变量可承载确认/选择状态。
+- `core/perception/profiles.py`：确认 target profile 是否在配置层校验选择策略和算法/目标契约。
+
+**本轮要验证：** 先写失败测试，规定 profile 替换必须清空时间确认状态；并决定 detector 的 `target_type` 错配是在 runner 拒绝还是允许跨目标结果的唯一入口。
+### C. 本轮发现
+
+**关键发现：** (verified) `TargetDetection` 已强制非空目标名、二维中心与 0..1 置信度；`PerceptionRunResult` 能无损表达候选、按实例输出、错误、已选择结果、确认状态和每轨迹帧数。`TargetProfile` 只验证层级 ID、置信度、确认帧和实例 ID 唯一性，尚未验证选择策略。现有 stage 测试覆盖基本的异常隔离、融合、稳定确认和三种选择方式，但没有 profile 替换或目标类型错配的回归。
+
+**修订的旧结论：** 原先把未知选择策略当作 pipeline 运行期才能发现的错误；现确认可以且应该在 `TargetProfile` 创建/加载时校验，从而让前端保存无效配置前就得到反馈。
+
+**决定：** 统一算法实例一旦挂到 `TargetProfile(target_type=T)`，输出必须也为 `T`；这是 profile 作为“一个可操作目标”的边界。未来多类检测器要通过多个目标 profile 或上游 target selector 拆分，而不允许单次运行把其它目标混进结果。runner 会将错配作为该实例的受控错误。`selection_strategy` 只接受 `confidence`、`first`、`nearest`，并在 profile 构造时标准化小写。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_stages.py` | 浅读 | 深度完整 | 1 | 识别了 P2 已覆盖行为和缺失的边界回归。 |
+| `core/perception/models.py` | 浅读 | 深度完整 | 1 | 验证结果 DTO 的字段约束和确认/选择承载能力。 |
+| `core/perception/profiles.py` | 浅读 | 深度完整 | 1 | 验证 profile 复制/序列化与缺失的选择策略校验。 |
+
+**下一轮计划：** 先新增失败回归测试，再最小修改 runner、profile、engine；随后运行 P2 聚焦测试和编译检查。
+## [P2 red tests] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_stages.py`：新增错配 `target_type` 与无效选择策略的失败测试。
+- `tests/test_perception_engine.py`：新增替换 profile 后不能继承旧确认帧计数的失败测试。
+
+**本轮要验证：** 先使现有实现因期望的通用安全契约而失败；测试只观察公共结果/异常，不依赖私有 `_tracks` 或 pipeline 内部数据结构。
+### C. 本轮结果（红灯测试）
+
+**失败证据：** 新增的 3 条公共契约测试均按预期失败：`TargetProfile(..., selection_strategy="random")` 未抛出；错误目标类型仍出现在 `DetectorRunner` 候选中；替换同 key profile 后第二帧被错误视为已确认。其余 7 条已有 stage/engine 测试通过，说明失败范围收敛在新定义的三个边界。
+
+**同步记录：** `tests/test_perception_stages.py` 现在覆盖错误目标类型隔离和非法选择策略；`tests/test_perception_engine.py` 现在覆盖 profile 替换清除确认历史。这些测试只经公共 API 断言，允许后续内部实现继续拆分。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_stages.py` | 深度完整 | 深度完整 | 2 | 新增两条红灯契约，用于约束 runner/profile 修改。 |
+| `tests/test_perception_engine.py` | 浅读 | 深度完整 | 1 | 新增替换 profile 后不继承确认状态的红灯回归。 |
+
+**下一轮计划：** 修改 `profiles.py`、`stages/runner.py`、`engine.py` 使三条失败契约转绿，再执行完整 P2 目标测试。
+## [P2 contract fix] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/profiles.py`：在 profile 构造点标准化并校验选择策略。
+- `core/perception/stages/runner.py`：把目标类型错配转化为当前算法实例的受控错误。
+- `core/perception/engine.py`：替换或删除 profile 时清除同 key 的确认状态。
+
+**实现约束：** 不改变 `TargetDetection` 的算法通用性，不改输入/点击层，不让 GUI 参与判断；只让“profile 是一次单目标识别运行”的边界变得不可绕过。
+### C. 本轮结果（P2 合同修复）
+
+**实现结果：** `TargetProfile` 现在将选择策略标准化为小写，并仅接受 `confidence`、`first`、`nearest`；`DetectorRunner` 强制以 profile 的 `target_type` 创建算法参数，并将输出目标错配变为实例级 `errors`，不会污染候选；`PerceptionEngine` 在替换或注销 profile 时清除该 key 的跨帧确认状态。
+
+**验证：** 感知核心聚焦集 15/15 通过：`tests.test_perception_stages`、`tests.test_perception_pipeline`、`tests.test_perception_engine`、`tests.test_perception_models`。`core/perception` 编译检查也通过。
+
+**同步影响分析：** 调用方通过 `TargetProfile.from_dict()` 会更早得到无效选择策略的明确 `ValueError`；原本传入错误 `parameters.target_type` 的算法实例将按 profile 目标运行，符合单目标 profile 契约。engine 的注册/注销现在会清除内部短期状态，但不改变 profile 序列化或任何 GUI/输入 API。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/profiles.py` | 深度完整 | 深度完整 | 2 | 新增并验证选择策略白名单和规范化。 |
+| `core/perception/stages/runner.py` | 深度完整 | 深度完整 | 2 | 新增并验证 profile 目标类型边界和实例级失败。 |
+| `core/perception/engine.py` | 深度完整 | 深度完整 | 2 | 新增并验证 profile 生命周期清除确认轨迹。 |
+
+**下一轮计划：** 审查并提交 P2 的所有未提交变更；随后进入 P3 provider seams，先定义帧、模板、OCR、特征后端的可替换资源边界与错误契约。
+## [P2 completion review] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/__init__.py`：确认公开导出无重复、无 GUI/输入依赖，并包含新的稳定 DTO/API。
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：将 P2 的已验证范围、提交边界和 P3 前置条件写成可恢复的断点。
+- `ITERATION_LOG.md`：核对本轮记录顺序、待办、测试证据，并归档 P2 完成状态。
+
+**本轮要验证：** 只暂存感知架构及其文档/测试文件，严格排除用户已有的 `virtual_gamepad` 工作；检查 P2 diff 没有遗漏或意外 API 变动后创建一个独立提交。
+### C. Completion-review finding
+
+**关键发现：** (verified) 包导出无重复、未引入 GUI/输入依赖，P2 的 15 条聚焦测试与编译检查均通过；但默认 `PerceptionEngine.detect()` 仍委托给 `PerceptionPipeline.run()`，而 Pipeline 才持有 runner、confirmation 等状态。这样兼容类仍是运行时核心，和已确认的依赖方向“应用/GUI -> PerceptionEngine -> stages”冲突。
+
+**修订的旧结论：** 先前把“存在 `PerceptionEngine` facade + 独立 stages”视为 P2 完成；现确认这只完成了 API 外观，尚未完成核心所有权反转。因此 P2 保持 `in progress`，不能在此状态提交为完成。
+
+**决定：** 保持用户已确认的设计：`PerceptionEngine` 直接拥有 runner、fusion、confirmation、selection 编排与确认状态；`PerceptionPipeline` 仅持有一个 engine 并转发 `run/reset_confirmation`，作为旧 import 的兼容入口。不会改变 GUI、动作、旧游戏模块或 profile JSON 格式。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/__init__.py` | 浅读 | 深度完整 | 1 | 导出唯一、无 UI/输入依赖，RunResult 从 models 导出。 |
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 2 | 发现状态需保留 P2 in progress 并补充引擎所有权修复。 |
+| `ITERATION_LOG.md` | 深度完整 | 深度完整 | 2 | 记录链已追加；后续需要整理本轮 Unicode 写入格式。 |
+
+**下一轮计划：** 将该已批准的依赖反转设计写入计划/断点，写 red test 证明默认 engine 不再调用 pipeline，再以小步骤完成核心所有权反转。
+## [P2 engine ownership plan] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `docs/plans/2026-09-03-perception-engine-implementation-plan.md`：复核原计划并追加经过确认的引擎所有权反转任务。
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：写入 P2 未完成的准确原因和恢复入口。
+
+**本轮要产出：** 一份 TDD 原子计划：先证实 engine 默认路径不再依赖 Pipeline，再把阶段状态移入 engine，最后把 Pipeline 降为无策略转发壳；每步有精确文件、验证命令和单独提交边界。
+### C. 本轮计划发现
+
+**关键发现：** (verified) 原计划把 P1 描述为“engine 委托兼容 pipeline”，且 P2 的目录路径误写成 `core/perception/pipeline/`；这正是当前所有权倒置的文档根源。checkpoint 的“明确缺失”也仍把已创建的 stage 文件列为缺失。
+
+**修订的旧结论：** 原先认为 P2 的任务只是在 Pipeline 后面拆分 stages；现改为 P2 的完成条件是“默认 engine 自己持有 stages/确认状态，Pipeline 只转发”。
+
+**TDD 原子计划：**
+
+1. 在 `tests/test_perception_engine.py` 写失败测试，替换/监视 `PerceptionPipeline.run()` 并证明默认 engine 识别不走该方法；先运行该单项测试。
+2. 在 `core/perception/engine.py` 移入运行、过滤、融合、确认、选择和 confirmation reset；保留显式注入 legacy pipeline 的兼容分支；使第 1 步测试转绿并提交。
+3. 在 `tests/test_perception_pipeline.py` 写失败测试，断言 Pipeline 仍经 engine 公共检测 API 返回完全相同的 `PerceptionRunResult`；先运行该单项测试。
+4. 在 `core/perception/pipeline.py` 删除所有策略状态，只转发 `run/reset_confirmation`；运行完整 P2 集、编译检查，更新 checkpoint 后提交。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `docs/plans/2026-09-03-perception-engine-implementation-plan.md` | 深度完整 | 深度完整 | 2 | 定位到 P1 委托描述和 P2 错误目录，需追加精确反转步骤。 |
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 3 | 将更新为 stages 已存在、P2 所有权反转待完成。 |
+
+**下一轮计划：** 保存详细设计/执行任务，接着为 engine 所有权写 red test；不接触 P3 provider 或 GUI。
+### C. SYNC 结果（所有权设计与断点）
+
+**已保存设计：** 新增 `docs/plans/2026-09-03-perception-engine-ownership-design.md`，记录所选方案、拒绝方案、默认引擎与兼容 Pipeline 的依赖图、四个 TDD 原子任务、精确测试命令、提交边界和非目标。
+
+**更新断点：** 原实施计划已修正 P2 的真实 `stages/` 路径与“engine 直接执行”的完成条件；checkpoint 已将“stage 文件缺失”改为准确的“engine 所有权反转待完成”，并把恢复入口指向新设计文档。
+
+**CODEBASE 同步：** 当前运行时结构未变，`CODEBASE.md` 保留并已准确记录 P2 所有权 defect；无需把尚未实现的设计伪写为当前事实。
+
+**下一轮计划：** 按设计的 Task 1 在 engine 测试中写 red test，证明默认 engine 不会调用 `PerceptionPipeline.run()`；只有该测试失败后才移动执行所有权。
+## [P2 engine ownership red test] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_engine.py`：以公共识别结果验证默认 engine 不经 `PerceptionPipeline.run()`。
+
+**本轮要验证：** 在不改变运行时代码的前提下，替换 compatibility pipeline 的 `run` 为显式失败；默认 `PerceptionEngine().detect()` 应因此失败，证明目前存在待修正的依赖路径。测试不检查私有属性。
+### C. 本轮结果（engine red test）
+
+**失败证据：** 新测试失败于 `PerceptionEngine.detect()` 的 `self.pipeline.run(...)` 调用，且 mock 的 `AssertionError: compatibility path used` 被直接触发。这精确证明默认路径仍经 legacy Pipeline，没有其它算法、配置或环境噪声。
+
+**同步记录：** `tests/test_perception_engine.py` 新增公共行为回归：默认 engine 即使 `PerceptionPipeline.run` 不可用，也必须完成颜色识别并产生已选择的 marker。测试本身不读取 engine 私有字段。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_engine.py` | 深度完整 | 深度完整 | 2 | 新增精确依赖反转红灯测试并记录实际堆栈。 |
+
+**下一轮计划：** 修改 `core/perception/engine.py` 直接编排已存在 stages，同时保留显式 legacy pipeline 注入分支；先使本测试转绿，再运行 engine/stage 聚焦集。
+## [P2 direct engine execution] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/engine.py`：让默认 engine 自己组合 runner、融合、确认、选择；保留显式 legacy pipeline 注入的向后兼容分支。
+
+**实现约束：** 复用既有 `DetectorRunner`、`fuse_candidates`、`ConfirmationTracker`、`select_candidate`，不复制其算法；profile key、阈值、默认 merge 半径、RunResult 字段和 `reset_confirmation` 行为必须与当前 Pipeline 保持一致。
+### C. SYNC 结果（默认引擎直接执行）
+
+**实现结果：** `PerceptionEngine` 现在直接持有 `DetectorRunner` 和 `ConfirmationTracker`，并在私有 `_run_stages()` 中按既有顺序复用融合/选择 stage，返回原样的 `PerceptionRunResult`。显式传入 legacy pipeline 时仍走其 `run/reset_confirmation`，但默认构造路径不导入或构造 Pipeline。
+
+**验证：** 新 red test 已转绿；`tests.test_perception_engine` 与 `tests.test_perception_stages` 共 11/11 通过，`compileall -q core/perception` 通过。
+
+**影响分析：** profile 替换/注销现在通过 engine 自己的 `reset_confirmation` 清除状态；默认 detection 的阈值、半径、profile key、选择和错误字段与旧 Pipeline 行为一致。尚未修改 Pipeline，因此旧 `PerceptionPipeline` 仍暂时有自己的重复 stage 编排，下一轮将删去它。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/engine.py` | 深度完整 | 深度完整 | 3 | 默认路径已迁入 stage 组合和确认状态，legacy 注入分支保留。 |
+| `tests/test_perception_engine.py` | 深度完整 | 深度完整 | 3 | 默认路径不调用 Pipeline 的 red/green 回归已通过。 |
+
+**下一轮计划：** 为 `PerceptionPipeline` 写转发 red test，再将其降为只包含 registry、engine 和两项转发方法的兼容壳。
+## [P2 pipeline forwarding red test] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_pipeline.py`：建立 compatibility Pipeline 只转发给其 engine 的公共测试，不依赖 runner/confirmation 私有实现。
+- `core/perception/pipeline.py`：仅为理解当前重复编排而阅读；本轮先不修改。
+
+**本轮要验证：** Pipeline 接收到 `run(frame, profile)` 时必须把相同 frame/profile 和显式 `reference=None` 交给其关联 engine 的 `detect`，并原样返回 engine 的结果；当前实现应因不存在关联 engine 而失败。
+### C. 本轮结果（pipeline red test）
+
+**失败证据：** 新的 compatibility 入口测试报出 `AttributeError: 'PerceptionPipeline' object has no attribute 'engine'`，精确证明它还不是转发壳，而仍持有自己的执行状态。
+
+**同步记录：** `tests/test_perception_pipeline.py` 现在通过 Pipeline 的公开 `run()` 调用验证同一 frame/profile/reference 会转给关联 engine，且 engine 返回对象不被包装或修改。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_pipeline.py` | 深度完整 | 深度完整 | 2 | 新增 pipeline 转发 red test；当前因缺少 engine 属性而失败。 |
+| `core/perception/pipeline.py` | 深度完整 | 深度完整 | 2 | 确认其重复持有 runner/confirmation，是本轮唯一待删策略实现。 |
+
+**下一轮计划：** 只修改 `pipeline.py`，通过局部导入避免循环依赖，创建默认 engine 并转发两个公开方法；保留 `_fuse_candidates` 旧私有导入包装。
+## [P2 pipeline forwarding implementation] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/pipeline.py`：将重复 stage 编排替换为一个 engine 实例和 `run/reset_confirmation` 转发；保留 `_fuse_candidates` 的旧导入兼容。
+
+**实现约束：** 使用局部 import 解决 Engine/Pipeline 的单向运行时依赖；不改变 `PerceptionPipeline(registry)`、`run()`、`reset_confirmation()` 或 `_fuse_candidates()` 的调用签名；Pipeline 不再直接导入任何 stage 类。
+### C. SYNC 结果（P2 兼容转发完成）
+
+**实现结果：** `PerceptionPipeline` 现在只保存 registry 与一个默认 `PerceptionEngine`，用局部 import 避免循环导入，并将 `run(frame, profile, reference)`、`reset_confirmation(profile)` 原样转发。唯一保留的算法相关符号是 `_fuse_candidates()` 的旧私有导入兼容包装；它不参与 Pipeline 运行路径。
+
+**验证：** P2 完整聚焦集 17/17 通过（stage、pipeline、engine、model）；感知包编译检查和公开包导入 smoke check 均通过。`git diff --check` 返回 0；仅报告仓库既有的 LF/CRLF 转换预警，没有空白错误。
+
+**依赖结果：** 默认依赖方向已成为 `GUI/workflow -> PerceptionEngine -> stages`；旧调用为 `legacy caller -> PerceptionPipeline -> PerceptionEngine`。Pipeline 不再导入 runner、confirmation 或 selection，因此无法重新变成决策核心。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/pipeline.py` | 深度完整 | 深度完整 | 3 | 删除重复 stage 状态，保留兼容转发和 `_fuse_candidates`。 |
+| `tests/test_perception_pipeline.py` | 深度完整 | 深度完整 | 3 | 转发 red/green 回归已通过，验证参数与返回对象保持不变。 |
+
+**下一轮计划：** 复核感知 P2 全部 diff、更新 checkpoint/架构文档为完成状态，并只暂存这些文件创建 `feat: split perception decision stages` 提交。随后开始 P3 provider seams。
+## [P2 final review and commit] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：将 P2 完成条件、测试证据、P3 起点和仅感知文件的提交边界固化。
+- `core/perception/__init__.py`：最终确认公开入口稳定、无 compatibility 循环问题。
+- `core/perception/stages/__init__.py`：确认 package 文件只定义 stage 边界，不产生侧效应。
+
+**本轮要验证：** 用路径白名单审查并暂存 P2 的 core、tests 和架构文档；绝不把 `virtual_gamepad/` 或任何其它用户现有修改带入提交。
+### C. 最终审查发现
+
+**关键发现：** (verified) `core/perception/__init__.py` 的公共导出无重复，公开 import smoke check 已通过；`stages/__init__.py` 仅重导出纯 stage API，没有创建 detector、确认状态或输入副作用。P2 白名单包含所有感知 core、tests、三份架构/断点文档；`virtual_gamepad/` 的修改均在白名单外。
+
+**修订的旧结论：** checkpoint 仍将 P2 的 stage 所有权列为“明确缺失”；现已依据 17/17 测试和直接/兼容双路径验证改为 P2 complete，P3 才是下一项。
+
+**提交白名单：** `CODEBASE.md`、`ITERATION_LOG.md`、`core/perception/{__init__,engine,models,pipeline,profiles}.py`、`core/perception/stages/`、三份 perception docs/plan、`tests/test_perception_{engine,pipeline,stages}.py`。不包含任意 `virtual_gamepad/` 文件。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/__init__.py` | 深度完整 | 深度完整 | 2 | 最终确认公共导出及循环导入 smoke check。 |
+| `core/perception/stages/__init__.py` | 浅读 | 深度完整 | 1 | 仅公开纯 stage API，文档已改为 engine-owned。 |
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 4 | P2 状态、完成证据与 P3 起点已更新。 |
+
+**下一轮计划：** 使用已声明的白名单暂存、复核 staged diff、创建 P2 提交；随后从 P3 的 provider 资源契约 red test 开始。

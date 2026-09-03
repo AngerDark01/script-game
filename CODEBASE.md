@@ -3774,8 +3774,8 @@ This section records the current game-agnostic perception seam. Progress belongs
 
 ```text
 +--------------------+     +-------------------+     +----------------------+
-| profiles.py         | --> | registry.py       | --> | pipeline.py          |
-| game/scene/target   |     | descriptor/factory |     | run/fuse candidates  |
+| profiles.py         | --> | registry.py       | --> | engine.py            |
+| game/scene/target   |     | descriptor/factory |     | public composition   |
 +--------------------+     +-------------------+     +----------------------+
           |                         |                         |
           v                         v                         v
@@ -3783,28 +3783,35 @@ This section records the current game-agnostic perception seam. Progress belongs
 | algorithms/base.py  |     | builtins.py       |     | models.py            |
 | parameter metadata  |     | color/template    |     | frame/result/evidence|
 +--------------------+     +-------------------+     +----------------------+
+          |                         |                         |
+          +-------------------------+-------------------------+
+                                    v
+                    +-----------------------------------+
+                    | stages/runner -> fusion           |
+                    |        -> confirmation -> selection |
+                    +-----------------------------------+
 ```
 
 ### C4 Level 3 - Current call path
 
 ```text
-PerceptionWorkbenchDialog.run_detection()
-  -> PerceptionWorkbenchDialog._build_profile()
-  -> PerceptionPipeline.run(frame, profile)
-  -> AlgorithmRegistry.create(algorithm_id, parameters)
+PerceptionEngine.detect(frame, profile)
+  -> DetectorRunner.run(frame, profile)
+  -> AlgorithmRegistry.create(algorithm_id, copied_parameters)
   -> ColorRegionDetector.detect(frame) or TemplateDetector.detect(frame)
-  -> TargetDetection(...)
-  -> _fuse_candidates(candidates, merge_radius)
-  -> PerceptionRunResult(detections, by_algorithm, errors)
+  -> fuse_candidates(candidates, merge_radius)
+  -> ConfirmationTracker.observe(profile_key, candidates, required_frames, match_radius)
+  -> select_candidate(candidates, strategy, reference)
+  -> PerceptionRunResult(detections, by_algorithm, errors, selected, confirmed)
 ```
 
 ### Directory and file index
 
 `core/perception/__init__.py` - Public exports for generic models, profiles, registry, built-in registry factory, pipeline, and run result. It must not import GUI, input, navigation, or game-specific modules.
 
-`core/perception/models.py` - Data-only coordinate spaces, bounding boxes, frame context, evidence, and normalized target detections. `BoundingBox.center` derives a pixel-space center; `BoundingBox.normalized()` validates positive frame dimensions and returns relative rectangle values; dataclass validation rejects empty target types, invalid centers, or confidence outside 0..1.
+`core/perception/models.py` - Data-only coordinate spaces, bounding boxes, frame context, evidence, normalized target detections, and whole-run result. `BoundingBox.center` derives a pixel-space center; `BoundingBox.normalized()` validates positive frame dimensions and returns relative rectangle values; `TargetDetection.__post_init__()` rejects empty target types, invalid centers, or confidence outside 0..1. `PerceptionRunResult` carries confirmed detections, per-instance raw detections, isolated errors, optional final selection, boolean confirmation status, and each current track's frame count without action side effects.
 
-`core/perception/profiles.py` - Immutable `AlgorithmProfile` and `TargetProfile` configuration objects. `AlgorithmProfile.__post_init__()` validates identifiers and non-negative weight, then copies parameter/metadata dictionaries. `TargetProfile.__post_init__()` validates hierarchy identifiers, confidence range, confirmation frame count, and unique instance IDs. `to_dict()`/`from_dict()` preserve schema version and nested metadata; `copy()` deep-copies mutable descendants.
+`core/perception/profiles.py` - Immutable `AlgorithmProfile` and `TargetProfile` configuration objects. `AlgorithmProfile.__post_init__()` validates identifiers and non-negative weight, then copies parameter/metadata dictionaries. `TargetProfile.__post_init__()` validates hierarchy identifiers, confidence range, confirmation frame count, unique instance IDs, and a normalized selection policy in `confidence|first|nearest`; it copies metadata and converts algorithms to a tuple. `to_dict()`/`from_dict()` preserve schema version and nested metadata; `copy()` deep-copies mutable descendants. `SUPPORTED_SELECTION_STRATEGIES` is the profile-level configuration contract.
 
 `core/perception/profile_store.py` - Versioned JSON persistence. `load_target_profile(path)` reads UTF-8 JSON, requires an object, and delegates validation to `TargetProfile.from_dict()`. `save_target_profile(path, profile)` creates the parent directory, writes an indented UTF-8 temporary file, and atomically replaces the destination.
 
@@ -3818,9 +3825,19 @@ PerceptionWorkbenchDialog.run_detection()
 
 `core/perception/registry.py` - `AlgorithmRegistry` owns descriptor/factory maps. `register()` rejects duplicate IDs and missing factories for available algorithms. `descriptor()` reports unknown IDs. `create()` rejects unavailable or factory-less algorithms and passes a deep-copied parameter mapping to the factory.
 
-`core/perception/pipeline.py` - Compatibility execution pipeline. `PerceptionPipeline.run()` skips disabled profiles, creates detectors from the registry, records per-instance exceptions instead of aborting the whole run, filters candidates below `TargetProfile.min_confidence`, and fuses same-type/same-space candidates within configured `merge_radius`. `_merge_pair()` retains the higher-confidence primary result and concatenates evidence/source metadata. This module is scheduled to move behind `PerceptionEngine` and split into runner/fusion/confirmation/selection modules.
+`core/perception/pipeline.py` - Source-compatible forwarding shell. `PerceptionPipeline.__init__()` stores the registry and locally imports/creates a default `PerceptionEngine`, avoiding an import cycle. `run(frame, profile, reference=None)` returns `engine.detect(frame, profile, reference=reference)` unchanged and `reset_confirmation(profile=None)` delegates unchanged. `_fuse_candidates()` remains only for old private import callers and wraps the standalone `fuse_candidates()` function; no Pipeline execution path imports or owns detector, fusion, confirmation, or selection state.
 
-`core/perception/engine.py` - Stable target-level `PerceptionEngine` facade. `detect(frame, profile)` validates `FrameContext` and `TargetProfile` types before delegating to the compatibility pipeline. `register_profile(profile, replace=False)` derives a non-empty `(game_id, scene_id, target_type)` key, rejects accidental duplicates unless replacement is explicit, and stores `profile.copy()`. `resolve_profile()` and `unregister_profile()` return defensive copies and raise explicit `KeyError` for unknown keys; `profiles()` returns insertion-ordered copies; `descriptors()` exposes the registry catalog. The facade owns profile lookup but deliberately leaves stage decomposition to P2.
+`core/perception/stages/__init__.py` - Side-effect-free package surface for engine-owned decision stages. It re-exports `DetectorRunner`/`DetectorRunResult`, `fuse_candidates`, `ConfirmationTracker`/`ConfirmationResult`, and `select_candidate`; importing it neither creates temporal state nor accesses an image, provider, GUI, or action layer.
+
+`core/perception/stages/runner.py` - Instance-isolated detector execution. `DetectorRunner.run(frame, profile)` skips disabled `AlgorithmProfile` instances; for every enabled instance it copies parameters, overrides `target_type` with the profile target, creates a detector via `AlgorithmRegistry.create()`, normalizes a falsey detector result to an empty tuple, and rejects non-`TargetDetection` output or any detection whose target type differs from the enclosing profile. It returns `DetectorRunResult(candidates, by_algorithm, errors)`: a per-instance exception becomes `"ExceptionType: message"` in `errors` and does not abort later instances. It has no fusion, confirmation, selection, input, or GUI side effect.
+
+`core/perception/stages/fusion.py` - Geometry-only multi-algorithm candidate fusion. `fuse_candidates(candidates, merge_radius)` clamps its radius at zero, sorts candidates by decreasing confidence, and greedily compares a candidate only against already retained candidates. `_find_match()` permits a merge exactly when `target_type` and `coordinate_space` match and Euclidean center distance is within the radius. `_merge_pair()` retains the higher-confidence primary geometry and confidence, uses non-empty primary-or-secondary optional fields, concatenates evidence, and records the distinct non-empty detector sources in `metadata["fused_sources"]`. It has no game-specific semantics; invalid field values are rejected earlier by `TargetDetection` construction.
+
+`core/perception/stages/confirmation.py` - Per-target temporal confirmation state. `ConfirmationTracker.observe(profile_key, detections, required_frames, match_radius)` clears that key and returns all candidates immediately for one-frame confirmation; on an empty frame it clears that key and returns unconfirmed. Otherwise, it uses `_nearest_track()` to match each current candidate once to the closest unused prior track of the same `target_type` and `coordinate_space` within the radius, increments stable counts, starts unmatched tracks at one, persists only this profile key's next tracks, and returns only tracks reaching `required_frames`. `reset(profile_key=None)` clears either one profile's memory or all memory. State is process-local; callers must provide a stable, game/scene/target-scoped key and reset it at an intentional session boundary.
+
+`core/perception/stages/selection.py` - Pure final-candidate policy. `select_candidate(candidates, strategy="confidence", reference=None)` returns `None` for no candidates; otherwise it keeps original upstream order for `first`, chooses minimum Euclidean center distance for `nearest` with a reference point, falls back to maximum confidence for `nearest` without a reference, and chooses maximum confidence for `confidence`. Any other non-empty strategy raises `ValueError`; it never maps coordinates or performs an action.
+
+`core/perception/engine.py` - Stable target-level `PerceptionEngine` core. The default `detect(frame, profile, reference=None)` validates `FrameContext` and `TargetProfile`, then `_run_stages()` invokes `DetectorRunner`, filters by `min_confidence`, fuses by non-negative `metadata.merge_radius` (default 12), confirms by raw `(game_id, scene_id, target_type)`, selects from confirmed detections, and assembles `PerceptionRunResult`. `detect_target()` resolves a game/scene/target profile first. `register_profile(profile, replace=False)` derives a stripped non-empty key, rejects accidental duplicates unless replacement is explicit, clears that key's confirmation track on a replacement, and stores `profile.copy()`. `unregister_profile()` also clears its track before returning a defensive copy; `resolve_profile()` raises explicit `KeyError` for unknown keys; `profiles()` returns insertion-ordered copies; `descriptors()` exposes the registry catalog. `reset_confirmation(profile=None)` clears direct tracker state; only an explicitly injected legacy Pipeline delegates to that Pipeline. The core keeps GUI, inputs, and workflows out.
 
 `core/spatial/models.py` and `core/spatial/calibration.py` - Explicit coordinate-space DTOs, window rectangles, affine transforms, anchor fitting, and registered mapping. These modules are recognition/action agnostic and currently do not replace `MotionController`.
 
@@ -3832,7 +3849,15 @@ PerceptionWorkbenchDialog.run_detection()
 
 ### Current risks and next seams
 
-- `PerceptionPipeline` is still a shallow compatibility module: it owns several decisions that should become explicit engine stages.
+- P2's engine/Pipeline ownership boundary is complete. P3 must add provider contracts without allowing resource acquisition, OCR, or feature backend concerns to leak into the stage APIs.
+
+### Perception regression contracts
+
+`tests/test_perception_stages.py` verifies instance exception isolation, geometry fusion, stable temporal confirmation, pure selection, target-type mismatch isolation, and rejection of invalid profile selection policies.
+
+`tests/test_perception_engine.py` verifies direct detection, profile key lookup, defensive registration, explicit missing keys, replacement confirmation reset, and the P2 ownership contract: a default engine still produces a selected result when `PerceptionPipeline.run()` is deliberately made unavailable.
+
+`tests/test_perception_pipeline.py` verifies current pipeline outcomes and the P2 compatibility contract: a Pipeline delegates the exact `frame`, `profile`, and `reference=None` to its associated Engine and returns the exact Engine result object.
 - Shape, feature, OCR, motion, and ML have descriptors but no concrete implementation/provider seam.
 - The workbench currently calls the compatibility pipeline directly; P6 must route it through `PerceptionEngine`.
 - Runtime screenshot capture, window discovery, anchor calibration, and action mapping are not yet connected to the generic result contract.

@@ -90,3 +90,15 @@ class TargetDetection:
             raise ValueError("center must contain exactly two coordinates")
         if not 0.0 <= float(self.confidence) <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
+
+
+@dataclass(frozen=True)
+class PerceptionRunResult:
+    """Pipeline result with additive confirmation and selection state."""
+
+    detections: tuple[TargetDetection, ...]
+    by_algorithm: Mapping[str, tuple[TargetDetection, ...]] = field(default_factory=dict)
+    errors: Mapping[str, str] = field(default_factory=dict)
+    selected: TargetDetection | None = None
+    confirmed: bool = True
+    confirmation_counts: tuple[int, ...] = ()

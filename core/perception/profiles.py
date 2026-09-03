@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
+SUPPORTED_SELECTION_STRATEGIES = frozenset({"confidence", "first", "nearest"})
+
+
 @dataclass(frozen=True)
 class AlgorithmProfile:
     """One configured instance of a reusable perception algorithm."""
@@ -71,7 +74,12 @@ class TargetProfile:
         instance_ids = [item.instance_id for item in algorithms]
         if len(instance_ids) != len(set(instance_ids)):
             raise ValueError("algorithm instance_id values must be unique")
+        selection_strategy = str(self.selection_strategy or "confidence").strip().lower()
+        if selection_strategy not in SUPPORTED_SELECTION_STRATEGIES:
+            supported = ", ".join(sorted(SUPPORTED_SELECTION_STRATEGIES))
+            raise ValueError(f"selection_strategy must be one of: {supported}")
         object.__setattr__(self, "algorithms", algorithms)
+        object.__setattr__(self, "selection_strategy", selection_strategy)
         object.__setattr__(self, "metadata", dict(self.metadata))
 
     def copy(self) -> "TargetProfile":

@@ -52,7 +52,7 @@ engine = PerceptionEngine(registry)
 result = engine.detect(frame, target_profile)
 ```
 
-The facade owns registry selection and delegates stage execution. It returns `PerceptionRunResult` and retains the existing `PerceptionPipeline` as a compatibility implementation behind the seam.
+The facade owns registry selection and, after P2, directly owns stage execution. It returns `PerceptionRunResult`; the existing `PerceptionPipeline` remains only as a source-compatible forwarding entry point.
 
 Verify:
 
@@ -64,13 +64,15 @@ Commit: `feat: add perception engine facade`
 
 ## Task P2: Deepen decision stages
 
-Files: `core/perception/pipeline/runner.py`, `fusion.py`, `confirmation.py`, `selection.py`, compatibility updates to `core/perception/pipeline.py`, and focused tests.
+Files: `core/perception/stages/runner.py`, `fusion.py`, `confirmation.py`, `selection.py`, `core/perception/engine.py`, compatibility updates to `core/perception/pipeline.py`, and focused tests.
 
-Each module must expose a small interface with explicit error and ordering rules. The engine must preserve per-algorithm evidence, fuse spatially close candidates, require configured stable frames, and apply a configurable candidate selection strategy.
+Each module must expose a small interface with explicit error and ordering rules. The default engine must preserve per-algorithm evidence, fuse spatially close candidates, require configured stable frames, and apply a configurable candidate selection strategy. `PerceptionPipeline` must forward to that engine and own no decision state.
 
 Verify focused tests, then the existing perception suite.
 
 Commit: `feat: split perception decision stages`
+
+The detailed dependency-reversal design and exact red/green commands are recorded in `docs/plans/2026-09-03-perception-engine-ownership-design.md`.
 
 ## Task P3: Add provider seams
 
