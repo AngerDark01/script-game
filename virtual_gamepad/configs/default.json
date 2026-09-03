@@ -1,0 +1,11 @@
+{
+  "bindings": {
+    "A": ["keyboard:Space"],
+    "LeftStick": ["keyboard:W", "keyboard:S", "keyboard:A", "keyboard:D"],
+    "RightTrigger": ["mouse:left"],
+    "LeftTrigger": ["mouse:right"],
+    "RightStick": ["mouse:move_x", "mouse:move_y"]
+  },
+  "startPause": "F8",
+  "emergencyReset": "F9"
+}

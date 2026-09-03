@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Virtual Gamepad Pipe Message",
+  "type": "object",
+  "required": ["type", "payload"],
+  "properties": {
+    "id": { "type": ["string", "null"] },
+    "type": { "type": "string" },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

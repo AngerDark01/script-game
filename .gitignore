@@ -33,6 +33,11 @@ monitor_config.json
 map_*.png
 *.log
 
+# Virtual gamepad build outputs and local Python caches.
+virtual_gamepad/**/bin/
+virtual_gamepad/**/obj/
+virtual_gamepad/**/__pycache__/
+
 # Probe/debug outputs are generated locally and can be very large.
 # Keep reusable probe scripts under debug/ tracked, but ignore their
 # timestamped screenshots, reports, and evaluation directories.

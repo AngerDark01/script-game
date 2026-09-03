@@ -1,0 +1,6 @@
+host/**/bin/
+host/**/obj/
+ui/**/__pycache__/
+client/**/__pycache__/
+ui/**/*.pyc
+client/**/*.pyc
