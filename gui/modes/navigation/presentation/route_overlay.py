@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
+from PySide6.QtCore import Qt
 
 from .event_overlay import global_to_scene
+
+
+def route_pen(color, width: float = 2.0, style=Qt.SolidLine) -> QPen:
+    """Create a route overlay pen with zoom-independent visual weight."""
+    pen = QPen(color, width, style)
+    pen.setCosmetic(True)
+    return pen
 
 
 def clear_route_overlay(scene, items: list) -> tuple[list, object | None]:
@@ -43,7 +51,7 @@ def render_route_overlay(
                 center[1] - radius,
                 radius * 2,
                 radius * 2,
-                QPen(QColor(255, 170, 0), 2),
+                route_pen(QColor(255, 170, 0), 2),
             )
             item.setZValue(3)
             items.append(item)
@@ -70,7 +78,7 @@ def render_route_overlay(
             mapped[1] - radius,
             radius * 2,
             radius * 2,
-            QPen(color, pen_width),
+            route_pen(color, pen_width),
             QBrush(color),
         )
         ellipse.setZValue(4)
@@ -93,7 +101,7 @@ def render_route_overlay(
             mapped[1] - radius,
             radius * 2,
             radius * 2,
-            QPen(color, pen_width),
+            route_pen(color, pen_width),
             QBrush(color),
         )
         ellipse.setZValue(4)
@@ -115,7 +123,7 @@ def render_route_overlay(
                     path.lineTo(mapped[0], mapped[1])
             route_path_item = scene.addPath(
                 path,
-                QPen(QColor(255, 255, 0, 180), 2),
+                route_pen(QColor(255, 255, 0, 220), 3),
             )
             route_path_item.setZValue(3)
             items.append(route_path_item)
@@ -128,7 +136,7 @@ def render_route_overlay(
                 mapped[1] - 5,
                 10,
                 10,
-                QPen(QColor(255, 0, 255), 2),
+                route_pen(QColor(255, 0, 255), 2),
                 QBrush(QColor(255, 0, 255)),
             )
             subgoal.setZValue(5)

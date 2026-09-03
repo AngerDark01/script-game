@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 
 def build_map_selector_bar(owner) -> QWidget:
@@ -14,6 +14,7 @@ def build_map_selector_bar(owner) -> QWidget:
     layout.addWidget(owner.map_combo, 1)
 
     owner.btn_load = QPushButton("加载地图")
+    owner.btn_load.setProperty("role", "primary")
     layout.addWidget(owner.btn_load)
 
     owner.compact_mode_button = QPushButton("完整布局")
@@ -27,19 +28,20 @@ def build_navigation_actions_bar(owner) -> QWidget:
     bar = _toolbar_widget()
     layout = bar.layout()
 
-    owner.btn_hint = QPushButton("设置初始位置")
+    owner.btn_hint = QPushButton("设置起点")
     owner.btn_hint.setCheckable(True)
     owner.btn_hint.setEnabled(False)
     layout.addWidget(owner.btn_hint)
 
-    owner.btn_start = QPushButton("开始导航")
+    owner.btn_start = QPushButton("开始定位")
     owner.btn_start.setCheckable(True)
     owner.btn_start.setEnabled(False)
     layout.addWidget(owner.btn_start)
 
-    owner.btn_auto_nav = QPushButton("开始自动到出口")
+    owner.btn_auto_nav = QPushButton("自动到出口")
     owner.btn_auto_nav.setCheckable(True)
     owner.btn_auto_nav.setEnabled(False)
+    owner.btn_auto_nav.setProperty("role", "success")
     layout.addWidget(owner.btn_auto_nav)
 
     owner.event_button = QPushButton("事件管理")
@@ -47,6 +49,10 @@ def build_navigation_actions_bar(owner) -> QWidget:
 
     owner.params_button = QPushButton("参数面板")
     layout.addWidget(owner.params_button)
+
+    owner.compact_more_button = QPushButton("更多")
+    owner.compact_more_button.setToolTip("打开路线、事件、参数和地图工具")
+    layout.addWidget(owner.compact_more_button)
 
     layout.addStretch(1)
     return bar
@@ -82,10 +88,12 @@ def build_route_tools_bar(owner) -> QWidget:
 
     owner.btn_clear_route = QPushButton("清空路线")
     owner.btn_clear_route.setEnabled(False)
+    owner.btn_clear_route.setProperty("role", "danger")
     layout.addWidget(owner.btn_clear_route)
 
     owner.btn_save_route = QPushButton("保存路线")
     owner.btn_save_route.setEnabled(False)
+    owner.btn_save_route.setProperty("role", "success")
     layout.addWidget(owner.btn_save_route)
 
     layout.addStretch(1)
@@ -131,7 +139,10 @@ def build_utility_bar(owner) -> QWidget:
 
 def _toolbar_widget() -> QWidget:
     widget = QWidget()
+    widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    widget.setMinimumHeight(40)
+    widget.setMaximumHeight(40)
     layout = QHBoxLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
+    layout.setSpacing(8)
     return widget

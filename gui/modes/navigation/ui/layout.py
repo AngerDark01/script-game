@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout
 
 from ..route import RoutePanelController
@@ -19,6 +20,7 @@ def build_navigation_ui(owner) -> None:
     layout = QVBoxLayout(owner)
     layout.setContentsMargins(8, 8, 8, 8)
     layout.setSpacing(6)
+    layout.setAlignment(Qt.AlignTop)
 
     owner.map_selector_bar = build_map_selector_bar(owner)
     owner.navigation_actions_bar = build_navigation_actions_bar(owner)

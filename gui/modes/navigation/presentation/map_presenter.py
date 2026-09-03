@@ -7,6 +7,13 @@ from PySide6.QtGui import QBrush, QColor, QImage, QPainterPath, QPen, QPixmap
 from .viewport_overlay import game_view_scene_rect, monitor_scene_rect
 
 
+def cosmetic_pen(color, width: float = 1.0, style=Qt.SolidLine) -> QPen:
+    """Create an overlay pen whose width stays readable while zooming."""
+    pen = QPen(color, width, style)
+    pen.setCosmetic(True)
+    return pen
+
+
 def create_map_scene_items(scene, view, nav_core) -> dict:
     map_img = nav_core.get_map_image()
     h, w, c = map_img.shape
@@ -20,11 +27,11 @@ def create_map_scene_items(scene, view, nav_core) -> dict:
     map_item = scene.addPixmap(pixmap)
     map_item.setZValue(0)
 
-    player_item = scene.addEllipse(-5, -5, 10, 10, QPen(QColor("red")), QBrush(QColor("red")))
+    player_item = scene.addEllipse(-6, -6, 12, 12, cosmetic_pen(QColor("#FF5D5D"), 2), QBrush(QColor("#FF5D5D")))
     player_item.setZValue(4)
     player_item.setVisible(False)
 
-    target_pen = QPen(QColor(0, 255, 0, 200), 2)
+    target_pen = cosmetic_pen(QColor(0, 255, 0, 220), 2)
     path = QPainterPath()
     path.moveTo(-10, 0)
     path.lineTo(10, 0)
@@ -34,12 +41,12 @@ def create_map_scene_items(scene, view, nav_core) -> dict:
     target_item.setZValue(5)
     target_item.setVisible(False)
 
-    green_pen = QPen(QColor(0, 255, 0, 150), 2, Qt.DashLine)
+    green_pen = cosmetic_pen(QColor(0, 255, 0, 190), 2, Qt.DashLine)
     monitor_rect_item = scene.addRect(0, 0, 0, 0, green_pen)
     monitor_rect_item.setZValue(2)
     monitor_rect_item.setVisible(False)
 
-    orange_pen = QPen(QColor(255, 140, 0, 190), 2, Qt.DashLine)
+    orange_pen = cosmetic_pen(QColor(255, 140, 0, 220), 2, Qt.DashLine)
     game_view_rect_item = scene.addRect(0, 0, 0, 0, orange_pen)
     game_view_rect_item.setZValue(2)
     game_view_rect_item.setVisible(False)
@@ -62,7 +69,7 @@ def update_player_marker(scene, player_item, nav_core, global_pos):
     display_x = global_pos[0] - offset_x
     display_y = global_pos[1] - offset_y
     if not player_item:
-        player_item = scene.addEllipse(-5, -5, 10, 10, QPen(Qt.red), QBrush(Qt.red))
+        player_item = scene.addEllipse(-6, -6, 12, 12, cosmetic_pen(QColor("#FF5D5D"), 2), QBrush(QColor("#FF5D5D")))
         player_item.setZValue(2)
     player_item.setPos(display_x, display_y)
     player_item.setVisible(True)
