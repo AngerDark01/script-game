@@ -8,6 +8,7 @@ from .models import (
     TargetDetection,
 )
 from .profiles import AlgorithmProfile, TargetProfile
+from .registry import AlgorithmRegistry
 
 __all__ = [
     "BoundingBox",
@@ -17,4 +18,5 @@ __all__ = [
     "TargetDetection",
     "AlgorithmProfile",
     "TargetProfile",
+    "AlgorithmRegistry",
 ]
