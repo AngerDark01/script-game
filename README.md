@@ -1,4 +1,6 @@
-# 实时小地图拼接系统
+# auto_modules
+
+实时小地图拼接系统
 
 ## 项目简介
 基于计算机视觉的实时游戏地图重建系统，支持火炬之光、流放之路等ARPG游戏。
@@ -12,7 +14,7 @@
 
 ## 项目结构
 ```
-minimap_stitcher/
+auto_modules/
 ├── core/               # 核心算法模块
 │   ├── capture.py      # 屏幕捕获
 │   ├── recognizer.py   # HSV识别与二值化

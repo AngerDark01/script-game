@@ -1,4 +1,4 @@
-# Minimap Stitcher - 中心点截图模式说明
+# auto_modules - 中心点截图模式说明
 
 ## 新功能介绍
 
