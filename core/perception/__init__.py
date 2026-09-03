@@ -9,6 +9,7 @@ from .models import (
 )
 from .profiles import AlgorithmProfile, TargetProfile
 from .registry import AlgorithmRegistry
+from .builtins import create_default_algorithm_registry
 
 __all__ = [
     "BoundingBox",
@@ -19,4 +20,5 @@ __all__ = [
     "AlgorithmProfile",
     "TargetProfile",
     "AlgorithmRegistry",
+    "create_default_algorithm_registry",
 ]
