@@ -174,7 +174,7 @@ def _gui_python_executable():
 def _single_instance_mutex_name():
     project_path = str(Path(__file__).resolve().parent).lower()
     digest = hashlib.sha1(project_path.encode("utf-8", errors="ignore")).hexdigest()[:16]
-    return f"Local\\MinimapStitcher_{digest}"
+    return f"Local\\AutoModules_{digest}"
 
 
 def acquire_single_instance_lock():
@@ -194,7 +194,7 @@ def acquire_single_instance_lock():
             return True
         if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
             kernel32.CloseHandle(handle)
-            print("Another minimap_stitcher instance is already running; exiting this instance.")
+            print("Another auto_modules instance is already running; exiting this instance.")
             return False
         _SINGLE_INSTANCE_MUTEX_HANDLE = handle
         print(f"Single-instance lock acquired: {_single_instance_mutex_name()}")
@@ -262,7 +262,7 @@ if not acquire_single_instance_lock():
     sys.exit(0)
 
 if has_existing_main_window():
-    print("Another minimap_stitcher window is already running; exiting this instance.")
+    print("Another auto_modules window is already running; exiting this instance.")
     sys.exit(0)
 
 from PySide6.QtWidgets import QApplication

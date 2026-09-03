@@ -1,7 +1,7 @@
-# Minimap Stitcher 项目本体 (Ontology)
+# auto_modules 项目本体 (Ontology)
 
 ## 项目概述
-Minimap Stitcher 是一个基于计算机视觉的实时游戏地图重建系统，支持火炬之光、流放之路等ARPG游戏。它使用HSV颜色分割、相位相关算法和实时拼接技术来构建完整的游戏地图。
+auto_modules 是一个基于计算机视觉的实时游戏地图重建系统，支持火炬之光、流放之路等ARPG游戏。它使用HSV颜色分割、相位相关算法和实时拼接技术来构建完整的游戏地图。
 
 ## 模块结构
 
