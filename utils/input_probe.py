@@ -35,7 +35,7 @@ if str(ROOT) not in sys.path:
 
 import pydirectinput
 
-from core.input_driver import InputDriver
+from core.input import InputDriver
 
 
 MODES = (

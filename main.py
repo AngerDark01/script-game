@@ -88,7 +88,7 @@ def configure_runtime_output():
     log_dir = Path(__file__).resolve().parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "runtime.log"
-    _RUNTIME_LOG_HANDLE = log_path.open("w", encoding="utf-8", buffering=1)
+    _RUNTIME_LOG_HANDLE = log_path.open("w", encoding="utf-8-sig", buffering=1)
     _RUNTIME_LOG_HANDLE.write(f"\n=== session {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
 
     current_stdout = getattr(sys, "stdout", None)
@@ -266,7 +266,7 @@ if has_existing_main_window():
     sys.exit(0)
 
 from PySide6.QtWidgets import QApplication
-from gui import MainWindow
+from gui.main_window import MainWindow
 
 
 def main():

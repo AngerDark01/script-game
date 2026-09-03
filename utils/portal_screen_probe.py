@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.capture import SquareScreenCapture
+from core.platform import SquareScreenCapture
 from core.events.window_finder import find_game_window, primary_screen_rect, set_process_dpi_awareness
 from core.events.types.portal.main_view_confirmer import (
     PortalMainViewCandidate,

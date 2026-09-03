@@ -9,6 +9,11 @@ class NavigationTaskScheduler:
 
     def __init__(self):
         self._last_selected_id: str | None = None
+        self.event_route_backtrack_margin = 24.0
+        self.event_required_forward_margin = 12.0
+        self.event_exit_forward_margin = 72.0
+        self.event_fallback_player_radius = 900.0
+        self.event_fallback_static_margin = 160.0
 
     def pick(
         self,
@@ -41,7 +46,14 @@ class NavigationTaskScheduler:
             return None
 
         selected = self._nearest_by_route_progress(candidates, player_pos, route_context)
-        reason = "dynamic_route_order" if selected and selected.kind == NavigationTaskKind.EVENT else "route_static"
+        reason = "route_static"
+        if selected and selected.kind == NavigationTaskKind.EVENT:
+            player_progress = None if route_context is None or player_pos is None else route_context.progress_of(player_pos)
+            reason = (
+                "dynamic_route_order"
+                if player_progress is not None and selected.route_progress is not None
+                else "dynamic_distance_fallback"
+            )
         return self._log_selection(selected, player_pos, reason=reason)
 
     def _next_static_task(self, tasks: list[NavigationTask]) -> NavigationTask | None:
@@ -70,13 +82,13 @@ class NavigationTaskScheduler:
         player_progress = None if route_context is None else route_context.progress_of(player_pos)
         target_progress = base_target.route_progress
         if player_progress is None or target_progress is None:
-            return []
+            return self._eligible_events_without_progress(events, player_pos, base_target)
 
-        lower = min(float(player_progress), float(target_progress)) - 24.0
+        lower = min(float(player_progress), float(target_progress)) - max(0.0, float(self.event_route_backtrack_margin))
         if base_target.kind == NavigationTaskKind.REQUIRED:
-            upper = float(target_progress) + 12.0
+            upper = float(target_progress) + max(0.0, float(self.event_required_forward_margin))
         else:
-            upper = max(float(player_progress), float(target_progress)) + 72.0
+            upper = max(float(player_progress), float(target_progress)) + max(0.0, float(self.event_exit_forward_margin))
         return [
             task
             for task in events
@@ -84,12 +96,29 @@ class NavigationTaskScheduler:
             and lower <= float(task.route_progress) <= upper
         ]
 
+    def _eligible_events_without_progress(
+        self,
+        events: list[NavigationTask],
+        player_pos,
+        base_target: NavigationTask,
+    ) -> list[NavigationTask]:
+        """Fallback for maps without guide anchors, where route progress is unavailable."""
+        base_distance = _distance(base_target.target_pos, player_pos)
+        player_radius = max(0.0, float(self.event_fallback_player_radius))
+        static_margin = max(0.0, float(self.event_fallback_static_margin))
+        eligible: list[NavigationTask] = []
+        for task in events:
+            event_distance = _distance(task.target_pos, player_pos)
+            if event_distance <= player_radius and event_distance <= base_distance + static_margin:
+                eligible.append(task)
+        return eligible
+
     def _nearest_by_route_progress(self, tasks: list[NavigationTask], player_pos, route_context) -> NavigationTask | None:
         if not tasks:
             return None
         player_progress = None if route_context is None or player_pos is None else route_context.progress_of(player_pos)
         if player_progress is None:
-            return _nearest(tasks, player_pos)
+            return _nearest_by_distance(tasks, player_pos)
         return sorted(
             tasks,
             key=lambda task: (
@@ -130,6 +159,25 @@ def _nearest(tasks: list[NavigationTask], player_pos) -> NavigationTask | None:
             task.id,
         ),
     )[0]
+
+
+def _nearest_by_distance(tasks: list[NavigationTask], player_pos) -> NavigationTask | None:
+    if not tasks:
+        return None
+    if player_pos is None:
+        return tasks[0]
+    return sorted(
+        tasks,
+        key=lambda task: (
+            _distance_sq(task.target_pos, player_pos),
+            -int(task.priority),
+            task.id,
+        ),
+    )[0]
+
+
+def _distance(point, player_pos) -> float:
+    return _distance_sq(point, player_pos) ** 0.5
 
 
 def _distance_sq(point, player_pos) -> float:

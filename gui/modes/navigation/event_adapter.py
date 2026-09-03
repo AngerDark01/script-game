@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from core.events.models import EventActionType, EventTick
+from core.events.models import EventTick
 from core.events.registry import EventRegistry
+from core.events.types.loot import LootEventDefinition
 from core.events.types.portal import PortalEventDefinition
 from core.events.window_finder import find_game_window
 
@@ -9,6 +10,7 @@ from core.events.window_finder import find_game_window
 def create_default_event_registry() -> EventRegistry:
     registry = EventRegistry()
     registry.register(PortalEventDefinition())
+    registry.register(LootEventDefinition())
     return registry
 
 
@@ -52,25 +54,7 @@ def build_event_tick(
     )
 
 
-def should_event_action_take_control(event_action) -> bool:
-    if event_action is None:
-        return False
-    return event_action.type in {
-        EventActionType.MOVE_TO,
-        EventActionType.CLICK_SCREEN,
-        EventActionType.PRESS_KEY,
-        EventActionType.WAIT,
-    }
-
-
-def is_terminal_event_action(event_action) -> bool:
-    if event_action is None:
-        return False
-    return event_action.type in {EventActionType.COMPLETE, EventActionType.FAIL}
-
-
 def event_status_text(event_coordinator) -> str:
     if not event_coordinator:
         return ""
     return event_coordinator.status_summary()
-

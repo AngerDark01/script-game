@@ -8,6 +8,9 @@ from .models import NavigationTask, NavigationTaskKind, NavigationTaskState
 class NavigationTaskBuilder:
     """Build static route goals and dynamic event tasks into one task list."""
 
+    def __init__(self, *, required_arrival_radius: float = 26.0):
+        self.required_arrival_radius = float(required_arrival_radius)
+
     def build(
         self,
         *,
@@ -34,7 +37,7 @@ class NavigationTaskBuilder:
                     priority=50,
                     route_progress=_progress(route_context, target),
                     required_index=index,
-                    radius=26.0,
+                    radius=max(1.0, float(self.required_arrival_radius)),
                 )
             )
 
@@ -58,6 +61,7 @@ class NavigationTaskBuilder:
             if not _is_event_runnable(event_task):
                 continue
             target = _float_point(getattr(event_task, "global_pos", None))
+            event_radius = _event_radius(event_task)
             tasks.append(
                 NavigationTask(
                     id=f"event:{getattr(event_task, 'id', '')}",
@@ -68,9 +72,11 @@ class NavigationTaskBuilder:
                     route_progress=_progress(route_context, target),
                     source_ref=event_task,
                     event_type=str(getattr(event_task, "event_type", "")),
+                    radius=event_radius,
                     metadata={
                         "event_task_id": str(getattr(event_task, "id", "")),
                         "event_state": str(getattr(getattr(event_task, "state", None), "value", getattr(event_task, "state", ""))),
+                        "event_stop_radius": event_radius,
                     },
                 )
             )
@@ -92,3 +98,11 @@ def _progress(route_context, point) -> float | None:
 def _float_point(point) -> tuple[float, float]:
     return (float(point[0]), float(point[1]))
 
+
+def _event_radius(event_task) -> float | None:
+    metadata = getattr(event_task, "metadata", {}) or {}
+    if str(getattr(event_task, "event_type", "")) == "loot":
+        radius = metadata.get("pickup_radius")
+        if radius is not None:
+            return max(4.0, float(radius))
+    return None

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import math
-
-from core.path_utils import point_distance
+from core.routing.geometry import point_distance
+from core.routing.route_progress import build_cumulative_lengths, project_point_on_polyline
 
 from .models import RouteAnchor, RouteProjection
 
@@ -26,42 +25,20 @@ class RouteContext:
         return len(self._points) >= 2
 
     def project(self, point) -> RouteProjection | None:
-        if not self._points:
+        projection = project_point_on_polyline(
+            point,
+            self._points,
+            self._cumulative,
+            degenerate_epsilon=1e-6,
+        )
+        if projection is None:
             return None
-        if len(self._points) == 1:
-            anchor = self._points[0]
-            return RouteProjection(
-                point=anchor,
-                progress=0.0,
-                segment_index=0,
-                deviation=point_distance(point, anchor),
-            )
-
-        px, py = float(point[0]), float(point[1])
-        best: RouteProjection | None = None
-        for index in range(len(self._points) - 1):
-            ax, ay = self._points[index]
-            bx, by = self._points[index + 1]
-            vx, vy = bx - ax, by - ay
-            seg_len_sq = vx * vx + vy * vy
-            if seg_len_sq <= 1e-6:
-                ratio = 0.0
-            else:
-                ratio = ((px - ax) * vx + (py - ay) * vy) / seg_len_sq
-                ratio = max(0.0, min(1.0, ratio))
-            proj_x = ax + vx * ratio
-            proj_y = ay + vy * ratio
-            deviation = math.hypot(px - proj_x, py - proj_y)
-            progress = self._cumulative[index] + math.sqrt(seg_len_sq) * ratio
-            candidate = RouteProjection(
-                point=(proj_x, proj_y),
-                progress=float(progress),
-                segment_index=index,
-                deviation=float(deviation),
-            )
-            if best is None or candidate.deviation < best.deviation:
-                best = candidate
-        return best
+        return RouteProjection(
+            point=projection.point,
+            progress=projection.progress,
+            segment_index=projection.segment_index,
+            deviation=projection.deviation,
+        )
 
     def progress_of(self, point) -> float | None:
         projection = self.project(point)
@@ -147,12 +124,7 @@ class RouteContext:
 
     @staticmethod
     def _build_cumulative(points: list[tuple[float, float]]) -> list[float]:
-        if not points:
-            return []
-        cumulative = [0.0]
-        for index in range(1, len(points)):
-            cumulative.append(cumulative[-1] + point_distance(points[index - 1], points[index]))
-        return cumulative
+        return build_cumulative_lengths(points)
 
 
 def _dedupe_points(points) -> list[tuple[float, float]]:
@@ -167,4 +139,3 @@ def _dedupe_points(points) -> list[tuple[float, float]]:
         seen.add(key)
         result.append((float(raw[0]), float(raw[1])))
     return result
-

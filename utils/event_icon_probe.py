@@ -20,12 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.capture import SquareScreenCapture
+from core.platform import SquareScreenCapture
 from core.events.detectors.template_matcher import TemplateMatchHit, load_template, match_single_template, merge_hits
 from core.events.types.portal.assets import PORTAL_MINIMAP_TEMPLATES
 from core.events.types.portal.minimap_feature_matcher import build_feature_templates, match_portal_features
-from core.events.types.portal.minimap_detector import _portal_color_check
-from core.events.types.portal.minimap_shape_color_matcher import (
+from core.events.types.portal.minimap_hit_filter import portal_color_check
+from core.events.types.portal.minimap_shape_color import (
     PortalShapeColorParams,
     match_portal_shape_color,
 )
@@ -207,7 +207,7 @@ def print_shape_color_hit(prefix: str, hit) -> None:
 
 
 def print_portal_color(prefix: str, frame, hit: TemplateMatchHit, min_blue_ratio: float) -> None:
-    color = _portal_color_check(frame, hit, min_blue_ratio)
+    color = portal_color_check(frame, hit, min_blue_ratio)
     state = "color-ok" if color["accepted"] else "color-rejected"
     print(
         f"{prefix} {state} "

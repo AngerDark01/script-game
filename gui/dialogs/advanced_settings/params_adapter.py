@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .presets import DEFAULT_PRESET_NAME, preset_values
+
 
 def load_params_to_widgets(dialog, params: dict) -> None:
     dialog.blur_strength_spin.setValue(3)
@@ -124,35 +126,15 @@ def apply_loaded_params_to_widgets(dialog, params: dict) -> None:
 
 
 def apply_preset_to_widgets(dialog, preset: str) -> bool:
-    if preset == "默认参数":
+    if preset == DEFAULT_PRESET_NAME:
         reset_widgets_to_default(dialog)
         return True
-    if preset == "流放之路优化":
-        dialog.contrast_factor_spin.setValue(1.3)
-        dialog.blue_boost_spin.setValue(1.2)
-        dialog.edge_low_spin.setValue(40)
-        dialog.edge_high_spin.setValue(120)
-        dialog.wall_weight_spin.setValue(60)
-        dialog.edge_weight_spin.setValue(25)
-        dialog.gray_weight_spin.setValue(15)
-        return True
-    if preset == "火炬之光优化":
-        dialog.contrast_factor_spin.setValue(1.1)
-        dialog.blue_boost_spin.setValue(1.0)
-        dialog.edge_low_spin.setValue(60)
-        dialog.edge_high_spin.setValue(180)
-        dialog.wall_weight_spin.setValue(45)
-        dialog.edge_weight_spin.setValue(35)
-        dialog.gray_weight_spin.setValue(20)
-        return True
-    if preset == "高对比度模式":
-        dialog.contrast_factor_spin.setValue(1.5)
-        dialog.blue_boost_spin.setValue(1.3)
-        dialog.clahe_clip_spin.setValue(3.0)
-        return True
-    if preset == "低对比度模式":
-        dialog.contrast_factor_spin.setValue(1.0)
-        dialog.blue_boost_spin.setValue(1.0)
-        dialog.clahe_clip_spin.setValue(1.5)
-        return True
-    return False
+
+    values = preset_values(preset)
+    if values is None:
+        return False
+
+    for widget_name, value in values.items():
+        getattr(dialog, widget_name).setValue(value)
+
+    return True

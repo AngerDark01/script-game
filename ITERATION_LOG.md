@@ -2589,3 +2589,381 @@ ext_anchor=(3020,2383) 进入 nchor_probe，说明该辅助锚点 A* 不可达�
 |------|----------|---------|-------|------|
 | `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Dialog is now a tool window and not deleted on close. |
 | `gui/modes/navigation_mode.py` | (partial) | (partial) | appended | Event manager lifecycle now uses ensure/rebind/show guard. |
+
+## [SYNC] 2026-06-03 17:07 - Loot ROI feature match probe
+
+### A. SYNC scope
+**Task:** User asked for an independent probe of ROI-internal shape similarity matching, similar to a lightweight CNN feature response, and to measure effect plus resource cost before runtime integration.
+**Direct files changed:** `debug/loot_feature_match_probe.py`, `architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Adds a standalone debug/probe entry only. Production `LootMinimapDetector` behavior is unchanged.
+
+### C. SYNC result
+**Code change:** Added `debug/loot_feature_match_probe.py`. The probe reuses loot template loading, alpha masks, center-player exclusion templates, and `loot_seed_bboxes()`, then searches fixed-size multi-anchor ROI windows with yellow-diamond/red-star/gold-triangle templates. Candidate scoring combines masked template similarity, edge overlap, Chamfer distance, 2x2 HOG-lite similarity, contour/Hu similarity, semantic shape gates, and low-weight color evidence. The probe defaults to shape templates only, scales `0.75,0.85,1.0`, and `top_k_per_template=2`.
+
+**Verification:**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile debug\loot_feature_match_probe.py` passed.
+- Full dataset probe passed on `D:\ACloud\image\sample`: run `debug/loot_feature_match_probe/20260603_170739/`, TP=25, FP=0, FN=0, TN=52, precision=1.0000, recall=1.0000, FPR=0.0000, average total time 241.665ms, p95 449.336ms, max 666.978ms.
+- `--workers 4` comparison reduced wall-clock only slightly but increased per-image latency, so runtime integration should prefer an async detector thread over per-frame multithreading.
+
+**CODEBASE.md updated:** Added the new probe command, algorithm chain, latest metrics, and runtime integration caveat.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `debug/loot_feature_match_probe.py` | PENDING | (partial) | 1 | New standalone probe for ROI sliding multi-feature loot shape matching; production detector not changed. |
+| `architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md` | (partial) | (partial) | appended | Documented 2026-06-03 probe algorithm, metrics, and threading caveat in Chinese. |
+| `CODEBASE.md` | (partial) | (partial) | appended | Added probe entry and latest dataset result to loot project intelligence section. |
+
+## [SYNC] 2026-06-03 17:12 - Loot async perception implementation
+
+### A. SYNC scope
+**Task:** Implement the agreed decoupled multi-layer loot perception rule: cheap first-stage detection, heavy feature matching only when needed, async execution, memory dedupe, and no blocking of the navigation frame loop.
+**Direct files expected:** `core/events/types/loot/*`, `core/events/types/loot/detection/*`, possibly `gui/modes/navigation/events/*` or event coordinator wiring if runtime integration requires it.
+**Expected impact:** Production loot detection should stop running heavyweight recognition synchronously every frame; the navigation loop should consume cached/confirmed loot observations while an independent worker processes fresh minimap frames.
+
+## [SYNC] 2026-06-03 17:42 - Loot async probe parity diagnosis
+
+### A. SYNC scope
+**Task:** Keep production loot default parameters identical to the successful feature-match probe, then diagnose why the async production integration missed several positive samples while the probe reached 25 TP / 0 FP / 0 FN / 52 TN.
+**Direct files expected:** `core/events/types/loot/minimap_detector.py`, `core/events/types/loot/perception/*`, `core/events/types/loot/detection/feature_match/*`, `core/events/types/loot/config.py`, Chinese loot architecture docs, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Runtime detector should use the same feature defaults as `debug/loot_feature_match_probe.py`, keep heavy matching off the frame loop, and avoid clearing fresh async detections before the caller can consume them.
+
+### C. SYNC result
+**Key finding:** Production `FeatureLootMatcher.detect()` already matches the probe on `D:/ACloud/image/sample`: TP=25, FP=0, FN=0, TN=52. The production async path also matches when the harness waits for the worker result instead of treating the first empty frame as final: TP=25, FP=0, FN=0, TN=52.
+
+**Default parameter parity:** Confirmed from `map_data/A/event_config.json` and `LootEventConfig.from_dict()`:
+- `detector_mode=async_feature_match`
+- `feature_match_threshold=0.64`
+- `feature_match_collect_threshold=0.38`
+- `feature_match_top_k_per_template=2`
+- `feature_match_max_candidates=5`
+- `feature_match_search_padding=48`
+- `feature_match_scales=0.75,0.85,1.0`
+
+**Code change:** No feature threshold or matcher behavior changed in this sub-round. Documentation was corrected because the previous text still said the feature probe was not connected to runtime and described `weighted_blob` as the main default path.
+
+**Verification:**
+- Compile passed: `D:\ACloud\.venv\Scripts\python.exe -m py_compile core\events\config_model.py core\events\types\loot\config.py core\events\types\loot\definition.py core\events\types\loot\minimap_detector.py core\events\types\loot\detection\feature_match\models.py core\events\types\loot\detection\feature_match\descriptors.py core\events\types\loot\detection\feature_match\semantics.py core\events\types\loot\detection\feature_match\matcher.py core\events\types\loot\perception\models.py core\events\types\loot\perception\projection.py core\events\types\loot\perception\async_worker.py`.
+- Latest probe output: `debug/loot_feature_match_probe/20260603_174004/`, TP=25, FP=0, FN=0, TN=52, precision=1.0000, recall=1.0000, FPR=0.0000, avg=341.366ms, p95=664.686ms.
+- Production async harness with valid `FrameRegistration`: TP=25, FP=0, FN=0, TN=52, elapsed wall time about 44.151s for 77 offline samples.
+
+**CODEBASE.md updated:** Loot top-level section now states that `detection/feature_match/` is the production backend for `async_feature_match`, lists the probe-aligned defaults, and records sync/async parity verification.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `core/events/types/loot/config.py` | (partial) | (partial) | appended | Rechecked feature defaults and map-config parity with probe defaults. |
+| `core/events/types/loot/minimap_detector.py` | (partial) | (partial) | appended | Rechecked default async dispatch, sync feature mode, and weighted blob fallback. |
+| `core/events/types/loot/perception/async_worker.py` | PENDING | (partial) | 1 | Rechecked worker submission, result merge, TTL, visibility update, and detection projection. |
+| `core/events/types/loot/detection/feature_match/matcher.py` | PENDING | (partial) | 1 | Rechecked production matcher parity with probe on full sample set. |
+| `architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated module tree and runtime algorithm description for async feature matching. |
+| `CODEBASE.md` | (partial) | (partial) | appended | Updated loot summary and verification result. |
+
+## [SYNC] 2026-06-03 18:05 - Loot async integration vs player localization diagnosis
+
+### A. SYNC scope
+**Task:** User reports latest runtime is no longer laggy, but player localization becomes inaccurate as soon as movement starts. Diagnose whether the new loot recognition / async feature matching path interferes with localization or navigation frame state.
+**Direct files expected:** `gui/modes/navigation/runtime/*`, `core/localization/*`, `core/events/types/loot/*`, `core/events/coordinator/*`, `core/shared/frame_registration.py`, `CODEBASE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Identify whether loot detection mutates minimap frames, registration, localization state, or event/navigation targets; only change code if a concrete side effect or unsafe coupling is found.
+
+## [SYNC] 2026-06-03 19:45 - Hook and event scheduler localization drift diagnosis
+
+### A. SYNC scope
+**Task:** Continue diagnosing whether player localization drift during movement is caused by hook key presses, event task scheduling, or event async observer load rather than direct loot frame mutation.
+**Direct files expected:** `core/events/hooks/instances/key_press.py`, `core/events/hooks/runtime.py`, `core/navigation_tasks/event_task_runner.py`, `core/navigation_tasks/event_approach/*`, `gui/dialogs/event_manager/hooks/*`, recent `logs/event_runs/*`.
+**Expected impact:** Confirm whether enabled hooks without event binding are skipped, whether visible/completed hooks are one-shot, whether repeated event tasks can influence movement/localization, and whether extra runtime probes are required.
+
+## [SYNC] 2026-06-04 14:08 - Initial localization drift diagnosis probe
+
+### A. SYNC scope
+**Task:** User reports that initial global localization is already wrong before movement, so continue diagnosis with a reproducible first-frame localization probe and lightweight runtime coordinate sampling.
+**Direct files expected:** `core/localization/*`, `core/navigation_tasks/coordinate/*`, `debug/navigation_localization_probe.py`, `map_data/A/config.json`, latest `debug/minimap_samples/A/*`.
+**Expected impact:** Separate event/loot runtime effects from first-frame template matching behavior, preserve production localization code path, and produce artifacts that show raw minimap mask, map match patch, saved-position patch, and top candidate scores.
+
+### C. SYNC result
+**Key finding:** Current evidence does not support loot/event runtime as the direct cause of the reported initial wrong global localization. `capture_navigation_localization_tick()` localizes before event observation, the async event observer clones frames, recent event logs show `dropped=0`, and `map_data/A/config.json` has no git diff. The latest sample reproduces the wrong/contested point offline through first-frame `NavigationCore.localize()` alone.
+
+**Probe result:** Added `debug/navigation_localization_probe.py` and ran it on `debug/minimap_samples/A/20260604_135548_439_A_minimap.png`. Latest output directory: `debug/navigation_localization_probe/20260604_142234_20260604_135548_439_A_minimap/`. Production settings used `draw_scale=3.0`, `wall_match_close_kernel_size=3`, template shape `600x600`, full-map search `7500x7500`.
+
+**Observed localization:** Top candidate and `NavigationCore.localize()` result are both `(4211,3272)` with confidence `0.7744859457`, `frame_origin_global=(3911,2972)`. The saved map package `current_pos=(4792.48,3630.25)` scores `-0.02080567` on the same response map. Top candidate #2 is only `0.228927`, so the algorithm has a strong first choice, but it may still be the wrong gameplay location if the expected location is known.
+
+**Differential check:** Executed the old `HEAD:core/recognizer_optimized.py` recognizer in-memory against the same sample and same `map_data/A/config.json` recognizer parameters. Old and current recognizers produced identical masks: `wall differing pixels=0`, `match differing pixels=0`; both matched `(4211,3272)` with confidence `0.7744859457`. This rules out the recognizer split and current `frame_matcher` extraction as the cause for this sample. If previous runtime was accurate, the remaining high-probability source is upstream input/map state: capture rectangle / player-local coordinate / live screenshot content / map package mismatch.
+
+**Code change:** Added 500ms runtime localization sampling to `core/navigation_tasks/coordinate/localization.py` and exposed the interval in `CoordinateDiagnostics`. Fixed `coordinate/log.py` to write project-root `logs/coordinate_diagnostics.log`, and bridge coordinate diagnostics into current event session logs when available. Also preserved `drawing_saved_pos/last_pos` in `core/localization/navigation_core/state.py` so the saved map position remains visible to UI/debug after runtime state initialization; this does not automatically set `current_pos` or mark localization valid. Added `navigation capture geometry` event log in `gui/modes/navigation/runtime/localization_tick.py` whenever capture rectangle or player-local position changes.
+
+**Verification:**
+- `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\modes\navigation\runtime\localization_tick.py core\localization\navigation_core\state.py core\navigation_tasks\coordinate\log.py core\navigation_tasks\coordinate\diagnostics.py core\navigation_tasks\coordinate\localization.py debug\navigation_localization_probe.py` passed.
+- Probe command passed and produced `report.json`, `wall_mask.png`, `match_mask.png`, `wall_mask_scaled.png`, `matched_map_patch.png`, `saved_pos_patch.png`, and `top_candidates_sheet.png`.
+
+**Docs updated:** `CODEBASE.md`, `architecture_docs/zh-CN/core/ARCHITECTURE.md`, and `architecture_docs/zh-CN/core/navigation_tasks/ARCHITECTURE.md` now record the diagnostic probe, latest sample result, and coordinate sample logging behavior.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `core/localization/localize_pipeline.py` | (partial) | (partial) | appended | Rechecked first-frame full-map template matching path and confirmed it reproduces without event runtime. |
+| `core/localization/frame_matcher.py` | (partial) | (partial) | appended | Rechecked wall template scale/search-area helpers used by the probe. |
+| `core/localization/map_package.py` | (partial) | (partial) | appended | Rechecked saved `current_pos`, draw scale, and wall close kernel loading. |
+| `core/localization/navigation_core/state.py` | (partial) | (partial) | appended | Preserved saved drawing position for UI/debug while keeping initial localization untrusted. |
+| `core/navigation_tasks/coordinate/localization.py` | (partial) | (partial) | appended | Added compact localization sample logging. |
+| `gui/modes/navigation/runtime/localization_tick.py` | (partial) | (partial) | appended | Added capture geometry log to separate wrong screenshot region from matcher behavior. |
+| `debug/navigation_localization_probe.py` | PENDING | (partial) | 1 | New standalone first-frame localization probe using production config and `NavigationCore`. |
+
+## [SYNC] 2026-06-04 20:40 - Loot player mask UI and portal duplicate diagnosis
+
+### A. SYNC scope
+**Task:** User reports latest loot localization is acceptable, but the loot player erase/mask radius is too large and must be adjustable in the frontend/event panel. Portal recognition accuracy appears lower and portal events may be repeatedly recognized/localized; diagnose whether recent portal code changes or configuration caused it.
+**Direct files expected:** `core/events/types/loot/definition.py`, `core/events/types/loot/config.py`, `gui/dialogs/event_manager_dialog.py`, `core/events/types/portal/*`, `core/events/position_stabilizer/*`, `core/events/memory/*`, `map_data/A/event_config.json`, recent `logs/event_runs/*`.
+**Expected impact:** Make loot player-center mask radius clearly configurable from the GUI; identify portal detector mode / threshold / dedupe configuration or code-path causes for duplicate portal tasks; update Chinese architecture docs and CODEBASE if code changes are made.
+
+### C. SYNC result
+**Key findings:** The latest runtime log `logs/event_runs/20260604_201657_742_pid24360_navigation.log` started portal detection with `mode=feature_then_template`, while the current `map_data/A/event_config.json` has `portal.detector_mode="shape_color"`. That means the reported run used an older in-memory config or the file was saved after the run. Duplicate portal tasks in that log were not identical coordinates; they stabilized around nearby positions such as `(2983,1913)` and `(3032,1980)`, roughly 70-85 map pixels apart. The old portal defaults `localization_cluster_radius=56` and `dedupe_radius=32` were therefore too small to merge that duplicate/jitter band.
+
+**Code changes:**
+- `gui/dialogs/event_manager_dialog.py`: parameter rows now support schema `help` tooltips on both label and input widget.
+- `core/events/types/loot/definition.py`: `player_center_mask_enabled` and `player_center_mask_radius` now have Chinese labels and help text; radius min lowered to 4 so the user can tune down an overly large center erase.
+- `core/events/types/portal/config.py` and `core/events/config_model.py`: portal default `detector_mode` changed to `shape_color`; added `minimap_nms_radius=28`; default `localization_cluster_radius` and `dedupe_radius` changed to 96.
+- `core/events/types/portal/definition.py`: exposed `minimap_nms_radius`, `dedupe_radius`, localization sample/TTL/emit parameters, cooldown radius, and exit completion radius in the event manager schema.
+- `core/events/types/portal/minimap_detection/conversion.py`: accepted portal hits are now locally deduped by `minimap_nms_radius` before becoming `EventDetection`, preventing near duplicate template/scale hits from entering separate localization clusters.
+- `map_data/A/event_config.json`: current map portal config now uses `max_candidates=2`, `minimap_nms_radius=28`, `localization_cluster_radius=96`, and `dedupe_radius=96`.
+
+**Verification:**
+- Compile passed: `D:\ACloud\.venv\Scripts\python.exe -m py_compile gui\dialogs\event_manager_dialog.py core\events\types\loot\definition.py core\events\types\portal\config.py core\events\types\portal\definition.py core\events\types\portal\minimap_detection\conversion.py core\events\config_model.py`.
+- Local NMS harness passed: two dummy portal hits 20 local pixels apart with `minimap_nms_radius=28` produce `near 1`; hits 35 pixels apart produce `far 2`.
+- Config reload check passed: `portal shape_color 2 28 96 96 700`; `loot_mask True 28`.
+
+**Docs updated:** `CODEBASE.md`, `architecture_docs/zh-CN/core/events/types/portal/ARCHITECTURE.md`, and `architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md`.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `core/events/types/loot/definition.py` | (partial) | (partial) | appended | Confirmed player center mask radius already existed, then made GUI label/help explicit. |
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Confirmed schema-driven param rendering and added tooltip support. |
+| `core/events/types/portal/config.py` | (partial) | (partial) | appended | Updated defaults for detector mode, local NMS, cluster radius, and memory dedupe radius. |
+| `core/events/types/portal/definition.py` | (partial) | (partial) | appended | Exposed portal duplicate-control and localization parameters in the event panel schema. |
+| `core/events/types/portal/minimap_detection/conversion.py` | (partial) | (partial) | appended | Added accepted-hit local NMS before EventDetection conversion. |
+| `core/events/position_stabilizer/clusters.py` | (partial) | (partial) | appended | Rechecked cluster merge behavior and confirmed old 56px radius caused nearby duplicate clusters. |
+| `core/events/memory/lookup.py` | (partial) | (partial) | appended | Rechecked task dedupe behavior and confirmed old 32px radius allowed nearby duplicate tasks. |
+| `map_data/A/event_config.json` | (partial) | (partial) | appended | Updated current map portal duplicate-control parameters. |
+| `logs/event_runs/20260604_201657_742_pid24360_navigation.log` | PENDING | (partial) | 1 | Used as runtime evidence for feature_then_template mode and duplicate portal task distances. |
+
+## [PLAN] 2026-06-08 - Event manager compact UI and navigation compact mode modularization
+
+### A. Scope declaration before reading
+**Task:** User wants a smaller, cleaner UI for testing events and navigation, with code organized as independent modular UI components for future optimization. Do not run the app yet; first produce a codebase-informed plan.
+**Target files expected:** `gui/dialogs/event_manager_dialog.py`, `gui/dialogs/event_manager/*`, `gui/modes/navigation/ui/layout.py`, `gui/modes/navigation/widget.py`, `gui/modes/navigation/events/dialog_lifecycle.py`, `gui/modes/navigation/composition/lifecycles.py`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md`.
+**Expected impact:** Decide module boundaries for event manager compact/full modes and navigation compact layout before implementation; keep current full parameter editor intact while adding a small testing surface.
+
+### C. Planning findings
+**Key findings:** `EventManagerDialog` is already driven by event schemas and command signals, but its shell, event selector, parameter form, task table, footer actions, and hook panel are still assembled in one dialog class. `NavigationModeWidget` has been reduced to a composition root, but `gui/modes/navigation/ui/layout.py` still creates every navigation control in one horizontal toolbar and stores the map view as the main stretch widget. The current UI pain comes more from layout density and dialog size than from core algorithm coupling.
+
+**Stable integration points to preserve:** `NavigationEventDialogLifecycle` and `ManualEventTestController` currently depend on `dialog.test_portal_button`; `connect_navigation_signals()` depends on stable `owner.btn_*`, `owner.params_button`, `owner.event_button`, `owner.sample_window_button`, and `owner.save_minimap_sample_button` attributes. The compact UI refactor should keep these attributes while moving construction and mode switching into focused UI modules.
+
+**Planned module direction:** split event manager UI under `gui/dialogs/event_manager/` into dialog shell, shared state/context, schema form, task status view, footer actions, and compact/full page composition; split navigation UI under `gui/modes/navigation/ui/` into map view factory, primary toolbar, route-edit toolbar, secondary tools, status strip, and compact-mode controller. Keep existing public entry points (`EventManagerDialog`, `build_navigation_ui(owner)`, `connect_navigation_signals(owner)`) during the first implementation pass.
+
+**Risk notes:** compact/full toggling must not create duplicate test buttons or reconnect signals repeatedly; event config mutation is in-place and should remain so for dict-backed event configs; route edit buttons must remain wired to `RoutePanelController`; map view size changes should affect presentation only and not alter capture geometry or localization parameters.
+
+**Verification plan after implementation:** run `py_compile` on changed GUI modules first, then start the app only after user approval for runtime verification. Chinese architecture docs should be updated after code changes; English docs are not required for this UI pass unless `CODEBASE.md` must be synchronized.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Confirmed schema-driven event config rendering, task table, command signals, hook panel integration, and fixed `test_portal_button` dependency. |
+| `gui/dialogs/event_manager/hooks/panel.py` | (partial) | (partial) | appended | Confirmed hook table is already independent enough to keep as a full-mode tab or compact summary source. |
+| `gui/modes/navigation/ui/layout.py` | (partial) | (partial) | appended | Confirmed one dense toolbar plus map view/status/route panel construction; suitable for UI package split. |
+| `gui/modes/navigation/ui/signals.py` | (partial) | (partial) | appended | Confirmed signal wiring depends on stable owner button attributes, so compact modules must preserve those names. |
+| `gui/modes/navigation/widget.py` | (partial) | (partial) | appended | Confirmed widget remains composition root and public wrapper surface, not the right place for compact layout logic. |
+| `gui/modes/navigation/events/dialog_lifecycle.py` | (partial) | (partial) | appended | Confirmed event dialog lifecycle owns create/toggle/refresh and manual portal test button syncing. |
+| `gui/modes/navigation/composition/lifecycles.py` | (partial) | (partial) | appended | Confirmed runtime initialization creates event dialog and manual test controller after UI construction. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Rechecked current dialog guidance and noted EventManager can become the compact/schema-form template. |
+| `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md` | (partial) | (partial) | appended | Rechecked navigation UI boundaries, current public surface, and remaining optimization candidates. |
+
+## [SYNC] 2026-06-08 - Event manager and navigation compact UI implementation
+
+### A. SYNC scope
+**Task:** Implement the approved compact/small-window UI plan. Split event manager and navigation UI construction into feature modules, keep stable public attributes/signals, add compact/full mode toggles, and update Chinese architecture docs after implementation.
+**Direct files expected:** `gui/dialogs/event_manager_dialog.py`, new `gui/dialogs/event_manager/*` view modules, `gui/modes/navigation/ui/layout.py`, new `gui/modes/navigation/ui/*` component modules, `gui/modes/navigation/ui/signals.py`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md`.
+**Expected impact:** Presentation-only refactor. Core algorithms, event detection, capture geometry, navigation runtime, hook runtime, and map/session config should not change. Existing callers should continue to use `EventManagerDialog`, `build_navigation_ui(owner)`, and `connect_navigation_signals(owner)`.
+
+### C. SYNC result
+**Code changes:**
+- `gui/dialogs/event_manager_dialog.py` is now a compatibility import shell; the real dialog moved to `gui/dialogs/event_manager/dialog.py`.
+- Added `gui/dialogs/event_manager/layout.py`, `schema_form.py`, and `task_table.py`. The dialog now has a default compact page and a full tabs page. Both share the same event selector, global enable switch, command footer, config mutation path, and stable `test_portal_button` attribute.
+- Compact event manager mode defaults to about `480x620`; full mode restores about `1040x780`. Compact mode shows event overview, common parameters, compact task state, and the existing save/refresh/test/reset actions.
+- `gui/modes/navigation/ui/layout.py` is now a composition entry only. Toolbar construction moved to `components/toolbars.py`, map view creation to `components/map_view.py`, status label creation to `components/status.py`, and compact/full presentation policy to `compact/controller.py`.
+- Navigation compact mode is enabled by default. Route editing tools are folded behind `路线工具`; map view maximum height is limited in compact mode and restored in full mode. Existing button attributes are still attached to `NavigationModeWidget`.
+
+**Verification:**
+- `py_compile` passed for all changed/new event-manager and navigation-UI modules.
+- Import smoke check passed: old `gui.dialogs.event_manager_dialog.EventManagerDialog`, new `gui.dialogs.event_manager.EventManagerDialog`, `build_navigation_ui`, and `connect_navigation_signals` import successfully.
+- Offscreen construction check passed for `EventManagerDialog`: compact/full mode toggles construct and preserve `test_portal_button` and `compact_task_table`.
+- Offscreen fake-owner construction check passed for `build_navigation_ui(owner)`: all old button/view/status/route attributes exist; compact mode is true by default and route tools are hidden.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` and `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md`. English docs intentionally not updated per user preference.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/event_manager_dialog.py` | (partial) | (partial) | appended | Converted to compatibility shell while preserving old imports. |
+| `gui/dialogs/event_manager/dialog.py` | PENDING | (partial) | 1 | New real event manager dialog shell with compact/full mode and stable command signals. |
+| `gui/dialogs/event_manager/layout.py` | PENDING | (partial) | 1 | New event-manager UI composition module for header, compact page, full tabs, and footer. |
+| `gui/dialogs/event_manager/schema_form.py` | PENDING | (partial) | 1 | New schema-to-widget factory and full/compact editor sync helper. |
+| `gui/dialogs/event_manager/task_table.py` | PENDING | (partial) | 1 | New full/compact event task table renderer. |
+| `gui/modes/navigation/ui/layout.py` | (partial) | (partial) | appended | Reduced to navigation UI composition entry with compact controller setup. |
+| `gui/modes/navigation/ui/signals.py` | (partial) | (partial) | appended | Added compact-layout and route-tools button wiring. |
+| `gui/modes/navigation/ui/components/toolbars.py` | PENDING | (partial) | 1 | New navigation toolbar builders preserving old owner button attributes. |
+| `gui/modes/navigation/ui/components/map_view.py` | PENDING | (partial) | 1 | New map scene/view factory preserving scene item fields. |
+| `gui/modes/navigation/ui/components/status.py` | PENDING | (partial) | 1 | New status-label factory. |
+| `gui/modes/navigation/ui/compact/controller.py` | PENDING | (partial) | 1 | New presentation-only compact/full layout controller. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated EventManager modularization and compact/full mode rules. |
+| `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated navigation UI component boundaries and compact mode behavior. |
+
+## [SYNC] 2026-06-08 - Continue compact GUI development
+
+### A. SYNC scope
+**Task:** Continue GUI development after the first compact navigation/event-manager pass. Inspect remaining GUI surfaces that can still make the app cumbersome during gameplay testing, then implement the next low-risk modular UI improvement while preserving existing behaviour.
+**Direct files expected:** `gui/main_window.py`, `gui/dialogs/nav_params_dialog.py`, `gui/dialogs/nav_params/*`, `gui/modes/navigation/ui/*`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `architecture_docs/zh-CN/gui/modes/navigation/ARCHITECTURE.md`.
+**Expected impact:** Presentation/modularization only unless inspection finds a direct blocker. Core algorithms, event runtime, capture geometry, and navigation task execution should remain unchanged.
+
+### C. SYNC result
+**Inspection finding:** The main window had no hard minimum size but started at `1400x900`, which is awkward on a single-screen gameplay setup. `NavParametersDialog` still put each tab's full content directly into a tab page, so parameter contents could force a large dialog instead of scrolling.
+
+**Code changes:**
+- Added `gui/dialogs/nav_params/layout_helpers.py` with `create_scrollable_tab()` and `apply_nav_params_window_mode()`.
+- Updated `NavParametersDialog` so all six tabs are scrollable. The dialog now defaults to a compact `520x640` size and has a footer `完整模式/小窗模式` toggle that only changes sizing policy.
+- Updated `MainWindow` default geometry from `1400x900` to `1100x760`, keeping manual resizing available.
+- Updated `gui/modes/navigation/events/panel_adapter.py` to connect event-dialog signals once instead of disconnecting potentially unconnected slots. This removed PySide `RuntimeWarning` noise during offscreen window construction/close.
+
+**Verification:**
+- `py_compile` passed for `gui/main_window.py`, `gui/dialogs/nav_params_dialog.py`, `gui/dialogs/nav_params/layout_helpers.py`, and `gui/modes/navigation/events/panel_adapter.py`.
+- Offscreen `NavParametersDialog` construction passed: six `QScrollArea` instances exist, compact toggle works, final compact size is `520x640`.
+- Offscreen `MainWindow` construction/close passed: startup geometry is `1100x760`, navigation compact mode is true, and the previous event signal disconnect warnings are gone.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` and `architecture_docs/zh-CN/gui/ARCHITECTURE.md`. English docs intentionally not updated.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/main_window.py` | (partial) | (partial) | appended | Reduced default startup geometry for single-screen testing. |
+| `gui/dialogs/nav_params_dialog.py` | (partial) | (partial) | appended | Added scrollable tabs and compact/full sizing toggle while preserving config binding. |
+| `gui/dialogs/nav_params/layout_helpers.py` | PENDING | (partial) | 1 | New nav parameter layout helper for scrollable tabs and sizing policy. |
+| `gui/modes/navigation/events/panel_adapter.py` | (partial) | (partial) | appended | Removed noisy disconnect-first signal wiring by tracking connected dialog slots. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated NavParametersDialog modularization and small-window behavior. |
+| `architecture_docs/zh-CN/gui/ARCHITECTURE.md` | (partial) | (partial) | appended | Recorded the smaller default main-window geometry. |
+
+## [SYNC] 2026-06-08 - Nav parameters section builder extraction
+
+### A. SYNC scope
+**Task:** Continue GUI modularization by extracting the heaviest `NavParametersDialog` UI section construction into `gui/dialogs/nav_params/` modules. Preserve existing widget attribute names, config bindings, signals, labels, tooltips, and compact/full sizing behavior.
+**Direct files expected:** `gui/dialogs/nav_params_dialog.py`, new or updated `gui/dialogs/nav_params/*`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Presentation-only refactor. `NavConfig` structure, `config_binding.py`, runtime config application, event runtime, localization, and navigation task behavior should not change.
+
+### C. SYNC result
+**Code changes:**
+- Rewrote `gui/dialogs/nav_params_dialog.py` as a shell. It now owns only dialog lifecycle, Qt signals, `NavConfig` updates, click-radius estimation, compact/full size switching, and config write-back.
+- Added `gui/dialogs/nav_params/sections.py`. It builds all six parameter tabs, section widgets, explanatory labels/tooltips, and the footer action bar while preserving every existing widget attribute name used by `field_specs.py` and `config_binding.py`.
+- Kept `gui/dialogs/nav_params/layout_helpers.py` as the scrollable-tab and size-policy helper.
+
+**Verification:**
+- `py_compile` passed for `nav_params_dialog.py`, `nav_params/sections.py`, `nav_params/layout_helpers.py`, `nav_params/config_binding.py`, and `nav_params/field_specs.py`.
+- Offscreen construction check passed: all `BOUND_FIELD_SPECS` widget attributes exist, `nav_tabs.count()==6`, six `QScrollArea` instances exist, and default compact size remains `520x640`.
+- Offscreen `set_config_to_ui(NavConfig())` check passed: status becomes `参数已加载`, FPS writes as `10`, compact/full toggle returns to compact with button text `完整模式`.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/nav_params_dialog.py` | (partial) | (partial) | appended | Converted to shell retaining signals/config update/write-back behaviour. |
+| `gui/dialogs/nav_params/sections.py` | PENDING | (partial) | 1 | New section builders for all nav parameter tabs and action bar. |
+| `gui/dialogs/nav_params/layout_helpers.py` | (partial) | (partial) | appended | Reused for scrollable tabs and compact/full sizing policy. |
+| `gui/dialogs/nav_params/config_binding.py` | (partial) | (partial) | appended | Revalidated after section extraction; binding still resolves all widgets by stable attribute name. |
+| `gui/dialogs/nav_params/field_specs.py` | (partial) | (partial) | appended | Revalidated `BOUND_FIELD_SPECS` against constructed dialog. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated NavParametersDialog section-builder architecture and remaining candidates. |
+
+## [SYNC] 2026-06-08 - Mapping control panel scroll container
+
+### A. SYNC scope
+**Task:** Continue compact GUI work by making the mapping page control panel usable in smaller windows. Add a scroll container around the existing mapping controls while preserving all widget attributes, signal wiring, and mapping runtime behaviour.
+**Direct files expected:** `gui/modes/mapping/ui/layout.py`, `architecture_docs/zh-CN/gui/modes/ARCHITECTURE.md`, `architecture_docs/zh-CN/gui/GUI_FULL_FILE_OPTIMIZATION_PLAN.md`, `ITERATION_LOG.md`.
+**Expected impact:** Presentation-only refactor. Mapping capture, recognition, stitching, config restore/save, runtime lifecycle, and parameter binding should not change.
+
+### C. SYNC result
+**Code changes:**
+- Updated `gui/modes/mapping/ui/layout.py`: `create_mapping_control_panel()` now returns a `QScrollArea` and delegates existing control creation to `create_mapping_control_content()`.
+- Added `owner.control_scroll_area` for explicit access/debug. All existing owner widget attributes and signal connections remain created inside the content panel.
+
+**Verification:**
+- `py_compile` passed for `gui/modes/mapping/ui/layout.py`, `gui/modes/mapping_widget.py`, and `gui/main_window.py`.
+- Offscreen `MainWindow` construction/close passed: startup geometry remains `1100x760`, `mapping_widget.control_scroll_area` is a `QScrollArea`, and navigation compact mode remains enabled.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/modes/ARCHITECTURE.md` and `architecture_docs/zh-CN/gui/GUI_FULL_FILE_OPTIMIZATION_PLAN.md`.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/modes/mapping/ui/layout.py` | (partial) | (partial) | appended | Added scrollable control panel wrapper while preserving control content and owner field names. |
+| `gui/modes/mapping_widget.py` | (partial) | (partial) | appended | Revalidated construction through MainWindow after mapping UI wrapper change. |
+| `gui/main_window.py` | (partial) | (partial) | appended | Revalidated small startup geometry and both mode construction after mapping scroll change. |
+| `architecture_docs/zh-CN/gui/modes/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated Mapping UI role to include scroll wrapper. |
+| `architecture_docs/zh-CN/gui/GUI_FULL_FILE_OPTIMIZATION_PLAN.md` | (partial) | (partial) | appended | Updated mapping UI seam description and done checklist. |
+
+## [SYNC] 2026-06-08 - Advanced settings dialog section extraction
+
+### A. SYNC scope
+**Task:** Continue GUI modularization by extracting `AdvancedSettingsDialog` tab/section UI construction into its `gui/dialogs/advanced_settings/` package. Preserve existing widget attribute names, button signals, presets/file IO helpers, and parent parameter application behavior.
+**Direct files expected:** `gui/dialogs/advanced_settings_dialog.py`, new or updated `gui/dialogs/advanced_settings/*`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Presentation-only refactor unless a harmless signal/construct warning is found. Advanced settings JSON IO, presets, params adapter, recognizer/stitcher application, and config save/load semantics should not change.
+
+### C. SYNC result
+**Code changes:**
+- Rewrote `gui/dialogs/advanced_settings_dialog.py` as a shell. It now owns dialog lifecycle, `apply_params_requested`, direct-apply compatibility, current params state, and save/load/preset behavior.
+- Added `gui/dialogs/advanced_settings/tabs.py` with four scrollable tabs: image preprocessing, feature extraction, parameter management, and stitcher algorithm settings. It also builds the footer action buttons.
+- Preserved all widget attribute names consumed by `params_adapter.py` and preset values.
+
+**Verification:**
+- `py_compile` passed for `advanced_settings_dialog.py`, `advanced_settings/tabs.py`, `params_adapter.py`, `file_io.py`, and `presets.py`.
+- Offscreen construction check passed using a QWidget parent: required widget attributes exist, `tab_widget.count()==4`, four `QScrollArea` instances exist, and `collect_params_from_widgets()` returns 26 parameters.
+- Preset application check passed using the combo item's actual text: high-contrast preset updates `clahe_clip` to `3.0` and `deepen_factor` to `1.5`. The PowerShell terminal displays Chinese preset text with encoding noise, but the Qt value path is correct.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/advanced_settings_dialog.py` | (partial) | (partial) | appended | Converted to shell retaining apply/save/load/preset behavior and direct-apply compatibility. |
+| `gui/dialogs/advanced_settings/tabs.py` | PENDING | (partial) | 1 | New scrollable tab/action UI builder preserving widget attributes. |
+| `gui/dialogs/advanced_settings/params_adapter.py` | (partial) | (partial) | appended | Revalidated against new tabs; all required widget attrs still exist. |
+| `gui/dialogs/advanced_settings/file_io.py` | (partial) | (partial) | appended | Rechecked unchanged save/load snapshot path used by shell. |
+| `gui/dialogs/advanced_settings/presets.py` | (partial) | (partial) | appended | Rechecked preset names/value mapping used by tabs and adapter. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated advanced settings shell/tabs architecture and remaining direct-apply risk. |
+
+## [SYNC] 2026-06-08 - Color picker dialog UI/preview boundary extraction
+
+### A. SYNC scope
+**Task:** Continue dialog modularization with `ColorPickerDialog`. Read the current dialog and helper modules, then extract a low-risk UI/preview boundary without changing HSV range calculation, mask generation semantics, accepted result shape, or optional debug output behavior.
+**Direct files expected:** `gui/dialogs/color_picker_dialog.py`, new or updated `gui/dialogs/color_picker/*`, `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`, `ITERATION_LOG.md`.
+**Expected impact:** Presentation-only refactor unless a pure rendering helper extraction is obvious. Color sampling math, recognizer params, preview mask output, and debug artifact gating should remain unchanged.
+
+### C. SYNC result
+**Code changes:**
+- Added `gui/dialogs/color_picker/layout.py` to build the help text, mode buttons, original-image panel, preview panel, result text, and footer buttons.
+- Reduced `ColorPickerDialog.setup_ui()` to `build_color_picker_ui(self)`. The dialog still owns screenshot preprocessing, point sampling, HSV range calculation, preview refresh, reset, zoom state, and accepted result shape.
+- Fixed the new layout module's relative import to `...widgets.clickable_label`.
+
+**Verification:**
+- `py_compile` passed for `color_picker_dialog.py`, `color_picker/layout.py`, `image_renderer.py`, `preview.py`, `debug_output.py`, and `hsv_ranges.py`.
+- Offscreen construction with a dummy 64x64 BGR image passed: all expected controls exist, one `QScrollArea` exists, initial mode is `wall`, OK starts disabled, and zoom label is `100%`.
+- Offscreen calculation path passed: simulated one wall click, `calculate_hsv_ranges()` produces a non-empty `wall_hsv` result, enables OK, and preserves saturation-filter recommendation behavior.
+
+**Docs updated:** `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md`.
+
+**Coverage update:**
+| File | Previous | Current | Reads | Note |
+|------|----------|---------|-------|------|
+| `gui/dialogs/color_picker_dialog.py` | (partial) | (partial) | appended | Reduced setup_ui to layout delegation while preserving interaction/HSV/preview behavior. |
+| `gui/dialogs/color_picker/layout.py` | PENDING | (partial) | 1 | New UI layout builder for color picker controls and panels. |
+| `gui/dialogs/color_picker/image_renderer.py` | (partial) | (partial) | appended | Revalidated render path used by dialog after layout extraction. |
+| `gui/dialogs/color_picker/preview.py` | (partial) | (partial) | appended | Revalidated preview mask path remains unchanged. |
+| `gui/dialogs/color_picker/debug_output.py` | (partial) | (partial) | appended | Confirmed debug output remains gated by existing flag. |
+| `gui/dialogs/color_picker/hsv_ranges.py` | (partial) | (partial) | appended | Revalidated HSV sampling/calculation path through simulated click. |
+| `architecture_docs/zh-CN/gui/dialogs/ARCHITECTURE.md` | (partial) | (partial) | appended | Updated color picker layout/preview/helper architecture. |

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from core.shared.frame_registration import FrameRegistration
+
 
 class EventActionType(str, Enum):
     NONE = "none"
@@ -22,19 +24,6 @@ class EventTaskState(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     IGNORED = "ignored"
-
-
-@dataclass
-class FrameRegistration:
-    valid: bool
-    confidence: float = 0.0
-    frame_origin_global: tuple[float, float] | None = None
-    draw_scale: float = 1.0
-    player_global_pos: tuple[float, float] | None = None
-    player_local_minimap_pos: tuple[int, int] | None = None
-    source: str = ""
-    frame_size: tuple[int, int] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,11 +79,12 @@ class EventTask:
     seen_count: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def mark_seen(self, observation: EventObservation) -> None:
+    def mark_seen(self, observation: EventObservation, *, update_global_pos: bool = True) -> None:
         self.last_seen_ms = int(observation.observed_at_ms)
         self.confidence = max(float(self.confidence), float(observation.confidence))
         self.seen_count += 1
-        self.global_pos = (int(observation.global_pos[0]), int(observation.global_pos[1]))
+        if update_global_pos:
+            self.global_pos = (int(observation.global_pos[0]), int(observation.global_pos[1]))
         self.metadata.update(observation.metadata)
 
     def mark_pending(self) -> None:

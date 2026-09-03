@@ -7,10 +7,12 @@ from dataclasses import dataclass
 class PortalEventConfig:
     enabled: bool = True
     priority: int = 100
+    navigation_approach_enabled: bool = True
     interaction: str = "key"
-    detector_mode: str = "feature_then_template"
+    detector_mode: str = "shape_color"
     minimap_threshold: float = 0.74
     max_candidates: int = 2
+    minimap_nms_radius: int = 28
     min_blue_ratio: float = 0.08
     feature_detector_enabled: bool = True
     feature_hue_min: int = 82
@@ -30,12 +32,15 @@ class PortalEventConfig:
     shape_signature_min_color_score: float = 0.82
     shape_signature_score_scale: float = 1.30
     stable_frames: int = 3
-    localization_cluster_radius: int = 56
+    localization_cluster_radius: int = 96
     stable_variance: float = 1600.0
-    dedupe_radius: int = 32
+    dedupe_radius: int = 96
     localization_max_samples: int = 12
     localization_cluster_ttl_ms: int = 12000
+    localization_emit_interval_ms: int = 700
     memory_confirm_frames: int = 1
+    target_update_mode: str = "limited_after_confirm"
+    target_update_max_drift: int = 18
     arrival_radius: int = 80
     interact_radius: int = 36
     retry_limit: int = 2
@@ -56,14 +61,19 @@ class PortalEventConfig:
         values = data or {}
         detector_mode = str(values.get("detector_mode", "") or "").strip()
         if not detector_mode:
-            detector_mode = "feature_then_template" if bool(values.get("feature_detector_enabled", True)) else "template"
+            if "feature_detector_enabled" in values:
+                detector_mode = "feature_then_template" if bool(values.get("feature_detector_enabled")) else "template"
+            else:
+                detector_mode = "shape_color"
         return cls(
             enabled=bool(values.get("enabled", True)),
             priority=int(values.get("priority", 100)),
+            navigation_approach_enabled=bool(values.get("navigation_approach_enabled", True)),
             interaction=str(values.get("interaction", "key")),
             detector_mode=detector_mode,
             minimap_threshold=float(values.get("minimap_threshold", 0.74)),
             max_candidates=int(values.get("max_candidates", 2)),
+            minimap_nms_radius=int(values.get("minimap_nms_radius", 28)),
             min_blue_ratio=float(values.get("min_blue_ratio", 0.08)),
             feature_detector_enabled=bool(values.get("feature_detector_enabled", True)),
             feature_hue_min=int(values.get("feature_hue_min", 82)),
@@ -83,12 +93,15 @@ class PortalEventConfig:
             shape_signature_min_color_score=float(values.get("shape_signature_min_color_score", 0.82)),
             shape_signature_score_scale=float(values.get("shape_signature_score_scale", 1.30)),
             stable_frames=int(values.get("stable_frames", values.get("confirm_frames", 3))),
-            localization_cluster_radius=int(values.get("localization_cluster_radius", 56)),
+            localization_cluster_radius=int(values.get("localization_cluster_radius", 96)),
             stable_variance=float(values.get("stable_variance", 1600.0)),
-            dedupe_radius=int(values.get("dedupe_radius", 32)),
+            dedupe_radius=int(values.get("dedupe_radius", 96)),
             localization_max_samples=int(values.get("localization_max_samples", 12)),
             localization_cluster_ttl_ms=int(values.get("localization_cluster_ttl_ms", 12000)),
+            localization_emit_interval_ms=int(values.get("localization_emit_interval_ms", 700)),
             memory_confirm_frames=int(values.get("memory_confirm_frames", 1)),
+            target_update_mode=str(values.get("target_update_mode", "limited_after_confirm") or "limited_after_confirm"),
+            target_update_max_drift=int(values.get("target_update_max_drift", 18)),
             arrival_radius=int(values.get("arrival_radius", 80)),
             interact_radius=int(values.get("interact_radius", 36)),
             retry_limit=int(values.get("retry_limit", 2)),
