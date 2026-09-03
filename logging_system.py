@@ -5,13 +5,28 @@
 
 import logging
 import os
+import sys
 from datetime import datetime
 import json
 import cv2
 import numpy as np
 
+
+def _configure_console_encoding() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 def setup_detailed_logging():
     """设置详细日志记录"""
+    _configure_console_encoding()
     # 创建logs目录
     log_dir = "logs"
     if not os.path.exists(log_dir):
@@ -27,7 +42,7 @@ def setup_detailed_logging():
         level=logging.DEBUG,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_path, encoding='utf-8'),
+            logging.FileHandler(log_path, encoding='utf-8-sig'),
             logging.StreamHandler()  # 同时输出到控制台
         ]
     )

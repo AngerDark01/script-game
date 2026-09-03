@@ -33,6 +33,14 @@ monitor_config.json
 map_*.png
 *.log
 
+# Probe/debug outputs are generated locally and can be very large.
+# Keep reusable probe scripts under debug/ tracked, but ignore their
+# timestamped screenshots, reports, and evaluation directories.
+debug/*/
+debug/*.png
+debug/*.json
+map_data/**/config.before_apply_*.json
+
 # OS
 .DS_Store
 Thumbs.db

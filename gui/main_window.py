@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 
 from .app_context import AppContext
 from .modes.mapping_widget import MappingWidget
-from .modes.navigation_mode import NavigationModeWidget
+from .modes.navigation import NavigationModeWidget
 
 class MainWindow(QMainWindow):
     """主应用程序窗口，负责模式切换和UI骨架。"""
@@ -15,7 +15,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("实时小地图拼接系统")
-        self.setGeometry(100, 100, 1400, 900)
+        self.setGeometry(80, 80, 1100, 760)
 
         # 1. 创建核心上下文
         self.app_context = AppContext(self)
@@ -78,10 +78,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时确保所有子进程和定时器都停止"""
-        # 停止绘图模式的定时器
-        self.mapping_widget.capture_timer.stop()
-        # 停止导航模式的定时器
-        self.nav_widget.toggle_navigation()
+        self.mapping_widget.stop_runtime()
+        self.nav_widget.stop_runtime()
         event.accept()
 
 if __name__ == '__main__':

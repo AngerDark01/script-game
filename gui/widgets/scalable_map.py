@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QLabel, QScrollArea, QVBoxLayout, QWidget, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import QPoint, Signal, Qt
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 
 class ScalableMapWidget(QWidget):
@@ -23,6 +23,7 @@ class ScalableMapWidget(QWidget):
 
         self.is_dragging = False
         self.last_mouse_pos = None
+        self._drag_total_delta = 0
         self._needs_fit_to_view = False
 
         self.scroll_area = QScrollArea()
@@ -112,7 +113,7 @@ class ScalableMapWidget(QWidget):
             scaled_pixmap = self.original_pixmap.scaled(
                 new_width, new_height,
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.FastTransformation
             )
 
             self.current_pixmap = scaled_pixmap
@@ -123,12 +124,14 @@ class ScalableMapWidget(QWidget):
         if event.button() == Qt.LeftButton:
             self.is_dragging = True
             self.last_mouse_pos = event.globalPosition().toPoint()
+            self._drag_total_delta = 0
         elif event.button() == Qt.RightButton:
             self.reset_zoom()
 
     def _mouse_move_event(self, event):
         if self.is_dragging and self.last_mouse_pos:
             delta = event.globalPosition().toPoint() - self.last_mouse_pos
+            self._drag_total_delta += abs(delta.x()) + abs(delta.y())
             self.scroll_area.horizontalScrollBar().setValue(
                 self.scroll_area.horizontalScrollBar().value() - delta.x()
             )
@@ -138,8 +141,32 @@ class ScalableMapWidget(QWidget):
             self.last_mouse_pos = event.globalPosition().toPoint()
 
     def _mouse_release_event(self, event):
+        if event.button() == Qt.LeftButton and self._drag_total_delta <= 3:
+            self._emit_pixel_clicked(event.pos())
         self.is_dragging = False
         self.last_mouse_pos = None
+        self._drag_total_delta = 0
+
+    def _emit_pixel_clicked(self, label_pos: QPoint):
+        if not self.original_pixmap or not self.current_pixmap:
+            return
+        if self.original_pixmap.isNull() or self.current_pixmap.isNull():
+            return
+
+        x_offset = (self.image_label.width() - self.current_pixmap.width()) // 2
+        y_offset = (self.image_label.height() - self.current_pixmap.height()) // 2
+        pixmap_x = label_pos.x() - x_offset
+        pixmap_y = label_pos.y() - y_offset
+        if pixmap_x < 0 or pixmap_y < 0:
+            return
+        if pixmap_x >= self.current_pixmap.width() or pixmap_y >= self.current_pixmap.height():
+            return
+
+        scale_x = self.original_pixmap.width() / self.current_pixmap.width()
+        scale_y = self.original_pixmap.height() / self.current_pixmap.height()
+        original_x = max(0, min(int(pixmap_x * scale_x), self.original_pixmap.width() - 1))
+        original_y = max(0, min(int(pixmap_y * scale_y), self.original_pixmap.height() - 1))
+        self.pixel_clicked.emit(original_x, original_y)
 
     def _wheel_event(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:

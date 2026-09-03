@@ -1,0 +1,2 @@
+"""Shared event detector utilities."""
+
