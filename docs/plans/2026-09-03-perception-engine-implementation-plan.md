@@ -82,6 +82,8 @@ Add interfaces for frame sources, template resources, OCR, and optional feature 
 
 Commit: `feat: add perception provider seams`
 
+The exact contract, error taxonomy, registry rules, and red/green task sequence are recorded in `docs/plans/2026-09-03-perception-provider-seams-design.md`.
+
 ## Task P4: Add reusable algorithm adapters
 
 Files: `core/perception/algorithms/shape.py`, `ocr.py`, `motion.py`, optional feature contracts, built-in descriptors, and tests.

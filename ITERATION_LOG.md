@@ -3405,3 +3405,251 @@ Create the failing P2 stage tests and record the missing-module failure before i
 | `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 4 | P2 状态、完成证据与 P3 起点已更新。 |
 
 **下一轮计划：** 使用已声明的白名单暂存、复核 staged diff、创建 P2 提交；随后从 P3 的 provider 资源契约 red test 开始。
+## [P3 template-resource discovery] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/algorithms/template.py`：精读模板识别当前如何取得资源、如何处理路径/透明通道、以及哪些部分必须留在算法而非 provider。
+
+**本轮要验证：** P3 的 template-resource provider 只负责资源定位/读取/明确错误，不改变模板匹配、缩放、掩码、NMS 或 `TargetDetection` 生成；识别算法仍应接收已解析的、可测试的资源输入。
+### C. 本轮发现
+
+**关键发现：** (verified) `TemplateDetector` 当前接收数组或路径：路径时直接 `cv2.imread(..., IMREAD_UNCHANGED)`，以 `FileNotFoundError` 表达不可读资源；读取后算法自行保留 alpha mask、颜色通道转换、多尺度、灰度/边缘匹配、NMS 和 `TargetDetection` 构建。provider 只能取代“由 resource_id 取得原始数组”的步骤，不能吸收这些匹配语义。
+
+**修订的旧结论：** 原先把 template provider 视为能直接返回检测结果的候选方案；现确认它必须只返回带标识与元数据的原始资源，才能让模板、feature 等多个算法复用同一资源而输出仍由算法统一规范化。
+
+**P3 设计结论：** 建立通用 `ProviderRegistry` 管理可用/实验/不可用 capability；建立类型化 `FrameSource`、`TemplateResourceProvider`、`OcrProvider`、`FeatureBackend` 合约和可序列化 DTO；`TemplateDetector` 保持兼容，P4 才通过 adapter 接入 provider。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/algorithms/template.py` | 深度完整 | 深度完整 | 2 | 精读路径读取、alpha/mask、多尺度、匹配和 NMS 边界。 |
+
+**下一轮计划：** 阅读算法 descriptor/registry/builtins，确认 provider capability 状态与既有算法能力目录能共享的枚举和错误风格。
+## [P3 capability-registry discovery] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/algorithms/base.py`：确定算法 capability/status/参数描述的数据模式。
+- `core/perception/registry.py`：确定可用、不可用、未知和 factory 失败的当前错误契约。
+- `core/perception/builtins.py`：确定已有 color/template 与 shape/feature/OCR 未实现状态如何暴露给前端。
+
+**本轮要验证：** provider registry 应复用算法目录的“descriptor + 可用性 + 受控错误”模式，但不能强迫具有不同输入/输出类型的 frame/template/OCR/feature provider 使用同一个不安全 factory 签名。
+### C. 本轮发现
+
+**关键发现：** (verified) `AlgorithmDescriptor` 已有 `available|experimental|unavailable` 三态及 GUI 参数元数据；`AlgorithmRegistry` 以 descriptor/factory 配对，未知 ID 为 `KeyError`，不可用/缺 factory 为 `RuntimeError`，并防御复制参数。builtins 把 shape/feature/OCR 正确标为不可用，但模板仍暴露 `template_path` 而非资源 ID。
+
+**修订的旧结论：** 原先计划为每一种 provider 各写一个独立 registry；现确认应有一个通用 catalog/registration 容器，以 `ProviderDescriptor.capability` 区分类型，同时保留类型化 provider Protocol，才能同时满足前端发现能力与静态可读的调用契约。
+
+**P3 contract：** `available` 和 `experimental` provider 必须注册实现；`unavailable` provider 只注册 descriptor；未知 provider、capability 不匹配、不可用 provider 分别抛出明确且不同的异常。Frame/Template/OCR/Feature 的 raw provider 输出在 adapters 中转为 `TargetDetection`，不能由 registry 伪装为一个统一 factory。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/algorithms/base.py` | 深度完整 | 深度完整 | 2 | 验证参数和三态 capability descriptor 模式。 |
+| `core/perception/registry.py` | 深度完整 | 深度完整 | 2 | 验证 descriptor/factory、错误和防御复制契约。 |
+| `core/perception/builtins.py` | 深度完整 | 深度完整 | 2 | 验证当前可用/不可用算法目录及模板路径耦合。 |
+
+**下一轮计划：** 写 P3 provider DTO/registry 的详细计划与第一组 red tests：catalog 状态、未知/不可用/错误 capability 和不可变 descriptor 输出。
+## [P3 provider-seams design] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `docs/plans/2026-09-03-perception-engine-implementation-plan.md`：将 P3 的泛化描述细化为可测试的 provider contract 步骤。
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：确认 P3 是当前唯一进行项，且 P4 前不接入算法/GUI。
+
+**本轮要产出：** provider 合约和 registry 的具体依赖图、DTO/异常边界、三态注册规则、四个 2–5 分钟 TDD 任务与验证命令；这些是后续 OCR/Feature/模板资源实现可替换而不绑定游戏的前提。
+### C. 本轮计划结果
+
+**关键发现：** (verified) P2 的提交已经落在 `6f60d12`，但 checkpoint 的 baseline hash 尚未前移；P3 在总计划中只有一段描述，缺少 provider 输出 DTO、错误分类与同 capability 多 provider 的解析规则，不能直接安全实现。
+
+**确定设计：** 新建 `core/perception/providers/`：`contracts.py` 是无 OpenCV/GUI 依赖的数据、Protocol、错误；`registry.py` 是 descriptor+实现的 capability-safe catalog；`__init__.py` 是唯一公开 surface。Provider 原始结果与识别结果严格分层：`FrameContext` / `TemplateResource` / `OcrSpan` / `FeatureMatch` 不等于 `TargetDetection`。
+
+**TDD 原子计划：**
+
+1. contracts red/green：验证 descriptor 三态、模板/文字/特征 DTO 约束和 Protocol 导入不依赖可选 OCR/feature 包。
+2. registry red/green：验证可用 provider 解析、未知 ID、capability 错配、不可用 descriptor、非可用但缺实现等不同错误。
+3. public surface/default catalog red/green：验证只导出 contracts/registry，默认 catalog 使前端可发现尚未安装的 frame/template/OCR/feature capability，但不会伪称可执行。
+4. P3 focused suite、compile/import audit、checkpoint/CODEBASE sync、独立提交；P4 才让 template/OCR/feature adapters 使用 registry。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `docs/plans/2026-09-03-perception-engine-implementation-plan.md` | 深度完整 | 深度完整 | 3 | P3 需要独立细化计划，P2 记录正确。 |
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 5 | P2 已完成，P3 状态和基线需随新任务写入。 |
+
+**下一轮计划：** 创建 provider seams 设计文档并更新 checkpoint；然后仅为 contracts 写第一组失败测试。
+### C. SYNC 结果（P3 设计与断点）
+
+**已保存设计：** 新增 `docs/plans/2026-09-03-perception-provider-seams-design.md`，明确定义 provider raw output、四类 Protocol、错误分类、可用性规则、四个 TDD 原子任务以及 P3 非目标。
+
+**更新断点：** baseline 已更新为 `6f60d12`；P3 标记 `in progress`；实现计划引用新设计。P3 的“provider 不产出 TargetDetection、adapter 才产出”边界已记录，防止新算法重新高耦合资源获取与识别策略。
+
+**CODEBASE 同步：** 当前运行时尚未增加 provider 源码，`CODEBASE.md` 不把设计文档误写成已实现结构；下一次源码实现后将新增 package 文件索引、调用链和风险登记。
+
+**下一轮计划：** 建立 contracts 的 red test；确认新 provider package 在没有 OpenCV/OCR/feature 依赖时也可导入。
+## [P3 provider contracts red test] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_providers.py`：新增 provider DTO、三态 descriptor、Protocol 可导入及无外部依赖的失败合同测试。
+
+**本轮要验证：** 在 package 尚不存在时，测试必须因 `core.perception.providers` 缺失而失败；成功后才创建最小的 contracts 和公开 package surface。测试不实例化真实 OCR、特征或截屏实现。
+### C. 本轮结果（provider contracts red test）
+
+**失败证据：** `tests.test_perception_providers.ProviderContractTests` 在导入阶段按预期报出 `ModuleNotFoundError: No module named 'core.perception.providers'`。失败只证明 P3 package 尚不存在，未触及 OpenCV、OCR、特征或系统截屏环境。
+
+**同步记录：** 新测试要求 descriptor 的防御性序列化、Template/OCR/Feature raw DTO、四个 Protocol 公共导入以及 ID/status/confidence 不变量；其断言明确禁止 OCR evidence 伪带 `target_type`。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_providers.py` | PENDING | 深度完整 | 1 | 新增 contracts red test，当前失败为预期 package 缺失。 |
+
+**下一轮计划：** 新建 `providers/__init__.py` 和 `providers/contracts.py`，以 stdlib typing/dataclasses 与已有 perception DTO 为唯一内部依赖，使本组测试转绿。
+## [P3 provider contracts implementation] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/providers/__init__.py`：建立唯一公开 package surface。
+- `core/perception/providers/contracts.py`：实现 provider DTO、Protocol、三态 descriptor 和错误类型。
+- `tests/test_perception_providers.py`：使已定义的 contracts red test 转绿。
+
+**实现约束：** 只依赖 Python 标准库和既有 `core.perception.models`；不得 import OpenCV、PySide、平台捕获、OCR 或 ML 包；不引入 registry 或算法适配，避免超出 P3.1。
+### C. SYNC 结果（provider contracts）
+
+**实现结果：** 新增 `core/perception/providers/contracts.py` 与公开 `providers/__init__.py`。它们提供四类 raw provider Protocol、immutable descriptor/resource/evidence DTO，以及注册、未知、能力错配、不可用四类错误；没有 provider 直接产生 `TargetDetection`。
+
+**验证：** contracts 聚焦测试 4/4 通过，provider package 编译通过。额外 import 检查显示 provider 模块本身没有 OCR/feature/capture 依赖；由于父包 `core.perception.__init__` 现有公开 imports 会加载 TemplateDetector，Python 进程仍已加载仓库既有的 `cv2`，这不是 provider contracts 新增依赖，P9 将统一审计 package import 延迟加载问题。
+
+**影响分析：** 所有 DTO 使用已有 `FrameContext`、`BoundingBox`、`CoordinateSpace`，所以 OCR/Feature adapter 在 P4 能产出完整空间证据，但现在不修改任何算法、GUI、screen capture、输入或 legacy 模块。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/providers/contracts.py` | PENDING | 深度完整 | 1 | 新增 raw DTO、Protocol、descriptor 和明确错误层级。 |
+| `core/perception/providers/__init__.py` | PENDING | 深度完整 | 1 | 新增稳定公开 exports，无运行时 provider 实例。 |
+| `tests/test_perception_providers.py` | 深度完整 | 深度完整 | 2 | contracts red/green 4 条已通过。 |
+
+**下一轮计划：** 为 `ProviderRegistry` 写 red tests，覆盖实现解析、capability 错配、未安装与注册规则；不接入任何真实 runtime provider。
+## [P3 provider registry red test] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_providers.py`：为 registry 定义 provider 解析、capability 过滤、未知/错配/不可用错误和注册约束。
+
+**本轮要验证：** 先在 `ProviderRegistry` 尚不存在时以 import failure 建立 API；一个 provider 只能按其 descriptor capability 被解析，registry 返回对象但绝不调用 provider 方法或处理 provider 输出。
+### C. 本轮结果（provider registry red test）
+
+**失败证据：** registry 测试在导入阶段按预期失败：`ProviderRegistry` 尚未从 `core.perception.providers` 暴露。contracts 原有测试未执行，表明失败范围是新 API 缺失而非 DTO 回归。
+
+**同步记录：** 新测试固定了 registry 不能调用 provider、同 ID 必须按 capability 解析、discovery filter 保持 descriptor 对象顺序，以及四种明确失败路径。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_providers.py` | 深度完整 | 深度完整 | 3 | 新增 registry red tests，当前失败为未实现 public registry。 |
+
+**下一轮计划：** 新增 registry 模块并扩展公开 exports；只存储/解析 object provider，不实现具体 capture/OCR/template/feature provider。
+## [P3 provider registry implementation] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/providers/registry.py`：实现 descriptor 与 object provider 的 capability-safe 注册/解析。
+- `core/perception/providers/__init__.py`：仅增加 registry 公开 exports。
+- `tests/test_perception_providers.py`：使 registry contracts red tests 转绿。
+
+**实现约束：** `register()` 不应调用 provider；`resolve()` 不应调用 provider；不做任何 `isinstance` Protocol 检查或输出转换；不允许可用/实验 descriptor 在没有 implementation 时登记。
+### C. SYNC 结果（provider registry）
+
+**实现结果：** 新增 `ProviderRegistry`。它按注册顺序保存 descriptor 与 provider object，注册时强制三态规则；解析时先校验 provider ID、再校验期望 capability、最后处理 unavailable，且从不调用 provider 或检查/转换其 raw output。
+
+**验证：** providers 测试 6/6 通过，provider package 编译检查通过。可用 registry 返回完全相同的 object；未知、能力错配、不可用和非法注册均由不同异常类别表达。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/providers/registry.py` | PENDING | 深度完整 | 1 | 新增 capability-safe catalog、登记/发现/解析和失败分类。 |
+| `core/perception/providers/__init__.py` | 深度完整 | 深度完整 | 2 | 扩展 registry 唯一公开 export。 |
+| `tests/test_perception_providers.py` | 深度完整 | 深度完整 | 4 | registry red/green 2 条已通过，contracts 仍通过。 |
+
+**下一轮计划：** 写 default provider catalog red test，使前端能发现四种尚未安装的 capability 且明确不可解析；不实现 OS/OCR/ML 后端。
+## [P3 default catalog red test] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_providers.py`：定义默认 provider catalog 的发现/不可用契约。
+
+**本轮要验证：** default catalog 应列出 `frame.screen`、`template.resource`、`ocr.default`、`feature.default` 四种 capability；每个均对前端可见但 `resolve` 明确失败，不创建现实后端。
+### C. 本轮结果（default catalog red test）
+
+**失败证据：** default catalog 测试按预期在 import 阶段失败：`create_default_provider_registry` 尚未公开。这一失败仅表示 discoverable catalog 未实现，没有触发任何 provider。
+
+**同步记录：** 新测试锁定四个稳定 provider ID、对应 capability、全部 `unavailable` 状态，以及 OCR 解析会抛 `ProviderUnavailableError`；它防止未安装实现被前端错误展示为可运行。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_providers.py` | 深度完整 | 深度完整 | 5 | default catalog red test 已加入，当前 API 缺失。 |
+
+**下一轮计划：** 新增 provider builtins discovery catalog 并公开工厂；只登记 unavailable descriptor，不注册或执行任何实现。
+## [P3 default catalog implementation] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/providers/builtins.py`：创建仅供发现的四项 unavailable provider descriptor catalog。
+- `core/perception/providers/__init__.py`：公开默认 catalog factory。
+- `tests/test_perception_providers.py`：使 default catalog red test 转绿。
+
+**实现约束：** catalog construction 不得访问 filesystem、桌面窗口、摄像头、网络、OCR/ML library 或 TemplateDetector；所有 descriptor 均无 implementation，解析行为仍由 `ProviderRegistry` 统一决定。
+### C. SYNC 结果（default provider catalog）
+
+**实现结果：** 新增 `providers/builtins.py` 的 `create_default_provider_registry()`。它只登记 `frame.screen`、`template.resource`、`ocr.default`、`feature.default` 四个 unavailable descriptor；没有实现 object、没有资源 I/O，也不会把可选后端列为 available。
+
+**验证：** provider suite 7/7 通过，provider 编译检查通过，公开 factory smoke check 正确输出四个 stable ID。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/providers/builtins.py` | PENDING | 深度完整 | 1 | 新增可发现但未安装的默认 capability catalog。 |
+| `core/perception/providers/__init__.py` | 深度完整 | 深度完整 | 3 | 公开 default catalog factory，未创建 runtime provider。 |
+| `tests/test_perception_providers.py` | 深度完整 | 深度完整 | 6 | catalog red/green 已通过，总 provider suite 7 条通过。 |
+
+**下一轮计划：** P3 final review：运行 provider + 既有 perception 全集，更新 checkpoint/CODEBASE 为 provider seams complete，只暂存 P3 白名单并独立提交。
+## [P3 final review and commit] 2026-09-03
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：将 P3 合约、错误、测试证据与 P4 前置条件固化。
+- `core/perception/providers/__init__.py`：确认公开 exports 完整且不创建运行时 provider。
+- `core/perception/providers/builtins.py`：确认默认 catalog 不触发外部 I/O。
+
+**本轮要验证：** P3 provider tests 和既有 perception tests 一起通过；暂存仅 provider package、provider tests 与 perception docs，不混入 virtual_gamepad 用户修改。
+### C. 最终审查结果
+
+**验证：** provider 与既有 perception 聚焦集共 24/24 通过；`compileall -q core/perception` 和 `git diff --check` 均返回 0。diff check 只打印仓库既有 LF/CRLF 工作区预警，无 whitespace error。
+
+**审查结论：** provider package 未修改 TemplateDetector、Engine、Pipeline、GUI、输入、Portal/Loot/minimap 或空间映射。其默认 catalog 无实现对象，因而不会意外调用 filesystem、Windows capture 或可选 OCR/ML backend。`core/events/window_finder.py` 和 `virtual_gamepad/` 均是白名单外用户修改，绝不暂存。
+
+**CODEBASE 同步：** 已记录 contracts、registry、default catalog 的文件职责、算法边界和无 I/O 风险。checkpoint 标记 P3 complete，并把 P4 起点限定为“先做模板资源 provider adapter”。
+
+**下一轮计划：** 仅暂存 P3 provider package、provider test 和 perception documentation，复核 staged diff 后提交 `feat: add perception provider seams`；再以 P4 模板资源 bridge 的 red test 继续。

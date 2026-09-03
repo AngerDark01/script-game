@@ -6,7 +6,7 @@ This document is the recovery point for the reusable perception architecture. Up
 
 - Repository: `auto_modules`
 - Branch: `main`
-- Latest committed perception baseline: `b5c7c04 feat: add perception engine facade`
+- Latest committed perception baseline: `6f60d12 feat: split perception decision stages`
 - Earlier perception foundation commits: `1afb9f4` through `c6d0698`
 - Current worktree contains unrelated, uncommitted `virtual_gamepad/` changes. Do not mix them into perception commits.
 
@@ -45,13 +45,13 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Descriptor-based registry in `core/perception/registry.py`.
 - Color and template detector implementations.
 - Engine-owned runner, fusion, confirmation, and selection stages with a Pipeline forwarding bridge.
+- Typed frame/template/OCR/feature provider contracts, capability-safe registry, and discovery-only default catalog.
 - Coordinate transform primitives in `core/spatial/`.
 - Screenshot-oriented GUI workbench in `gui/dialogs/perception/`.
 
 ### Explicitly Missing
 
-- Provider seams for frame input, OCR, template resources, and optional feature backends.
-- Real shape, OCR, feature, and motion implementations or provider contracts.
+- Concrete frame capture, template resource, OCR, feature, shape, and motion adapters.
 - Runtime screen capture and automatic window/viewport calibration integration.
 - Portal, Loot, map-device, waystone, trial, and scene-transition bridges.
 - Workflow orchestration for the complete event chain.
@@ -63,7 +63,7 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 | P0 | Checkpoint, plan, and codebase documentation | complete | `docs: establish perception engine checkpoints` |
 | P1 | Perception engine contract and facade | complete | `feat: add perception engine facade` |
 | P2 | Detector runner, fusion, confirmation, selection seams | complete | `feat: split perception decision stages` |
-| P3 | Frame/resource/OCR provider contracts | pending | `feat: add perception provider seams` |
+| P3 | Frame/resource/OCR provider contracts | complete | `feat: add perception provider seams` |
 | P4 | Reusable algorithm adapters and capability states | pending | `feat: add perception algorithm adapters` |
 | P5 | Runtime coordinate mapping and calibration adapter | pending | `feat: connect runtime coordinate mapping` |
 | P6 | Rewire GUI workbench through engine public API | pending | `refactor: route workbench through perception engine` |
@@ -126,6 +126,21 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - Target-type boundary, profile selection-policy validation, profile-replacement reset, direct-engine ownership, and Pipeline forwarding are all regression-tested.
 - Verification: 17 focused perception tests passed; `compileall -q core/perception`, public import smoke check, and `git diff --check` completed without errors.
 - Next: P3 provider seams for frames, templates, OCR, and feature backends. No GUI/legacy target/workflow bridge starts before those contracts exist.
+
+### 2026-09-03 - P3 started
+
+- Scope: declare typed providers for frame capture, template resources, OCR and feature backends, plus a capability-safe discovery/resolve registry.
+- Boundary: providers return raw frames/resources/evidence; P4 adapters alone convert them to `TargetDetection`.
+- Availability: unavailable providers remain visible in the catalog but `resolve()` must fail explicitly; P3 adds no mandatory OCR, ML, screen-capture, or feature package.
+- Detailed design and test sequence: `docs/plans/2026-09-03-perception-provider-seams-design.md`.
+
+### 2026-09-03 - P3 complete
+
+- `providers/contracts.py` supplies raw DTOs and typed Protocols for frames, template assets, OCR spans, and feature matches; none carries target/action policy.
+- `ProviderRegistry` explicitly separates unknown ID, capability mismatch, unavailable provider, and invalid registration errors; it stores objects without invoking them.
+- The default catalog exposes four stable unavailable capability IDs so configuration UI can explain missing backends without treating any optional dependency as installed.
+- Verification: 24 perception/provider tests passed; `compileall -q core/perception` and `git diff --check` passed, with only existing LF/CRLF warnings.
+- Next: P4 adds adapters that consume these providers and normalize their evidence to `TargetDetection`; first implementation should be a resource-provider bridge for existing template matching.
 
 ## Audit Notes
 
