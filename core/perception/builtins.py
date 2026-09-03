@@ -5,7 +5,9 @@ from typing import Any, Mapping
 from .algorithms.base import AlgorithmDescriptor, ParameterSpec
 from .algorithms.color import ColorRegionDetector
 from .algorithms.template import TemplateDetector
+from .algorithms.template_adapter import ProviderBackedTemplateDetector
 from .models import CoordinateSpace
+from .providers import TemplateResourceProvider
 from .registry import AlgorithmRegistry
 
 
@@ -26,12 +28,39 @@ def _create_color(parameters: Mapping[str, Any]) -> ColorRegionDetector:
 
 
 def _create_template(parameters: Mapping[str, Any]) -> TemplateDetector:
+    return create_template_detector(parameters)
+
+
+def create_template_detector(
+    parameters: Mapping[str, Any],
+    *,
+    template_provider: TemplateResourceProvider | None = None,
+) -> TemplateDetector | ProviderBackedTemplateDetector:
+    """Construct a template detector from one explicit resource source."""
     values = dict(parameters)
     target_type = str(values.pop("target_type", "target"))
-    template = values.pop("template", None) or values.pop("template_path", None)
-    if template is None:
-        raise ValueError("template algorithm requires a template or template_path")
-    return TemplateDetector(target_type=target_type, template=template, parameters=values)
+    template = values.pop("template", None) if "template" in values else None
+    template_path = values.pop("template_path", None) if "template_path" in values else None
+    resource_id = values.pop("template_resource_id", None) if "template_resource_id" in values else None
+    has_path = template_path is not None and str(template_path).strip() != ""
+    has_resource = resource_id is not None and str(resource_id).strip() != ""
+    source_count = int(template is not None) + int(has_path) + int(has_resource)
+    if source_count > 1:
+        raise ValueError("template configuration must specify exactly one resource source")
+    if has_resource:
+        if template_provider is None:
+            raise ValueError("template_resource_id requires an explicit template_provider")
+        return ProviderBackedTemplateDetector(
+            target_type=target_type,
+            provider=template_provider,
+            resource_id=str(resource_id),
+            parameters=values,
+        )
+    if template is not None:
+        return TemplateDetector(target_type=target_type, template=template, parameters=values)
+    if has_path:
+        return TemplateDetector(target_type=target_type, template=template_path, parameters=values)
+    raise ValueError("template algorithm requires a template, template_path, or template_resource_id")
 
 
 def _color_descriptor() -> AlgorithmDescriptor:

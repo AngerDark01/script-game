@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from ..models import TargetDetection
 from ..profiles import TargetProfile
-from ..registry import AlgorithmRegistry
+from ..registry import AlgorithmFactory, AlgorithmRegistry
 
 
 @dataclass(frozen=True)
@@ -20,8 +21,14 @@ class DetectorRunResult:
 class DetectorRunner:
     """Execute enabled algorithm instances without applying target policy."""
 
-    def __init__(self, registry: AlgorithmRegistry) -> None:
+    def __init__(
+        self,
+        registry: AlgorithmRegistry,
+        *,
+        factory_overrides: Mapping[str, AlgorithmFactory] | None = None,
+    ) -> None:
         self.registry = registry
+        self.factory_overrides = dict(factory_overrides or {})
 
     def run(self, *, frame: Any, profile: TargetProfile) -> DetectorRunResult:
         by_algorithm: dict[str, tuple[TargetDetection, ...]] = {}
@@ -33,7 +40,12 @@ class DetectorRunner:
             try:
                 parameters = dict(algorithm_profile.parameters)
                 parameters["target_type"] = profile.target_type
-                detector = self.registry.create(algorithm_profile.algorithm_id, parameters)
+                override = self.factory_overrides.get(algorithm_profile.algorithm_id)
+                if override is None:
+                    detector = self.registry.create(algorithm_profile.algorithm_id, parameters)
+                else:
+                    self.registry.descriptor(algorithm_profile.algorithm_id)
+                    detector = override(deepcopy(parameters))
                 detected = tuple(detector.detect(frame) or ())
                 if any(not isinstance(item, TargetDetection) for item in detected):
                     raise TypeError("detector output must contain TargetDetection values")

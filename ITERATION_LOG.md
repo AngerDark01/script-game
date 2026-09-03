@@ -3653,3 +3653,208 @@ Create the failing P2 stage tests and record the missing-module failure before i
 **CODEBASE 同步：** 已记录 contracts、registry、default catalog 的文件职责、算法边界和无 I/O 风险。checkpoint 标记 P3 complete，并把 P4 起点限定为“先做模板资源 provider adapter”。
 
 **下一轮计划：** 仅暂存 P3 provider package、provider test 和 perception documentation，复核 staged diff 后提交 `feat: add perception provider seams`；再以 P4 模板资源 bridge 的 red test 继续。
+## [P4 template-provider design discovery] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `core/perception/algorithms/template.py`：识别模板资源加载与匹配逻辑的精确分界。
+- `core/perception/builtins.py`：识别 profile 参数到模板算法 factory 的兼容路径。
+- `tests/test_perception_algorithms.py`：识别当前模板匹配兼容行为和可加入的 provider bridge 回归入口。
+
+**本轮要澄清：** P4 的第一个适配器是否应以 `template_resource_id + TemplateResourceProvider` 替代文件路径读取，同时保持数组和 `template_path` 作为向后兼容入口；provider 输出不能越过算法层直接生成 `TargetDetection`。
+### C. 本轮发现
+
+**关键发现：** (verified) `TemplateDetector` 的“模板文件路径 -> 像素数组”读取与匹配算法当前同处一类；其 array 输入已经证明匹配逻辑可独立于文件资源。`_create_template()` 也只接受 array 或 `template_path`，还没有任何 `template_resource_id` 或 provider 注册表入口。现有模板测试覆盖多尺度、bbox、空间和算法 evidence，但未覆盖 provider 资源来源。
+
+**修订的旧结论：** 原先把 P4 理解成替换 `TemplateDetector` 为一个 provider-aware detector；现确认最小且安全的方向是保留 detector 的数组/path 兼容构造器，新增一个 provider adapter/factory：先 `TemplateResourceProvider.load(resource_id)`，再把 `resource.image` 交给未变的 detector。这样不会把 provider 生命周期或资源 ID 侵入匹配循环。
+
+**待确认设计选择：** provider 的绑定点可放在算法 registry factory、独立的 adapter 类，或同时允许二者；这会影响 P4 的公共 API 和 GUI 后续如何传入 composition context。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/algorithms/template.py` | 深度完整 | 深度完整 | 3 | 确认数组输入可复用，路径 I/O 是唯一待替换边界。 |
+| `core/perception/builtins.py` | 深度完整 | 深度完整 | 3 | 确认当前 factory 无 provider/context 注入点。 |
+| `tests/test_perception_algorithms.py` | 浅读 | 深度完整 | 1 | 当前只验证模板算法本身，缺少 provider bridge 回归。 |
+
+**CODEBASE 同步：** 当前代码事实未改变；P4 的未决绑定点未写入 `CODEBASE.md`，防止把设计选择误记为已实现结构。
+## [P4 template-resource adapter plan] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `docs/plans/2026-09-04-template-resource-adapter-design.md`：保存已确认的独立资源适配器设计和 TDD 任务。
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`：把用户确认的第 1 方案写入恢复点。
+- `docs/plans/2026-09-03-perception-provider-seams-design.md`：核对 P3 provider contract 与 P4 adapter 的接口衔接。
+
+**本轮要完成：** 不修改运行时代码，先把“`TemplateResourceProvider.load(resource_id)` → adapter → 现有 `TemplateDetector` 数组输入”的设计、兼容规则、测试命令和提交边界固化。
+### C. 本轮结果
+
+**设计决定：** 用户已确认独立资源适配器方案。新增设计文档将 provider 获取与模板匹配明确分层：provider 只返回 `TemplateResource`，adapter 只组装资源与算法，`TemplateDetector` 继续负责灰度/边缘、多尺度、alpha mask、阈值、NMS 和 `TargetDetection` 输出。
+
+**兼容决定：** `template` 数组和 `template_path` 继续可用；只有 `template_resource_id` 才要求运行时注入 provider；同时提供多个资源来源时显式报配置错误；provider 对象不进入 profile JSON。
+
+**文档同步：** 新增 `docs/plans/2026-09-04-template-resource-adapter-design.md`，更新总体实施计划与 checkpoint，P4 标记为 in progress。当前未修改任何运行时代码。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `docs/plans/2026-09-04-template-resource-adapter-design.md` | PENDING | 深度完整 | 1 | 记录第 1 方案、API 边界、TDD 任务和兼容规则。 |
+| `docs/PERCEPTION_ENGINE_CHECKPOINT.md` | 深度完整 | 深度完整 | 5 | 已记录用户选择、P4 起点和 provider 注入规则。 |
+| `docs/plans/2026-09-03-perception-engine-implementation-plan.md` | 深度完整 | 深度完整 | 4 | 将 P4 首个切片指向模板资源 adapter。 |
+
+**下一步：** 按计划 Task 1 编写 `ProviderBackedTemplateDetector` 的失败测试；本轮先不实现代码，待 red test 建立后再继续。
+## [P4 Task 1 red test] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_template_adapter.py`：定义独立 `TemplateResourceProvider` 到现有模板算法数组输入的失败合同。
+
+**本轮要验证：** 适配器在构造时只调用 provider 一次，要求返回 `TemplateResource`，把原始 `image` 交给 `TemplateDetector`，并保持目标类型、bbox、置信度和 source 输出；适配器缺失或空资源 ID 必须在边界处失败。
+### C. 本轮结果（Task 1 red）
+
+**失败证据：** 新测试在导入阶段按预期报出 `ModuleNotFoundError: core.perception.algorithms.template_adapter`。失败仅表示适配器尚未实现；测试 fixture 已将 provider 调用次数、资源 DTO、空 ID、provider 类型和 provider error 边界固定下来。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_template_adapter.py` | PENDING | 深度完整 | 1 | 新增 provider-backed 模板适配器红灯合同。 |
+
+**下一步：** 新建 `core/perception/algorithms/template_adapter.py`，只组合 `TemplateResourceProvider.load()` 与未修改的 `TemplateDetector`。
+### C. 本轮结果（Task 1 green）
+
+**实现结果：** 新增 `ProviderBackedTemplateDetector`。构造时校验非空 resource ID 和 `load()` 方法，调用 provider 一次并要求 `TemplateResource`，再把唯一的 `resource.image` 交给现有 `TemplateDetector`；`detect()` 只转发原有匹配结果，不复制任何匹配算法。
+
+**验证：** `tests.test_perception_template_adapter` 3/3 通过；`compileall -q core/perception/algorithms` 通过。provider error 没有被路径 fallback 吞掉。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/algorithms/template_adapter.py` | PENDING | 深度完整 | 1 | 新增 resource provider 到 TemplateDetector 数组输入的组合适配器。 |
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 2 | provider 加载一次、类型/ID/error 边界和识别输出已通过。 |
+
+**CODEBASE 同步：** 已在架构索引新增 adapter 职责、算法步骤、失败行为和调用关系。
+
+**下一步：** 为 builtins factory 写失败测试，要求 runtime 显式传入 provider 才能使用 `template_resource_id`；保持原 `template` 和 `template_path` 参数兼容。
+## [P4 Task 2 red test] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_template_adapter.py`：为 `create_template_detector(parameters, template_provider=None)` 定义资源 ID、provider、旧数组/路径兼容和歧义输入行为。
+
+**本轮要验证：** factory 只负责构造/组合，不执行识别；provider 依赖是显式运行时参数，不写入 `TargetProfile`；缺 provider、缺资源字段、同时传多个资源来源都必须明确失败。
+### C. 本轮结果（Task 2 red）
+
+**失败证据：** factory 测试在导入阶段按预期失败：`core.perception.builtins` 尚未公开 `create_template_detector`。Task 1 的 3 条测试仍保留为绿色基线，当前失败只针对新的 factory 组合入口。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 3 | 新增 factory 资源 ID/provider、旧兼容和歧义输入 red tests。 |
+
+**下一步：** 在 `builtins.py` 增加显式 `create_template_detector()`，让 `_create_template()` 仅做兼容包装；不修改 AlgorithmRegistry 的 provider 无感知设计。
+### C. 本轮结果（Task 2 green）
+
+**实现结果：** `builtins.py` 新增 `create_template_detector(parameters, template_provider=None)`：明确区分 `template` 数组、`template_path` 和 `template_resource_id` 三种来源；资源 ID 必须有显式 provider；多来源和无来源会立即报 `ValueError`；`_create_template()` 保留为无 provider 的旧兼容包装。
+
+**验证：** 模板适配器 + 现有算法测试共 8/8 通过；`compileall -q core/perception` 通过。数组入口实际使用 NumPy 数组，不触发数组 truth-value 异常；旧模板算法的多尺度/bbox 测试仍通过。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/builtins.py` | 深度完整 | 深度完整 | 4 | 新增显式资源来源 factory，旧 `_create_template` 继续兼容。 |
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 4 | factory red/green 与旧数组/路径/歧义行为已覆盖。 |
+
+**CODEBASE 同步：** 已更新 `builtins.py` 与 template adapter 的职责和调用链说明。
+
+**下一步：** Task 3 设计运行时 provider composition seam；先写失败测试验证 `PerceptionEngine` 可以注入 provider-aware template factory，同时默认 engine 不要求 provider，且 profile JSON 不序列化 provider object。
+## [P4 Task 3 red test] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_template_adapter.py`：验证 provider-aware template factory 可以通过 `PerceptionEngine` 的显式运行时 composition hook 注入；默认 engine 在没有 provider 时仍保持明确错误。
+
+**本轮要验证：** provider object 只存在于 runtime factory closure，不进入 `TargetProfile.to_dict()`；同一 profile 仍可在默认 engine 与 provider-aware engine 中复用。
+### C. 本轮结果（Task 3 green）
+
+**实现结果：** `PerceptionEngine` 新增可选 `algorithm_factories` runtime composition hook；`DetectorRunner` 对指定算法 ID 使用深拷贝参数调用 override factory，并先确认该 ID 在 registry 中有 descriptor。provider 对象可被外部 closure 捕获，但不进入 profile 或 JSON；显式注入 compatibility Pipeline 时禁止同时注入 overrides，避免两套执行语义。
+
+**验证：** 模板 adapter + 现有算法测试共 10/10 通过；`compileall -q core/perception` 通过。测试确认 provider-backed engine 能输出 detection，默认 engine 对 resource ID 返回受控错误，profile JSON 只保留 resource ID。
+
+**同步影响：** 算法 registry 仍不理解 provider；runtime composition 只替换指定 algorithm factory，未修改旧 color/template descriptor 或 Pipeline 行为。未知 override ID 会沿用 registry 的 descriptor 错误路径。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/stages/runner.py` | 深度完整 | 深度完整 | 3 | 新增深拷贝参数的 factory override 运行时 seam。 |
+| `core/perception/engine.py` | 深度完整 | 深度完整 | 4 | 新增显式 algorithm factory 注入与 compatibility 冲突校验。 |
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 5 | engine runtime composition 和无 provider 错误契约已通过。 |
+
+**下一步：** 进入 P4 Task 4：补充 `algorithms/__init__.py` / CODEBASE / checkpoint 的公开入口说明，运行完整 P4 聚焦集，确认没有循环导入和旧兼容回归后提交。
+## [P4 template adapter public-surface red test] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `tests/test_perception_template_adapter.py`：锁定 `ProviderBackedTemplateDetector` 从 `core.perception.algorithms` 公共入口可导入。
+- `core/perception/algorithms/__init__.py`：仅增加稳定导出，不改变算法构造或运行行为。
+
+**本轮要验证：** 后续 GUI/应用可使用算法包公共入口而非深层文件路径；旧 `TemplateDetector`、ColorRegionDetector 和参数描述 exports 保持不变。
+### C. 本轮结果（public-surface red）
+
+**失败证据：** 公共入口测试按预期在导入阶段失败：`core.perception.algorithms` 尚未导出 `ProviderBackedTemplateDetector`。深层模块导入仍可用，说明只缺 package surface。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 6 | 新增公共入口 red test，当前仅 package export 缺失。 |
+| `core/perception/algorithms/__init__.py` | 浅读 | 深度完整 | 2 | 确认已有四项 exports，待增加 adapter。 |
+
+**下一步：** 增加单一公共 export，运行 P4 模板 adapter 全集与原感知 suite。
+### C. 本轮结果（template adapter slice）
+
+**实现结果：** 第 1 方案已实际落地：`ProviderBackedTemplateDetector` 独立加载 `TemplateResource`，`create_template_detector()` 负责选择资源来源，`PerceptionEngine.algorithm_factories` 提供运行时注入。现有 `TemplateDetector` 不承载 provider，也未改变匹配算法。
+
+**验证：** P4 当前切片全套测试 32/32 通过，包含 provider contracts、template adapter、现有 color/template、engine、pipeline、stage 和 model 测试；`compileall -q core/perception` 和公共 import smoke 通过。
+
+**审查结论：** 未修改 GUI、输入、导航、Portal/Loot/minimap、坐标映射或 `virtual_gamepad`。provider 对象不会出现在 profile JSON；默认 engine 对 resource ID 无 provider 时返回实例级错误而不是 fallback。P4 总任务保持 in progress，后续仍需 OCR、Feature、Shape、Motion adapter。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `core/perception/algorithms/template_adapter.py` | 深度完整 | 深度完整 | 2 | 已验证独立 provider 资源加载和算法委托。 |
+| `core/perception/algorithms/__init__.py` | 深度完整 | 深度完整 | 3 | 已验证公共 adapter export。 |
+| `core/perception/builtins.py` | 深度完整 | 深度完整 | 5 | 已验证三种资源来源选择、歧义和缺 provider 错误。 |
+| `core/perception/stages/runner.py` | 深度完整 | 深度完整 | 4 | 已验证 runtime factory override 不破坏 descriptor/目标类型边界。 |
+| `core/perception/engine.py` | 深度完整 | 深度完整 | 5 | 已验证 provider object 仅存在 runtime composition。 |
+| `tests/test_perception_template_adapter.py` | 深度完整 | 深度完整 | 7 | 7 条 adapter/composition/public-surface 测试全部通过。 |
+
+**下一步：** 仅暂存 P4 模板 adapter 相关源码、测试和文档，复核 staged diff 后提交；随后继续 P4 的 OCR provider adapter 设计，不接 GUI。
+## [SYNC] 2026-09-04 - Template adapter typing polish
+
+### A. SYNC 范围声明
+
+**触发任务：** 将 `PerceptionEngine.algorithm_factories` 类型从具体 `dict` 放宽为只读语义更准确的 `Mapping`，不改变运行时行为。
+
+**直接变更文件：** `core/perception/engine.py`。
+
+**预期连带影响：** 仅静态 API 签名；模板 adapter、runner、profile、Pipeline 和 GUI 行为不变。
+
+### C. SYNC 结果
+
+**连带重读文件：** `core/perception/engine.py`，确认构造时仍复制 mapping、runner 仍接收 factory overrides，compatibility pipeline 冲突校验不变。
+
+**验证：** 下一次 P4 staged 检查将覆盖 32 条聚焦测试与 compileall；此修改不引入新测试分支。

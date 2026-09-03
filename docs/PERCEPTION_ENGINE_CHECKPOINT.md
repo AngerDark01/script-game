@@ -64,7 +64,7 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 | P1 | Perception engine contract and facade | complete | `feat: add perception engine facade` |
 | P2 | Detector runner, fusion, confirmation, selection seams | complete | `feat: split perception decision stages` |
 | P3 | Frame/resource/OCR provider contracts | complete | `feat: add perception provider seams` |
-| P4 | Reusable algorithm adapters and capability states | pending | `feat: add perception algorithm adapters` |
+| P4 | Reusable algorithm adapters and capability states | in progress | `feat: add reusable template algorithm adapters` |
 | P5 | Runtime coordinate mapping and calibration adapter | pending | `feat: connect runtime coordinate mapping` |
 | P6 | Rewire GUI workbench through engine public API | pending | `refactor: route workbench through perception engine` |
 | P7 | Legacy Portal/Loot/minimap bridges | pending | one target per commit |
@@ -141,6 +141,21 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - The default catalog exposes four stable unavailable capability IDs so configuration UI can explain missing backends without treating any optional dependency as installed.
 - Verification: 24 perception/provider tests passed; `compileall -q core/perception` and `git diff --check` passed, with only existing LF/CRLF warnings.
 - Next: P4 adds adapters that consume these providers and normalize their evidence to `TargetDetection`; first implementation should be a resource-provider bridge for existing template matching.
+
+### 2026-09-04 - P4 started: template resource adapter
+
+- User selected the independent adapter approach: `TemplateResourceProvider.load(resource_id)` resolves a raw asset, then an adapter passes only `TemplateResource.image` into the unchanged `TemplateDetector` matching implementation.
+- Compatibility rule: existing array and `template_path` parameters remain valid; a provider is required only for `template_resource_id`; ambiguous resource inputs fail explicitly.
+- Runtime rule: provider objects are composition dependencies and never enter profile JSON. Profiles persist resource IDs/provider IDs only.
+- Detailed design and TDD task sequence: `docs/plans/2026-09-04-template-resource-adapter-design.md`.
+
+### 2026-09-04 - P4 template adapter slice complete
+
+- `ProviderBackedTemplateDetector` resolves one `TemplateResource` through an explicit provider, then delegates only the image array to the existing `TemplateDetector`.
+- `create_template_detector()` supports provider-backed resource IDs while preserving array and `template_path` sources; ambiguous and missing sources fail explicitly.
+- `PerceptionEngine` accepts runtime algorithm factory overrides, keeping provider objects outside `TargetProfile` and JSON serialization.
+- Verification: 32 focused provider/template/perception tests passed; package compilation and public import smoke checks passed.
+- P4 remains in progress for future shape, OCR, feature, and motion adapters. Next slice must choose one concrete adapter and retain the same provider/algorithm boundary.
 
 ## Audit Notes
 

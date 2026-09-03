@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from .builtins import create_default_algorithm_registry
 from .models import FrameContext, PerceptionRunResult
 from .profiles import TargetProfile
-from .registry import AlgorithmRegistry
+from .registry import AlgorithmFactory, AlgorithmRegistry
 from .stages.confirmation import ConfirmationTracker
 from .stages.fusion import fuse_candidates
 from .stages.runner import DetectorRunner
@@ -30,12 +30,16 @@ class PerceptionEngine:
         self,
         registry: AlgorithmRegistry | None = None,
         pipeline: PerceptionPipeline | None = None,
+        algorithm_factories: Mapping[str, AlgorithmFactory] | None = None,
     ) -> None:
         if pipeline is not None and registry is not None and pipeline.registry is not registry:
             raise ValueError("pipeline and registry must refer to the same registry")
+        if pipeline is not None and algorithm_factories:
+            raise ValueError("algorithm_factories cannot be combined with a compatibility pipeline")
         self.registry = registry or (pipeline.registry if pipeline is not None else create_default_algorithm_registry())
         self._compatibility_pipeline = pipeline
-        self.runner = DetectorRunner(self.registry)
+        self.algorithm_factories = dict(algorithm_factories or {})
+        self.runner = DetectorRunner(self.registry, factory_overrides=self.algorithm_factories)
         self.confirmation = ConfirmationTracker()
         self._profiles: dict[ProfileKey, TargetProfile] = {}
 

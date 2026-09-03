@@ -88,7 +88,7 @@ The exact contract, error taxonomy, registry rules, and red/green task sequence 
 
 Files: `core/perception/algorithms/shape.py`, `ocr.py`, `motion.py`, optional feature contracts, built-in descriptors, and tests.
 
-Implement deterministic shape and frame-motion adapters where dependencies already exist. Add OCR and feature interfaces with explicit provider errors when no backend is installed. Do not add game-specific target names to algorithm implementations.
+Implement deterministic shape and frame-motion adapters where dependencies already exist. Add OCR and feature interfaces with explicit provider errors when no backend is installed. The first P4 slice is the independent `TemplateResourceProvider` adapter described in `docs/plans/2026-09-04-template-resource-adapter-design.md`; it must preserve `TemplateDetector` array/path compatibility and keep provider objects out of profile serialization. Do not add game-specific target names to algorithm implementations.
 
 Commit: `feat: add perception algorithm adapters`
 
