@@ -12,6 +12,7 @@
 | `advanced_settings_dialog.py` | 639 | Tab construction, file dialogs, presets, and apply behavior may be mixed, though parameter IO now has helpers. |
 | `color_picker_dialog.py` | 395 | UI, sampling, preview, HSV math, and debug output may be mixed, though helper modules already exist. |
 | `event_manager_dialog.py` | 337 | Event list, task table, schema-driven parameter form, save/test/reset actions. |
+| `perception/` | Profile editor and screenshot test bench for reusable perception algorithms. |
 
 ## Target Dialog Split
 
@@ -136,6 +137,22 @@ Refactor guidance:
 - Use this as the model for future settings surfaces: schema defines fields; dialog renders fields.
 - Extract generic schema form rendering only when a second dialog uses it. Until then, `EventManagerDialog` is deep enough.
 - Decide one config mutation style. `EventManagerDialog` mutates `config` in place, while `NavParametersDialog` emits a replaced dataclass. Prefer immutable updates for typed dataclasses and in-place updates only for mutable dict-backed config.
+
+### Perception Workbench
+
+The perception workbench is intentionally independent from mapping and navigation:
+
+```text
+perception/dialog.py          # profile fields, instance lifecycle, run/save commands
+perception/parameter_form.py # ParameterSpec -> Qt editor adapter
+perception/preview.py        # QPixmap and TargetDetection overlay renderer
+```
+
+The dialog consumes only `core.perception` contracts. It can load a full-screen image,
+run the configured `PerceptionPipeline`, and render candidate boxes. It does not capture
+the screen, click targets, or mutate `AppContext`; those concerns remain workflow adapters.
+Unavailable registry entries remain selectable so future OCR/feature providers can be
+added without changing the profile file shape.
 
 ## Dialog-to-System Interaction Rules
 

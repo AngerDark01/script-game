@@ -9,6 +9,7 @@ from .app_context import AppContext
 from .theme import app_stylesheet
 from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
+from .dialogs.perception import PerceptionWorkbenchDialog
 
 class MainWindow(QMainWindow):
     """主应用程序窗口，负责模式切换和UI骨架。"""
@@ -67,6 +68,12 @@ class MainWindow(QMainWindow):
         self.nav_widget = NavigationModeWidget(self.app_context, self)
         self.stacked_widget.addWidget(self.nav_widget)
 
+        self.perception_button = QPushButton("Perception workbench")
+        self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
+        self.perception_button.clicked.connect(self.open_perception_workbench)
+        mode_layout.addWidget(self.perception_button)
+        self.perception_dialog = None
+
         main_layout.addWidget(self.stacked_widget)
 
         self.switch_mode(0) # 默认进入绘图模式
@@ -85,7 +92,21 @@ class MainWindow(QMainWindow):
         """关闭窗口时确保所有子进程和定时器都停止"""
         self.mapping_widget.stop_runtime()
         self.nav_widget.stop_runtime()
+        if self.perception_dialog is not None:
+            self.perception_dialog.close()
         event.accept()
+
+    def open_perception_workbench(self):
+        """Open the independent perception profile editor."""
+        if self.perception_dialog is None:
+            self.perception_dialog = PerceptionWorkbenchDialog(self)
+            self.perception_dialog.finished.connect(self._clear_perception_dialog)
+        self.perception_dialog.show()
+        self.perception_dialog.raise_()
+        self.perception_dialog.activateWindow()
+
+    def _clear_perception_dialog(self, _result: int) -> None:
+        self.perception_dialog = None
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
