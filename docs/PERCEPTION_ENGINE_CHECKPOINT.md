@@ -66,7 +66,7 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 | P2 | Detector runner, fusion, confirmation, selection seams | complete | `feat: split perception decision stages` |
 | P3 | Frame/resource/OCR provider contracts | complete | `feat: add perception provider seams` |
 | P4 | Reusable algorithm adapters and capability states | in progress | `feat: add reusable template algorithm adapters` |
-| P5 | Runtime coordinate mapping and calibration adapter | pending | `feat: connect runtime coordinate mapping` |
+| P5 | Runtime coordinate mapping and calibration adapter | in progress | desktop OCR-to-action proof slice |
 | P6 | Rewire GUI workbench through engine public API | pending | `refactor: route workbench through perception engine` |
 | P7 | Legacy Portal/Loot/minimap bridges | pending | one target per commit |
 | P8 | Workflow modules for the event chain | pending | one workflow per commit |
@@ -188,6 +188,15 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - `utils/install_perception_ocr_model.py` is an explicit direct-execution CLI. It downloads to a same-directory temporary file, verifies before atomic replacement, preserves an old file when a replacement fails, and works both as a utility script and a test-imported module. Downloaded assets under `assets/perception_models/` are Git-ignored.
 - Verification: the six offline model-resource tests pass; the installer direct-execution regression passes; and the optional real smoke test in the project virtual environment correctly recognizes `開始儀式` and `進入異界地圖` while preserving their full-image bounding boxes. The default bundled Chinese model was not silently replaced; application composition selects this model only where a Traditional-Chinese OCR provider is wanted.
 - Next: expose model selection through the future perception workbench/application composition UI (P6) without putting provider objects or raw local file paths into serializable target profiles.
+
+### 2026-09-04 - P5 desktop OCR-to-action mapping proof slice complete
+
+- Added the first explicit distinction between a captured `FULL_SCREEN` image plane and a `PHYSICAL_SCREEN` input-injection plane. `DesktopCoordinateMapper` uses an existing affine transform to derive source-image-to-desktop scale and offset, preserves transform evidence in `MappedPoint`, and refuses invalid spaces or out-of-bounds coordinates instead of silently clamping.
+- Added `DesktopFrameSource` plus a Windows virtual-desktop geometry provider. The source captures one complete desktop image and emits a dimensioned `FrameContext` paired with physical bounds and DPI observation. On Windows it establishes per-monitor DPI awareness before geometry/capture/input composition; this order is mandatory because Win32 coordinates otherwise become DPI virtualized.
+- Added the separate `core.actions` boundary: `ActionRequest` and `ActionResult` are device-neutral, while `MouseActionAdapter` accepts only a mapped physical point and performs move or exactly one double-click through a minimal mouse protocol. No perception, target text, screen capture, window focus, or navigation policy enters this package.
+- Added the thin `DesktopOcrActionProof` workflow and its explicit CLI. It is the only composition point for exact OCR matching, mapper selection, and a double-click request. By default it is dry-run; zero/multiple matches and rejected mappings never reach the action adapter.
+- Live verification on the current desktop: MSS capture and virtual geometry both reported `2560x1600` at 150% DPI; the multilingual OCR model found the unique `梦之形` label at `(633.55, 532.05)` with `0.99995` confidence; the mapped physical point was unchanged; and the Win32 adapter executed one double-click at `(634, 532)`. A follow-up read-only foreground-window diagnostic found the launched SDL application.
+- Verification: 76 perception tests and 5 new desktop mapping/action/workflow tests pass; compile and public-import checks pass; repeated live dry-run returns the same detection/mapping report. P5 remains in progress for game-window/viewport calibration, multi-display selection policy, and GUI calibration controls.
 
 ## Audit Notes
 

@@ -9,6 +9,7 @@ class CoordinateSpace(str, Enum):
     """Coordinate systems that a detector or mapper may produce."""
 
     FULL_SCREEN = "full_screen"
+    PHYSICAL_SCREEN = "physical_screen"
     GAME_WINDOW = "game_window"
     VIEWPORT = "viewport"
     MINIMAP = "minimap"
