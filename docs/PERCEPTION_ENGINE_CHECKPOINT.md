@@ -181,6 +181,14 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - The dependency is intentionally optional in `requirements-ocr.txt`; importing `core.perception` remains side-effect-free for users who do not install OCR. The default provider catalog advertises `ocr.rapidocr_onnxruntime` as unavailable until application composition supplies a real provider.
 - Verification: a red import-contract test first failed as expected; 6 RapidOCR-focused tests then passed, including lazy engine-option application and a real generated-image text-location smoke test. Follow-up provider/catalog coverage passed 12/12; the complete perception suite now passes 68/68. The remaining P4 work is feature and motion adapters; GUI wiring remains P6.
 
+### 2026-09-04 - P4 Traditional-Chinese RapidOCR model resource slice complete
+
+- The first named recognition asset, `rapidocr.ppocr-v6-multilingual-small`, is now a source-controlled manifest entry with a versioned URL and SHA-256. It is deliberately not an embedded ONNX binary and does not change the optional-dependency boundary.
+- `resolve_rapidocr_engine_options()` validates a locally installed model before returning a fresh `RapidOcrProvider.engine_options` mapping. It fixes `rec_model_path` to the verified resource while allowing copied host-level tuning options such as ONNX thread counts. The resolver is target/game/workflow agnostic.
+- `utils/install_perception_ocr_model.py` is an explicit direct-execution CLI. It downloads to a same-directory temporary file, verifies before atomic replacement, preserves an old file when a replacement fails, and works both as a utility script and a test-imported module. Downloaded assets under `assets/perception_models/` are Git-ignored.
+- Verification: the six offline model-resource tests pass; the installer direct-execution regression passes; and the optional real smoke test in the project virtual environment correctly recognizes `開始儀式` and `進入異界地圖` while preserving their full-image bounding boxes. The default bundled Chinese model was not silently replaced; application composition selects this model only where a Traditional-Chinese OCR provider is wanted.
+- Next: expose model selection through the future perception workbench/application composition UI (P6) without putting provider objects or raw local file paths into serializable target profiles.
+
 ## Audit Notes
 
 - Targeted perception and navigation tests currently pass when run with the project virtual environment.

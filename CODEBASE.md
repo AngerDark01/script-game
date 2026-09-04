@@ -3402,6 +3402,73 @@ Level 3: navigation click path
 
 调用关系：由 `_get_backend_locked()` 在没有 injected factory 时调用。
 
+### `rapidocr_models.RapidOcrModelSpec`
+行为：不可变的命名 OCR 识别模型清单项，保存稳定 `model_id`、展示文本、ONNX 文件名、下载地址、SHA-256 和推荐的 RapidOCR 构造选项。当前目录只声明 `rapidocr.ppocr-v6-multilingual-small`，用于同时覆盖简体和繁体中文的 PP-OCRv6 small 识别资产。
+
+外部依赖：只依赖 `providers.contracts.ProviderUnavailableError`；不导入 `rapidocr_onnxruntime`、不下载、不创建 ONNX 会话。
+
+注意事项：`file_name` 不能包含目录；SHA-256 在构造期验证为 64 位十六进制。模型二进制不在 Git，资源目录由 `.gitignore` 排除。
+
+### `rapidocr_models.get_rapidocr_model_spec(model_id: str) -> RapidOcrModelSpec`
+行为：把非空模型 ID 映射到一项清单。
+
+算法：
+1. 拒绝非字符串或空白 ID。
+2. 从只读 `_MODEL_SPECS` 取项。
+3. 未知 ID 时列出可用 ID 并抛 `ValueError`。
+
+副作用：无 I/O。
+
+失败行为：无效或未知模型是配置错误，抛 `ValueError`；不会退回到默认模型。
+
+调用关系：由 installer 和 `resolve_rapidocr_engine_options()` 调用。
+
+### `rapidocr_models.verify_rapidocr_model_file(spec: RapidOcrModelSpec, model_path: str | Path) -> Path`
+行为：仅在局部 ONNX 文件存在、可读取且 SHA-256 与清单一致时，返回绝对路径。
+
+算法：
+1. 验证 spec 类型并将输入路径规范为绝对路径。
+2. 文件不存在时生成包含 installer 命令的 `ProviderUnavailableError`。
+3. 分块读取文件，累积 SHA-256。
+4. 与清单摘要比较；不一致时抛明确 checksum 错误，否则返回已验证路径。
+
+副作用：只读模型文件。
+
+失败行为：路径无效时抛 `ValueError`；缺失、无法读取或摘要不符时抛 `ProviderUnavailableError`；没有网络、替换或推理副作用。
+
+调用关系：由 resolver 和 installer 在安装前后调用。
+
+### `rapidocr_models.resolve_rapidocr_engine_options(model_id: str, model_directory: str | Path, *, overrides: Mapping[str, Any] | None = None) -> dict[str, Any]`
+行为：把一个命名且完整的本地模型转换为可传给 `RapidOcrProvider` 的独立构造参数字典。
+
+算法：
+1. 解析 spec 并复制可选 overrides。
+2. 拒绝 `rec_model_path` override，避免调用方绕过所选模型的摘要检查。
+3. 用 `model_directory / spec.file_name` 调用 `verify_rapidocr_model_file()`。
+4. 复制 spec 推荐线程选项，合并其余 overrides，最后写入验证后的绝对 `rec_model_path`。
+
+副作用：只读模型文件；返回的新字典不共享调用方或清单的 mapping。
+
+失败行为：未知模型、错误 override 类型或试图重写模型路径抛 `ValueError`/`TypeError`；缺文件/损坏文件抛 `ProviderUnavailableError`。不会加载 RapidOCR、文本或游戏配置。
+
+调用关系：由应用 composition 创建 `RapidOcrProvider(engine_options=...)`，也由可选真实模型测试调用。
+
+### `utils.install_perception_ocr_model.install_rapidocr_model(model_id: str, destination: str | Path, *, timeout_seconds: float = 60.0, opener: Callable[..., _ReadableResponse] = urlopen) -> Path`
+行为：显式安装一项 OCR 模型资源，确保不完整下载永远不成为推理资源。
+
+算法：
+1. 用 `get_rapidocr_model_spec()` 解析模型，验证正 timeout，并建立目标目录。
+2. 已存在的最终文件先经 `verify_rapidocr_model_file()` 验证；正确则立即返回，错误文件保留等待安全替换。
+3. 在同一目标目录创建 `.part` 临时文件，按 1 MiB 分块从清单 URL 写入。
+4. 校验临时文件 SHA-256；通过后用 `os.replace()` 原子替换最终文件，再次验证并返回。
+5. 任意异常路径删除仅由本次调用创建的临时文件；旧最终文件未被提前删除。
+
+副作用：显式 CLI/工具调用时创建目录、下载网络字节、创建/删除临时 ONNX 文件并原子替换最终模型。正常 `core.perception` 导入和每帧识别不调用它。
+
+失败行为：无效目标/timeout 抛 `ValueError`；下载、响应数据、摘要或安装路径问题包装或传播为 `ProviderUnavailableError`，没有重试。调用者需要自行重试。
+
+调用关系：由其 `main()` 命令行入口调用；单元测试以注入 in-memory opener 调用。
+
 ### `rapidocr._pop_roi(values: dict[str, Any]) -> tuple[float, float, float, float] | None`
 行为：从可变 per-call 参数中移除并验证 ROI。
 
@@ -3588,11 +3655,13 @@ Level 3: navigation click path
 
 `utils/portal_screen_probe.py`：独立大画面实体识别探针，依赖 Windows 窗口枚举、DPI awareness、`SquareScreenCapture` 和 OpenCV HSV/轮廓分析。当前只作为传送门事件第二阶段确认技术资产；当传送门实体离开视野或被遮挡时，零 accepted 是正确输出。
 
+`utils/install_perception_ocr_model.py`：显式可执行的可选 OCR 模型安装器。脚本先把项目根目录加入 `sys.path`，然后根据 `rapidocr_models` 清单将命名 ONNX 模型下载到指定本地目录；只有临时下载文件的 SHA-256 与清单一致时才通过同目录 `os.replace()` 原子安装。它不会在感知包导入或每帧推理时运行，目标目录 `assets/perception_models/` 不进入 Git。
+
 ### Optional integration: `rapidocr-onnxruntime`
 
-`core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the only integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. There is no network request, fixed timeout, retry loop, screen capture, or background service owned by this provider. A missing package, missing `RapidOCR` export, or engine initialization failure is converted to `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output is converted to `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
+`core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the runtime integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. Recognition models are separate explicit resources: `rapidocr_models.resolve_rapidocr_engine_options()` verifies a named local ONNX file and produces construction options, while `utils/install_perception_ocr_model.py` owns the only download path. Therefore the provider itself has no network request, fixed timeout, retry loop, screen capture, or background service. A missing package, missing `RapidOCR` export, uninstalled/corrupt selected model, or engine initialization failure becomes `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output becomes `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
 
-The provider's supported call settings come from one OCR profile instance's `provider_parameters`: optional `roi`, result `language` label, and `backend_options` passed to RapidOCR. The catalog descriptor `ocr.rapidocr_onnxruntime` remains `unavailable` by default even if the optional package is installed; UI/application composition must intentionally instantiate `RapidOcrProvider` and inject it, so importing the generic perception core can never start a model unexpectedly.
+The provider's supported call settings come from one OCR profile instance's `provider_parameters`: optional `roi`, result `language` label, and `backend_options` passed to RapidOCR. `language` is not a model-selection command. UI/application composition must intentionally resolve a named model, instantiate `RapidOcrProvider`, and inject it; the catalog descriptor `ocr.rapidocr_onnxruntime` remains `unavailable` by default even if both package and model exist, so importing the generic perception core can never start a model unexpectedly.
 
 ## 8. 数据模型与契约
 ### `RapidOcrProvider` provider contract
@@ -3680,6 +3749,8 @@ P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观�
 P2 - `RapidOcrProvider.recognize()` serializes one cached RapidOCR model and performs CPU ONNX inference. Trigger condition: a full-resolution frame is requested every navigation tick, or many OCR profile instances use the same provider with expensive detector settings. Reproduction: provider metadata timings dominate a frame budget or recognition becomes delayed while other algorithms continue. Mitigation: use an instance-specific ROI for fixed text zones, set conservative RapidOCR `backend_options`/confidence thresholds, reuse one provider, and measure the recorded `elapsed_seconds` before adding parallel provider instances. Do not move OCR retries or actions into this module.
 
 P2 - `RapidOcrProvider._crop_to_roi()` clips requested ROI bounds to the actual image and maps the result back using integer crop origin. Trigger condition: a profile ROI lies wholly outside a resized/cropped game frame, or a caller accidentally consumes the local backend polygon as a full-frame point. Reproduction: recognition raises `RapidOCR ROI does not intersect the image`, or a target appears displaced by the ROI origin. Mitigation: configure ROI in the same `FrameContext.coordinate_space`, retain provider metadata `roi`/`polygon` in the workbench, and only pass the normalized `TargetDetection` onward.
+
+P2 - `rapidocr_models.resolve_rapidocr_engine_options()` hashes the entire selected ONNX file before creating a provider. Trigger condition: the application resolves an uninstalled/corrupt model during a latency-sensitive scene transition, or a user expects a per-frame `language` parameter to swap models. Reproduction: `ProviderUnavailableError` names the installer command or inference keeps using the provider's original model. Mitigation: install and validate required model assets during environment setup, construct one long-lived provider per selected model, use `language` only as a result label, and expose composition-time model selection in P6 rather than profile-level hidden behavior.
 
 ## 10. Input Control Current Notes
 `core/input/win32_driver.py` is part of the movement chain. It wraps Win32 `SetCursorPos`, `WindowFromPoint`, `SetForegroundWindow`, `GetForegroundWindow`, `GetClipCursor`, and `mouse_event`; `click()` performs separate down/up events with a short hold instead of a combined instant click.
@@ -3999,9 +4070,13 @@ PerceptionEngine.detect(frame, profile)
 
 `core/perception/providers/contracts.py` - Dependency-light raw-provider contracts. `ProviderCapability` identifies frame source, template resource, OCR, and feature back-end roles; `ProviderDescriptor` validates ID/name/capability/status and defensively serializes metadata. `TemplateResource`, `OcrSpan`, and `FeatureMatch` carry asset/text/correspondence evidence without target semantics. `FrameSource`, `TemplateResourceProvider`, `OcrProvider`, and `FeatureBackend` Protocols return these DTOs or `FrameContext`. `ProviderRegistrationError`, `UnknownProviderError`, `ProviderCapabilityMismatchError`, and `ProviderUnavailableError` are disjoint failure categories for the upcoming registry. It imports existing perception models but no OCR, feature, capture, GUI, input, or action implementation.
 
-`core/perception/providers/__init__.py` - Public provider surface. It re-exports raw DTOs, capability enum, Protocols, error taxonomy, `RAPIDOCR_PROVIDER_ID`, and `RapidOcrProvider`. Importing it loads no optional OCR package, constructs no ONNX model, and performs no resource I/O.
+`core/perception/providers/__init__.py` - Public provider surface. It re-exports raw DTOs, capability enum, Protocols, error taxonomy, `RAPIDOCR_PROVIDER_ID`, `RapidOcrProvider`, and the model-resource API (`RAPIDOCR_PPOCR_V6_MULTILINGUAL_SMALL`, `RapidOcrModelSpec`, catalog lookup, local validation, and engine-option resolver). Importing it loads no optional OCR package, constructs no ONNX model, downloads no resource, and performs no model-file I/O.
 
 `core/perception/providers/rapidocr.py` - Optional local OCR implementation. `RapidOcrProvider` lazily imports and caches one `rapidocr_onnxruntime.RapidOCR` backend, serializes calls that may mutate RapidOCR threshold settings, accepts a whole `FrameContext.image` or a validated/clipped ROI, converts each returned polygon into an original-frame `BoundingBox`, and returns raw `OcrSpan` evidence. Its public per-call controls are `roi`, result-language label, and copied `backend_options`; it neither matches a target text nor accesses capture, GUI, coordinate mapping, input, or game workflows. Missing optional packages and malformed backend data become explicit provider failures.
+
+`core/perception/providers/rapidocr_models.py` - Source-controlled, provider-composition-only catalog for optional RapidOCR recognition assets. `RapidOcrModelSpec` validates manifest metadata; `get_rapidocr_model_spec()` and `list_rapidocr_model_specs()` make model IDs explicit; `verify_rapidocr_model_file()` streams a local ONNX file through SHA-256; and `resolve_rapidocr_engine_options()` returns a new `RapidOcrProvider` option mapping only after a selected model is present and valid. The current entry is PP-OCRv6 multilingual small, chosen for Traditional Chinese coverage. The module imports no RapidOCR runtime, does no network I/O, and contains no target, game, action, or workflow policy. It rejects a caller-provided `rec_model_path` so the resolved model cannot bypass its own integrity check.
+
+`utils/install_perception_ocr_model.py` - Explicit operator-facing installer for the model catalog. The direct CLI bootstrap adds the project root before importing `core`; `install_rapidocr_model()` returns a valid existing file or writes a same-directory `.part` download, verifies SHA-256, then atomically replaces the final ONNX file. It removes only its own temporary file on failure and never overwrites an old model until the replacement verifies. `assets/perception_models/` is ignored, so this utility is the deliberate asset acquisition boundary rather than an import-time or inference-time side effect.
 
 `core/perception/providers/registry.py` - Capability-safe provider catalog. `ProviderRegistry.register(descriptor, provider)` rejects duplicate IDs, rejects implementations for unavailable descriptors, and rejects missing implementations for available/experimental descriptors; it stores but never invokes an object provider. `descriptor(id)` raises `UnknownProviderError`; `descriptors(capability=None)` preserves registration order and filters by enum capability; `resolve(id, capability=None)` first validates the known descriptor, then expected capability, then availability before returning the identical object. It does not inspect Protocol conformance or transform raw evidence, which remains an adapter responsibility.
 
@@ -4039,7 +4114,9 @@ PerceptionEngine.detect(frame, profile)
 
 `tests/test_perception_ocr_adapter.py` verifies provider invocation, exact/contains/regex predicates, confidence and result limits, validation/error propagation, factory and package surfaces, descriptor metadata, and runtime Engine composition without provider serialization.
 
-`tests/test_perception_rapidocr_provider.py` verifies lazy optional-backend initialization, polygon-to-box conversion, provider-parameter isolation, ROI crop plus full-frame coordinate restoration, malformed-output and missing-package errors, default catalog metadata, and the full `RapidOcrProvider -> OcrSpan -> ProviderBackedOcrDetector -> TargetDetection` chain. When the optional package is installed, it also recognizes a generated `ENTER MAP` image and asserts a plausible image-space location.
+`tests/test_perception_rapidocr_models.py` verifies named PP-OCRv6 multilingual metadata, explicit unknown-ID errors, missing/corrupt-asset rejection, copied overrides with a protected recognition path, direct script execution, checksum-before-atomic-replacement, and preservation of an old asset after a corrupt download using an in-memory downloader.
+
+`tests/test_perception_rapidocr_provider.py` verifies lazy optional-backend initialization, polygon-to-box conversion, provider-parameter isolation, ROI crop plus full-frame coordinate restoration, malformed-output and missing-package errors, default catalog metadata, and the full `RapidOcrProvider -> OcrSpan -> ProviderBackedOcrDetector -> TargetDetection` chain. When the optional package is installed, it recognizes a generated `ENTER MAP` image and asserts a plausible image-space location. When RapidOCR, the explicitly installed PP-OCRv6 multilingual asset, and a Windows Traditional Chinese font are present, it additionally requires exact `開始儀式` and `進入異界地圖` recognition with full-frame locations.
 
 `tests/test_perception_shape_algorithm.py` verifies synthetic circle localization, public/registry availability, rectangle vertex filtering, and invalid geometric-parameter rejection.
 

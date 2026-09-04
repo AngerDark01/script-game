@@ -46,6 +46,10 @@ debug/*.png
 debug/*.json
 map_data/**/config.before_apply_*.json
 
+# Explicitly installed local ONNX OCR models; the source-controlled manifest
+# lives in core/perception/providers/rapidocr_models.py instead.
+assets/perception_models/
+
 # OS
 .DS_Store
 Thumbs.db

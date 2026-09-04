@@ -1,11 +1,30 @@
 import importlib.util
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from core.perception.algorithms.ocr_adapter import ProviderBackedOcrDetector
 from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
 from core.perception.providers import ProviderError, ProviderUnavailableError
 from core.perception.providers.rapidocr import RapidOcrProvider
+from core.perception.providers.rapidocr_models import (
+    RAPIDOCR_PPOCR_V6_MULTILINGUAL_SMALL,
+    resolve_rapidocr_engine_options,
+)
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_TRADITIONAL_MODEL_DIRECTORY = _PROJECT_ROOT / "assets" / "perception_models"
+_TRADITIONAL_FONT_PATH = Path(r"C:\Windows\Fonts\msjh.ttc")
+
+
+def _traditional_chinese_smoke_dependencies_available() -> bool:
+    return (
+        importlib.util.find_spec("rapidocr_onnxruntime") is not None
+        and importlib.util.find_spec("PIL") is not None
+        and _TRADITIONAL_FONT_PATH.is_file()
+        and (_TRADITIONAL_MODEL_DIRECTORY / "PP-OCRv6_rec_small.onnx").is_file()
+    )
 
 
 class FakeRapidOcrBackend:
@@ -158,6 +177,41 @@ class RapidOcrProviderTests(unittest.TestCase):
         self.assertLess(match.bbox.center[0], 700.0)
         self.assertGreater(match.bbox.center[1], 40.0)
         self.assertLess(match.bbox.center[1], 210.0)
+
+    @unittest.skipUnless(
+        _traditional_chinese_smoke_dependencies_available(),
+        "RapidOCR, the explicitly installed multilingual model, and a Windows Traditional Chinese font are required",
+    )
+    def test_multilingual_model_recognizes_traditional_chinese_and_reports_image_locations(self):
+        import numpy as np
+        from PIL import Image, ImageDraw, ImageFont
+
+        expected_text = ("\u958b\u59cb\u5100\u5f0f", "\u9032\u5165\u7570\u754c\u5730\u5716")
+        image = Image.new("RGB", (1100, 300), "white")
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype(str(_TRADITIONAL_FONT_PATH), 72)
+        draw.text((60, 45), expected_text[0], font=font, fill="black")
+        draw.text((60, 165), expected_text[1], font=font, fill="black")
+
+        engine_options = resolve_rapidocr_engine_options(
+            RAPIDOCR_PPOCR_V6_MULTILINGUAL_SMALL,
+            _TRADITIONAL_MODEL_DIRECTORY,
+        )
+        spans = RapidOcrProvider(engine_options=engine_options).recognize(
+            FrameContext(image=np.array(image), coordinate_space=CoordinateSpace.FULL_SCREEN)
+        )
+        by_text = {span.text: span for span in spans}
+
+        for text, expected_y in zip(expected_text, (45.0, 165.0)):
+            with self.subTest(text=text):
+                self.assertIn(text, by_text)
+                bbox = by_text[text].bbox
+                self.assertGreater(bbox.width, 80.0)
+                self.assertGreater(bbox.height, 30.0)
+                self.assertGreater(bbox.center[0], 70.0)
+                self.assertLess(bbox.center[0], 500.0)
+                self.assertGreater(bbox.center[1], expected_y)
+                self.assertLess(bbox.center[1], expected_y + 110.0)
 
 
 if __name__ == "__main__":
