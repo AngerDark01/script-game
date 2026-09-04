@@ -9,7 +9,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QScrollArea
 
 from gui.modes.map_editor.widget import MapEditorWidget
 
@@ -46,6 +46,25 @@ class MapEditorWidgetTests(unittest.TestCase):
                 self.assertTrue((folder / "wall_overrides.npz").is_file())
                 self.assertEqual(package_before, (folder / "map_data.npz").read_bytes())
                 self.assertIn("重新加载此地图", widget.status_label.text())
+            finally:
+                widget.deleteLater()
+                self.app.processEvents()
+
+    def test_compact_height_keeps_the_sidebar_readable_in_a_vertical_scroll_area(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            widget = MapEditorWidget(map_root=Path(root) / "map_data")
+            try:
+                widget.resize(920, 350)
+                widget.show()
+                self.app.processEvents()
+
+                self.assertIsInstance(widget.sidebar_scroll, QScrollArea)
+                self.assertGreater(widget.sidebar_scroll.verticalScrollBar().maximum(), 0)
+                self.assertFalse(
+                    widget.add_wall_button.geometry().intersects(
+                        widget.erase_wall_button.geometry()
+                    )
+                )
             finally:
                 widget.deleteLater()
                 self.app.processEvents()

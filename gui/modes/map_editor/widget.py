@@ -11,9 +11,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -48,12 +51,22 @@ class MapEditorWidget(QWidget):
         root_layout.setContentsMargins(12, 12, 12, 12)
         root_layout.setSpacing(12)
 
-        sidebar = QFrame()
-        sidebar.setProperty("role", "surface")
-        sidebar.setFixedWidth(292)
-        sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar_scroll = QScrollArea()
+        self.sidebar_scroll.setObjectName("map_editor_sidebar_scroll")
+        self.sidebar_scroll.setFixedWidth(316)
+        self.sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.sidebar_content = QFrame()
+        self.sidebar_content.setProperty("role", "surface")
+        self.sidebar_content.setMinimumWidth(292)
+        self.sidebar_content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.sidebar_scroll.setWidget(self.sidebar_content)
+        sidebar_layout = QVBoxLayout(self.sidebar_content)
         sidebar_layout.setContentsMargins(14, 14, 14, 14)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setSpacing(8)
+        sidebar_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
         title = QLabel("地图墙体编辑")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
@@ -64,17 +77,19 @@ class MapEditorWidget(QWidget):
         sidebar_layout.addWidget(subtitle)
 
         map_group = QGroupBox("选择地图")
-        map_layout = QVBoxLayout(map_group)
+        map_layout = QHBoxLayout(map_group)
         self.map_combo = QComboBox()
         self.map_combo.setObjectName("map_editor_map_combo")
         self.load_map_button = QPushButton("加载地图")
         self.load_map_button.setProperty("role", "primary")
-        map_layout.addWidget(self.map_combo)
+        self.load_map_button.setFixedWidth(108)
+        map_layout.addWidget(self.map_combo, 1)
         map_layout.addWidget(self.load_map_button)
         sidebar_layout.addWidget(map_group)
 
         tool_group = QGroupBox("墙体修正工具")
         tool_layout = QVBoxLayout(tool_group)
+        tool_buttons = QHBoxLayout()
         self.add_wall_button = QPushButton("＋ 增加墙体")
         self.add_wall_button.setObjectName("map_editor_add_tool")
         self.add_wall_button.setCheckable(True)
@@ -91,10 +106,13 @@ class MapEditorWidget(QWidget):
         self.brush_radius_spin.setRange(1, 500)
         self.brush_radius_spin.setValue(12)
         self.brush_radius_spin.setSuffix(" px")
-        tool_layout.addWidget(self.add_wall_button)
-        tool_layout.addWidget(self.erase_wall_button)
-        tool_layout.addWidget(QLabel("画笔半径"))
-        tool_layout.addWidget(self.brush_radius_spin)
+        tool_buttons.addWidget(self.add_wall_button)
+        tool_buttons.addWidget(self.erase_wall_button)
+        radius_row = QHBoxLayout()
+        radius_row.addWidget(QLabel("画笔半径"))
+        radius_row.addWidget(self.brush_radius_spin, 1)
+        tool_layout.addLayout(tool_buttons)
+        tool_layout.addLayout(radius_row)
         sidebar_layout.addWidget(tool_group)
 
         history_group = QGroupBox("编辑操作")
@@ -106,12 +124,16 @@ class MapEditorWidget(QWidget):
         self.redo_button.setObjectName("map_editor_redo")
         history_row.addWidget(self.undo_button)
         history_row.addWidget(self.redo_button)
-        self.reload_button = QPushButton("放弃未保存修改并重新加载")
-        self.clear_button = QPushButton("清空人工修正")
+        self.reload_button = QPushButton("重新加载（放弃未保存）")
+        self.reload_button.setToolTip("放弃当前未保存的墙体修改，并恢复磁盘中已保存的修正。")
+        self.clear_button = QPushButton("清空修正")
+        self.clear_button.setToolTip("清空当前人工墙体修正；仍需点击保存才会写入文件。")
         self.clear_button.setProperty("role", "warning")
         history_layout.addLayout(history_row)
-        history_layout.addWidget(self.reload_button)
-        history_layout.addWidget(self.clear_button)
+        history_actions = QHBoxLayout()
+        history_actions.addWidget(self.reload_button)
+        history_actions.addWidget(self.clear_button)
+        history_layout.addLayout(history_actions)
         sidebar_layout.addWidget(history_group)
 
         self.save_button = QPushButton("保存墙体修正")
@@ -126,7 +148,6 @@ class MapEditorWidget(QWidget):
         legend_layout.addWidget(self._legend_label("#EF4444", "红色：手动增加的墙体"))
         legend_layout.addWidget(self._legend_label("#22D3EE", "青色：手动擦除的原始墙体"))
         sidebar_layout.addWidget(legend)
-        sidebar_layout.addStretch()
 
         workspace = QVBoxLayout()
         workspace.setSpacing(8)
@@ -164,7 +185,10 @@ class MapEditorWidget(QWidget):
         status_layout.addWidget(self.status_label)
         workspace.addWidget(status_frame)
 
-        root_layout.addWidget(sidebar)
+        sidebar_layout.addStretch()
+        sidebar_layout.activate()
+        self.sidebar_content.setMinimumHeight(sidebar_layout.sizeHint().height())
+        root_layout.addWidget(self.sidebar_scroll)
         root_layout.addLayout(workspace, 1)
         self._set_editor_enabled(False)
 
@@ -223,7 +247,7 @@ class MapEditorWidget(QWidget):
             return False
         self._show_controller_layers(fit=True)
         self._set_editor_enabled(True)
-        self._show_status("地图已加载。左键绘制，中键拖动画布，滚轮缩放。")
+        self._show_status("地图已加载。左键绘制；右键、中键或按住空格/Shift + 左键可拖动地图；滚轮缩放。")
         return True
 
     def save_current_map(self) -> bool:
@@ -369,4 +393,3 @@ class MapEditorWidget(QWidget):
     def _show_status(self, message: str, *, error: bool = False) -> None:
         self.status_label.setText(message)
         self.status_label.setStyleSheet("color: #FCA5A5;" if error else "")
-

@@ -24,6 +24,7 @@ class WallEditorCanvas(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMinimumSize(420, 320)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._base_array: np.ndarray | None = None
@@ -41,6 +42,8 @@ class WallEditorCanvas(QWidget):
         self._last_stroke_point: tuple[int, int] | None = None
         self._pan_anchor: QPointF | None = None
         self._pan_start: QPointF | None = None
+        self._pan_button: Qt.MouseButton | None = None
+        self._space_pan_active = False
 
     @property
     def zoom(self) -> float:
@@ -151,9 +154,11 @@ class WallEditorCanvas(QWidget):
         painter.drawImage(QPointF(0, 0), self._erase_image)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt method name
-        if event.button() == Qt.MouseButton.MiddleButton:
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        if self._should_start_pan(event):
             self._pan_anchor = event.position()
             self._pan_start = QPointF(self._pan_offset)
+            self._pan_button = event.button()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
             return
@@ -184,8 +189,9 @@ class WallEditorCanvas(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt method name
-        if event.button() == Qt.MouseButton.MiddleButton and self._pan_anchor is not None:
+        if event.button() == self._pan_button and self._pan_anchor is not None:
             self._pan_anchor = self._pan_start = None
+            self._pan_button = None
             self.setCursor(Qt.CursorShape.CrossCursor)
             event.accept()
             return
@@ -210,6 +216,30 @@ class WallEditorCanvas(QWidget):
         if self._fit_on_resize and self._map_size is not None:
             self.fit_map()
 
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt method name
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_pan_active = True
+            if self._pan_anchor is None:
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event) -> None:  # noqa: N802 - Qt method name
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+            self._space_pan_active = False
+            if self._pan_anchor is None:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt method name
+        self._space_pan_active = False
+        if self._pan_anchor is None:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        super().focusOutEvent(event)
+
     def _emit_interpolated_points(self, start: tuple[int, int], end: tuple[int, int]) -> None:
         distance = math.dist(start, end)
         spacing = max(1, self._tool_radius // 2)
@@ -221,6 +251,14 @@ class WallEditorCanvas(QWidget):
                 int(round(start[1] + (end[1] - start[1]) * ratio)),
             )
             self.stroke_extended.emit(point)
+
+    def _should_start_pan(self, event: QMouseEvent) -> bool:
+        if event.button() in {Qt.MouseButton.MiddleButton, Qt.MouseButton.RightButton}:
+            return True
+        return event.button() == Qt.MouseButton.LeftButton and (
+            self._space_pan_active
+            or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        )
 
     @staticmethod
     def _as_contiguous_uint8(array: np.ndarray) -> np.ndarray:

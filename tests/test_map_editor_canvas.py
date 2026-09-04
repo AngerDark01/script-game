@@ -7,7 +7,8 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from gui.modes.map_editor.canvas import WallEditorCanvas
@@ -43,6 +44,38 @@ class WallEditorCanvasTests(unittest.TestCase):
         self.canvas._emit_interpolated_points((0, 0), (20, 0))
 
         self.assertEqual([(4, 0), (8, 0), (12, 0), (16, 0), (20, 0)], points)
+
+    def test_right_button_drag_pans_the_zoomed_map_without_emitting_a_brush_stroke(self) -> None:
+        strokes: list[tuple[int, int]] = []
+        self.canvas.stroke_started.connect(strokes.append)
+        self.canvas.set_pan_offset(QPointF(30, 40))
+        self.canvas.show()
+        self.app.processEvents()
+
+        self._send_mouse(QEvent.Type.MouseButtonPress, QPointF(300, 200), Qt.MouseButton.RightButton, Qt.MouseButton.RightButton)
+        self._send_mouse(QEvent.Type.MouseMove, QPointF(345, 225), Qt.MouseButton.NoButton, Qt.MouseButton.RightButton)
+        self._send_mouse(QEvent.Type.MouseButtonRelease, QPointF(345, 225), Qt.MouseButton.RightButton, Qt.MouseButton.NoButton)
+
+        self.assertEqual(QPointF(75, 65), self.canvas.pan_offset)
+        self.assertEqual([], strokes)
+
+    def _send_mouse(
+        self,
+        event_type: QEvent.Type,
+        position: QPointF,
+        button: Qt.MouseButton,
+        buttons: Qt.MouseButton,
+    ) -> None:
+        event = QMouseEvent(
+            event_type,
+            position,
+            position,
+            position,
+            button,
+            Qt.MouseButtons(buttons),
+            Qt.KeyboardModifier.NoModifier,
+        )
+        QApplication.sendEvent(self.canvas, event)
 
 
 if __name__ == "__main__":
