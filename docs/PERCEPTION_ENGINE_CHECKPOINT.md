@@ -211,3 +211,22 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 
 - Targeted perception and navigation tests currently pass when run with the project virtual environment.
 - Full test discovery still reports legacy import-path errors in unrelated older tests; these must be re-audited in P9 rather than silently ignored.
+
+## 2026-09-04 — Legacy mapping runtime composition migrated
+
+- `gui/modes/mapping/runtime/session.py` is now the first live legacy composition root migrated to a new typed contract: it captures and recognizes exactly as before, then creates `MapFrameEvidence` and calls `MapStitcher.add_evidence(...)`.
+- `MapStitcher.add_frame(...)` remains the compatibility implementation. This migration deliberately does not alter minimap HSV semantics, registration, merge behavior, player fallback, or GUI display data.
+- Focused regression coverage confirms that the evidence object retains the exact original image/mask/raw-gray objects and player coordinates. The next old-chain candidate is localization result typing, followed by navigation/action dispatch, Portal, and Loot bridges.
+
+## 2026-09-04 — Legacy localization result bridge migrated
+
+- `core.localization.LocalizationResult` is the core-owned, immutable result schema for one legacy minimap localization call: it carries a `GLOBAL_MAP` position (or `None`), confidence, registration source/validity, and a copied metadata snapshot.
+- `NavigationCore.localize_result(...)` calls the old `localize(...)` exactly once and adapts only its final three-value result plus the already-written `FrameRegistration`. The old public tuple API and the F2F/template/HSV algorithm remain unchanged.
+- `capture_navigation_localization_tick(...)` now receives and returns that core object directly. `NavigationLocalizationResult` stays as an unused compatibility DTO for external callers and accepts both result shapes.
+- Focused tests protect single delegation, registration-metadata copying, `GLOBAL_MAP` semantics, and the UI-independent navigation runtime composition. The next slice is action-dispatch translation (`NavigationIntent` / `EventAction` to the device-neutral action boundary); Portal/Loot perception remains separate.
+
+### Current full-suite audit note
+
+- `python -m unittest discover -s tests` ran 170 tests: 166 passed, 2 skipped, 3 `PathFinder` assertions failed, and one advanced-settings test import failed. None uses `LocalizationResult` or the migrated capture tick.
+- The advanced-settings failure is a test-loader issue: `tests/test_advanced_settings_file_io.py` executes `gui/dialogs/advanced_settings/file_io.py` outside its package, so its relative import fails.
+- The three `PathFinder` failures concern blocked-corner diagonal traversal, unexplored-area walkability, and strict thin-wall expectations. Their policy must be audited separately; do not alter the localization migration to make unrelated legacy tests green.

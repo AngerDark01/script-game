@@ -5080,4 +5080,130 @@ The EOF whitespace was removed, the model-resource source was re-staged, and the
 - `core/routing/__init__.py`
 - `core/localization/__init__.py`
 - `core/vision/__init__.py`
-<!-- 2026-09-04 continuation scope declaration: close the existing MappingSession → MapFrameEvidence runtime migration, then inspect the typed localization boundary and its navigation composition caller. Read only the migration plan, affected session/evidence contract, localization runtime boundary, their focused tests, and the current architecture/checkpoint entries before selecting the next compatibility adapter. -->
+### C. Mapping-session migration completion findings
+
+- **(verified):** `MappingSession.tick()` now creates one `MapFrameEvidence` using the same captured image, combined/wall/fog masks, raw grayscale image, and player position that the former `add_frame(...)` call received.
+- **(verified):** center capture remains `monitor_size // 2`; region capture still uses `_detect_or_fallback_player_pos()`. No recognition parameter, frame crop, GUI preview value, or stitcher registration/merge algorithm moved.
+- **(verified):** the new session regression checks object identity for all five image/mask values and confirms the existing `(width, height)` tick result, while `MapStitcher.add_evidence()` keeps the historical `add_frame(...)` ingress for external compatibility.
+
+## [SYNC] 2026-09-04 — MappingSession typed-evidence composition
+
+### A. SYNC scope declaration
+
+**Trigger:** migrate the live mapping composition root from raw `MapStitcher.add_frame(...)` arguments to `MapFrameEvidence` plus `MapStitcher.add_evidence(...)`.
+
+**Directly changed files:** `gui/modes/mapping/runtime/session.py`; `tests/test_mapping_session_evidence.py`.
+
+**Affected boundary:** `MappingSession.tick()` → `MapFrameEvidence` → `MapStitcher.add_evidence()` → unchanged `MapStitcher.add_frame()`.
+
+### C. SYNC result
+
+**Re-read impact surface:** mapping session, typed evidence contract, stitcher typed ingress, focused regression, mapping implementation plan, current checkpoint and the MappingSession entry in `CODEBASE.md`.
+
+**CODEBASE.md synchronized:** runtime-session responsibility/dependency/compatibility notes now describe the typed evidence composition boundary; the generic-vs-domain split remains explicit.
+
+**Verification:** `python -m unittest tests.test_mapping_session_evidence tests.test_mapping_evidence tests.test_stitcher_core` passed 5/5; `python -m compileall -q core gui/modes/mapping/runtime` and scoped `git diff --check` passed.
+
+**Next migration:** audit the localization result boundary and its navigation composition caller before introducing a tuple-compatible `LocalizationResult`; no Portal/Loot/action policy changes are included in that slice.
+
+## [Legacy convergence — localization result boundary] 2026-09-04
+
+### A. Scope declared before reading
+
+**Migration objective:** identify the exact legacy localization result tuple/object, its state mutation, and the first navigation composition caller. Design a typed `LocalizationResult` compatibility bridge only if it can preserve current returned values, confidence semantics, and state updates.
+
+**Files to inspect:**
+
+- `core/localization/__init__.py` and its direct runtime implementation — find the exported localization contract and legacy value shape.
+- `gui/modes/navigation/input/intent_executor.py` and its direct caller — identify where localization-derived navigation becomes a movement/input intent.
+- focused localization/navigation regression tests — preserve the existing observable behavior before editing.
+
+**Out of scope:** changing HSV/minimap detection parameters, path-finding policy, `MotionController`, physical input adapters, Portal/Loot logic, or any GUI layout. This slice only establishes a result schema and migrates one composition edge if a behavior-preserving caller exists.
+
+### C. Findings
+
+- **(verified):** `NavigationCore.localize()` delegates to `core.localization.localize_pipeline.localize_frame()` and still returns the historical three-value `(global_x, global_y, confidence)` tuple on every success and failure branch. The pipeline also mutates `NavigationCore` registration/tracking state as part of the same call.
+- **(verified):** `capture_navigation_localization_tick()` is the first live caller. It immediately wraps that tuple in GUI-owned `NavigationLocalizationResult`, then passes it into the navigation-task context. This is the correct migration point; the input executor is downstream of task planning rather than a consumer of raw localization values.
+- **(verified):** `core.localization.evidence.LocalizationEvidence` already models diagnostic registration evidence, but it is not a localization call result and must not be repurposed to carry GUI/runtime result semantics.
+- **Corrected plan:** first introduce a core-owned result DTO plus a new typed `NavigationCore.localize_result(...)` facade that delegates exactly once to the unchanged tuple API. Keep `localize(...)` and `localize_frame(...)` untouched for external compatibility; migrate the runtime tick to the new facade and remove only its redundant GUI DTO conversion.
+
+**Next reading round:** inspect `NavigationCore` public-method conventions and state fields, the existing diagnostic-evidence schema, `CoordinateSpace` values, and focused runtime test seams before specifying the immutable result contract.
+
+## [Localization result contract — design read] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** choose the minimal reusable fields and compatibility protocol for a core-owned localization result without leaking GUI, input, or minimap-recognizer configuration into it.
+
+**Files to inspect:**
+
+- `core/localization/navigation_core/runtime.py` — current public localize facade and state-owner conventions.
+- `core/localization/evidence/models.py` — distinguish diagnostic evidence from result data.
+- `core/perception/models.py` — reuse the existing coordinate-space vocabulary if it correctly represents a stitched map.
+- `tests/test_navigation_core.py` — protect the core caller's current tuple-unpacking behavior.
+
+**Question:** whether typed callers can use a new method rather than changing the dynamic return type of `localize(...)`; this preserves the legacy method while making typed composition explicit.
+
+### C. Findings
+
+- **(verified):** `CoordinateSpace.GLOBAL_MAP` already names the exact output plane of the stitched-map position, so no new cross-cutting coordinate enum is necessary.
+- **(verified):** the GUI's `NavigationLocalizationResult` duplicates only position, confidence and `is_localized`; it has no GUI-specific state. It should be replaced by a core DTO, rather than become another long-lived adapter model.
+- **(verified):** `NavigationCore.localize()` is an intentionally thin facade over the stateful legacy algorithm, so a sibling `localize_result()` can call it exactly once and adapt its final tuple without duplicating or relocating HSV/template/F2F code.
+- **Proposed contract:** immutable `LocalizationResult(position, confidence, coordinate_space=GLOBAL_MAP, source, metadata)`; `position=None` is the normalized non-localized state. `source`/metadata must be read from the already-written frame registration, not inferred from recognizer internals. `as_legacy_tuple()` preserves external tuple consumers.
+
+**Next reading round:** inspect the existing frame-registration object and setter/clearer to determine its stable field names and whether failed states expose source/metadata safely for result construction.
+
+## [Localization result contract — registration read] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** use the existing registration state as the only source of localization-result provenance; do not repeat or expose the legacy algorithm's internal decision branches.
+
+**Files to inspect:** direct localization registration DTO and the `NavigationCore` registration facade/helper implementation.
+
+**Decision gate:** if registration already has source, validity, confidence and metadata, `LocalizationResult` will snapshot those fields; otherwise the first adapter exposes only position/confidence/coordinate space and leaves provenance for a later compatible extension.
+
+### C. Findings
+
+- **(verified):** `FrameRegistration` has the required snapshot fields: `valid`, `confidence`, `player_global_pos`, `source`, `frame_size`, and mutable `metadata`. Both successful F2F/template paths and every failed `localize_frame()` branch write it through the same `NavigationCore` helper.
+- **(verified):** a typed result can take `position` and `confidence` from the legacy tuple, then copy registration source/validity/metadata immediately after that single call. This adds provenance without re-evaluating or duplicating any HSV, template, F2F, rejection, or state-mutation logic.
+- **Contract decision:** create `core.localization.result.LocalizationResult` with `position`, `confidence`, `coordinate_space=GLOBAL_MAP`, `source`, `registration_valid`, and copied metadata. It exposes `localized_pos`, `is_localized`, and `as_legacy_tuple()`. `NavigationCore.localize_result()` will be additive; existing `localize()` remains the tuple API.
+
+## [Localization result contract — runtime-test read] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** write a small runtime composition regression proving that the capture tick requests the typed core facade exactly once and returns its object unchanged.
+
+**Files to inspect:** `gui/modes/navigation/runtime/loop.py` for player-position resolution requirements and existing navigation runtime test files for the smallest UI-independent fixture convention.
+
+**Out of scope:** editing the frame loop, intent consumer, input executor, or action adapters. The tick remains the sole live caller changed in this slice.
+
+### C. Findings
+
+- **(verified):** a center-capture runtime fixture needs only `screen_capture.capture(...)`, a capture geometry callback, a minimal config, and `nav_core.localize_result(...)`; no Qt, tracker, event coordinator, action adapter, or real image-recognition backend is required.
+- **Test decision:** add one core-facade test that patches the unchanged tuple API and verifies one invocation plus copied registration provenance, and one runtime-tick test that verifies the typed result object passes through unchanged. Existing F2F coverage remains the behavior guard for the legacy algorithm.
+
+## [SYNC] 2026-09-04 — LocalizationResult core facade and runtime migration
+
+### A. SYNC scope declaration
+
+**Trigger:** add a core-owned `LocalizationResult`, an additive `NavigationCore.localize_result(...)` facade, and migrate `capture_navigation_localization_tick(...)` from GUI result conversion to the typed core result.
+
+**Directly changed files:** `core/localization/result.py`, `core/localization/__init__.py`, `core/localization/navigation_core/runtime.py`, `gui/modes/navigation/runtime/localization_tick.py`, `gui/modes/navigation/runtime/models.py`, `tests/test_localization_result.py`, `tests/test_navigation_localization_tick.py`.
+
+**Expected impact chain:** `NavigationRuntimeFrameLoop.run()` → `capture_navigation_localization_tick()` → `NavigationCore.localize_result()` → unchanged `NavigationCore.localize()` / `localize_frame()`; downstream task context continues to read `localized_pos` and `confidence`.
+
+### C. SYNC result
+
+**Re-read impact surface:** localization tuple facade, `FrameRegistration`, navigation capture tick, downstream `localized_pos/confidence` consumer, legacy GUI compatibility DTO, focused core/runtime tests, and the corresponding CODEBASE/checkpoint sections.
+
+**Verified behavior preservation:** `localize_result()` delegates to `localize()` exactly once. It snapshots the registration already produced by the legacy algorithm; it does not branch on image content, invoke recognizer methods, map coordinates, or emit input. The old tuple entry remains unchanged.
+
+**Verification:** initial red tests failed only because `LocalizationResult` was intentionally absent. After implementation, `tests.test_localization_result`, `tests.test_navigation_localization_tick`, and `tests.test_navigation_core` passed 3/3; the full `test_navigation*.py` group passed 12/12; mapping evidence/stitcher regression passed 5/5; scoped compilation and `git diff --check` passed.
+
+**CODEBASE.md synchronized:** directory map, new result module detail, runtime models/tick descriptions, function chain, navigation flow and localization-runtime migration note now show the core DTO and the retained compatibility tuple.
+
+**Full-suite audit:** `python -m unittest discover -s tests` ran 170 tests: 166 passed, 2 skipped, and 4 failures remain outside this slice. One is a dynamic loose-file import in `tests/test_advanced_settings_file_io.py` that makes `advanced_settings/file_io.py` lose package-relative imports. Three are `PathFinder` behavior/specification conflicts: diagonal movement crosses a blocked corner, unexplored space is walkable, and a strict thin-wall expectation differs from current implementation. The migrated localization result/tick has no call-path overlap with those failures; they are recorded for their own diagnostic task rather than hidden.
+
+**Next migration:** translate navigation intents to a device-neutral action command at the composition boundary, while leaving `MotionController` as the temporary backend adapter. Portal and Loot remain untouched until their perception/output bridge is independently regression-locked.

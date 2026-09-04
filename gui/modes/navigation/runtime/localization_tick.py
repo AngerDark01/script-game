@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from core.events.debug import event_log
+from core.localization import LocalizationResult
 
 from .loop import resolve_player_local_position
-from .models import NavigationLocalizationResult
 
 
 _LAST_CAPTURE_GEOMETRY_SIGNATURE: tuple | None = None
@@ -17,7 +17,7 @@ class NavigationFrameTick:
     default_player_pos: tuple
     frame: object
     player_pos: tuple
-    localization: NavigationLocalizationResult
+    localization: LocalizationResult
 
 
 def capture_navigation_localization_tick(
@@ -61,9 +61,7 @@ def capture_navigation_localization_tick(
         default_player_pos=default_player_pos,
         player_pos=player_pos,
     )
-    localization = NavigationLocalizationResult.from_core_result(
-        nav_core.localize(frame, player_pos=player_pos)
-    )
+    localization = nav_core.localize_result(frame, player_pos=player_pos)
     return NavigationFrameTick(
         capture_rect=capture_rect,
         default_player_pos=default_player_pos,

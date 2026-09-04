@@ -244,9 +244,9 @@ core/mapping/frame_preparation.py - `MapStitcher` 的帧 mask 缩放、墙体厚
 core/mapping/frame_pipeline.py - `MapStitcher.add_frame()` 的 keyframe/F2F 配准、低质量跳过、落图和统计更新流程 helper。
 core/mapping/weighted_merge.py - `MapStitcher` weighted frame merge helper，更新 wall/fog/explored/canvas layers。
 core/mapping/rendering.py - `MapStitcher` cropped/enhanced map display rendering helper。
-core/localization/__init__.py - 导航定位系统包入口，聚合 `NavigationCore` 和定位 helper。
+core/localization/__init__.py - 导航定位系统包入口，聚合 `NavigationCore`、`LocalizationResult` 和定位 helper。
 core/localization/navigation_core/__init__.py - NavigationCore 运行时包入口。
-core/localization/navigation_core/runtime.py - `NavigationCore` 真实 class，保留旧 public/private 方法并委托定位 helper。
+core/localization/navigation_core/runtime.py - `NavigationCore` 真实 class，保留旧 tuple `localize()` 并提供 typed `localize_result()` facade。
 core/localization/navigation_core/state.py - `NavigationCore` 构造期配置、地图路径和运行态字段初始化 helper。
 core/localization/navigation_core/registration.py - `NavigationCore.last_frame_registration` 写回 wrapper。
 core/localization/navigation_core/relocalization.py - 初始位置提示、强制全图重定位和模板匹配阈值策略 helper。
@@ -256,6 +256,7 @@ core/localization/map_package.py - `NavigationCore` 的 `map_data.npz` 加载和
 core/localization/localize_pipeline.py - `NavigationCore.localize()` 的 F2F、模板匹配、强制重定位和状态写入流程 helper。
 core/localization/rendering.py - `NavigationCore.get_map_image()` 的显示地图渲染和 crop offset 写入 helper。
 core/localization/frame_registration.py - `NavigationCore.last_frame_registration` 的有效/无效配准对象构建 helper。
+core/localization/result.py - 单帧定位的核心 typed outcome；将兼容 tuple 和 FrameRegistration provenance 快照为 GLOBAL_MAP 坐标结果。
 core/localization/frame_matcher.py - 导航定位模板匹配的墙体模板缩放、闭运算标准化和局部/全图搜索窗口选择 helper。
 core/localization/visual_check.py - F2F 跟踪期间的截图-地图视觉一致性复核 helper。
 core/localization/evidence/__init__.py - 定位证据包入口，导出 `LocalizationEvidence`、`VisualCheckEvidence` 和 evidence builder。
@@ -857,10 +858,10 @@ Level 3: navigation click path
 对外依赖：`core.events.debug.event_log`、`navigation.event_adapter.event_status_text`、`navigation.input.execute_navigation_intent`、`navigation.presentation`、`navigation.runtime.intent_consumption`、`navigation.runtime.localization_tick`、`navigation.runtime.loop`、`navigation.runtime.loop_helpers`。
 注意事项：这是 GUI navigation runtime facade，不是 core 算法层。它持有 `NavigationModeWidget` owner，只编排一帧顺序：截图定位、缓存最近小地图帧、事件 observe、任务 controller update、定位展示/状态栏刷新、route overlay、intent 消费。真实定位仍由 `NavigationCore.localize()` 完成，任务选择仍由 `NavigationTaskController.update_context()` 完成，真实输入仍由 `execute_navigation_intent()` 下发到 `MotionController`。最近帧缓存只服务 `save_minimap_sample()` 这类诊断采样，不改变事件检测路径。`NavigationModeWidget._navigation_loop_unified()` 现在只调用 `runtime_frame_loop.run()`，保持 Qt timer 入口兼容。
 ### `gui/modes/navigation/runtime/models.py`
-职责：封装导航循环单帧定位结果，避免主循环直接散落 `global_x/global_y/conf` 判定。
+职责：保留旧导航 UI 的定位结果兼容 DTO，避免外部旧调用者直接散落 `global_x/global_y/conf` 判定。
 关键导出：`NavigationLocalizationResult`。
-对外依赖：无内部业务模块依赖。
-注意事项：`from_core_result()` 保持 `NavigationCore.localize()` 的三元组契约；`localized_pos` 只有在 x/y 均不为 `None` 时返回 `(x, y)`。
+对外依赖：`core.localization.LocalizationResult`。
+注意事项：实时导航链路已改用 core `LocalizationResult`；本 DTO 暂只服务兼容调用。`from_core_result()` 同时接受旧三元组和新结果对象；`localized_pos` 只有在 x/y 均不为 `None` 时返回 `(x, y)`。
 ### `gui/modes/navigation/runtime/intent_consumption.py`
 职责：封装 `NavigationRuntimeFrameLoop.run()` 中 route overlay 之后的单个 intent 消费顺序。
 关键导出：`NavigationIntentConsumptionResult`、`consume_navigation_intent`。
@@ -869,8 +870,8 @@ Level 3: navigation click path
 ### `gui/modes/navigation/runtime/localization_tick.py`
 职责：封装导航循环开头的截图与定位输入段。
 关键导出：`NavigationFrameTick`、`capture_navigation_localization_tick`。
-对外依赖：`navigation.runtime.loop.resolve_player_local_position`、`navigation.runtime.models.NavigationLocalizationResult`。
-注意事项：该 helper 不修改 QWidget 状态；它通过 `build_capture_geometry` callback 获取截图几何，通过 `screen_capture.capture()` 抓屏，调用 `resolve_player_local_position()` 得到玩家局部坐标，再调用 `nav_core.localize()` 构造 `NavigationLocalizationResult`。调用方仍负责把返回的 `capture_rect/player_pos` 写回 `_current_capture_rect/_current_player_local_pos`。
+对外依赖：`core.localization.LocalizationResult`、`navigation.runtime.loop.resolve_player_local_position`。
+注意事项：该 helper 不修改 QWidget 状态；它通过 `build_capture_geometry` callback 获取截图几何，通过 `screen_capture.capture()` 抓屏，调用 `resolve_player_local_position()` 得到玩家局部坐标，再调用 `nav_core.localize_result()` 获取 core-owned `LocalizationResult`。调用方仍负责把返回的 `capture_rect/player_pos` 写回 `_current_capture_rect/_current_player_local_pos`。
 ### `gui/modes/navigation/runtime/loop_helpers.py`
 职责：封装导航循环中纯运行时判定和 lookahead 公式。
 关键导出：`should_run_navigation_tasks`、`compute_navigation_lookahead`。
@@ -983,10 +984,10 @@ Level 3: navigation click path
 对外依赖：无内部业务模块依赖。
 注意事项：字段包括 `current_image`、`combined_mask`、`player_pos`、`capture_size`；当前用 `object` 承载 OpenCV/Numpy 图像对象，避免 GUI 层引入额外图像类型约束。
 ### `gui/modes/mapping/runtime/session.py`
-职责：执行单帧建图 runtime 流程：截图、玩家局部坐标 fallback、mask 提取、raw gray 提取、stitcher add frame 和预处理图返回。
+职责：执行单帧建图 runtime 流程：截图、玩家局部坐标 fallback、mask 提取、raw gray 提取、构造 `MapFrameEvidence` 并经 typed ingress 交给 stitcher，最后返回预处理图。
 关键导出：`MappingSession`。
-对外依赖：`mapping.runtime.models.MappingTickResult`。
-注意事项：该 session 只通过 `app_context` 调用 `screen_capture/recognizer/tracker/stitcher`，通过回调读取当前物理 monitor center 和上一帧 player pos，不触碰 Qt 控件、不更新 display、不写统计。中心截图模式 player pos 固定为截图中心；区域截图模式检测失败时依次回退上一帧 player pos 和截图中心。
+对外依赖：`core.mapping.MapFrameEvidence`、`mapping.runtime.models.MappingTickResult`。
+注意事项：该 session 只通过 `app_context` 调用 `screen_capture/recognizer/tracker/stitcher`，通过回调读取当前物理 monitor center 和上一帧 player pos，不触碰 Qt 控件、不更新 display、不写统计。中心截图模式 player pos 固定为截图中心；区域截图模式检测失败时依次回退上一帧 player pos 和截图中心。它保留旧 HSV 识别和拼图算法不变，只在 composition root 将 image、combined/wall/fog masks、raw gray 和 player position 组成 `MapFrameEvidence`，由 `MapStitcher.add_evidence()` 再兼容委托历史 `add_frame(...)`。
 ### `gui/modes/mapping/presentation/__init__.py`
 职责：绘图模式 presentation 包导出。
 关键导出：`MappingDisplayResult`、`update_mapping_displays`。
@@ -1052,6 +1053,8 @@ Level 3: navigation click path
 对外依赖：`core.localization.localize_pipeline`、`core.localization.map_package`、`core.localization.rendering`、`core.localization.visual_check`、`core.vision.phase_displacement`、`core.vision.hsv_recognizer`。
 注意事项：`NavigationCore` 仍是对外 facade class，GUI/任务层仍可直接读写 `draw_scale`、`nav_wall_layer`、`explored_map`、`crop_offset`、`current_pos`、`last_good_pos`、`drawing_saved_pos`、`last_frame_registration`。`localize()` 主流程委托 `core.localization.localize_pipeline.localize_frame()`，旧公开入口不改。`draw_scale` 必须与建图保持一致；定位运行时以 `map_data.npz` 里的 `draw_scale` 为权威来源，导航配置里的同名字段只作为旧配置/显示兼容。输出坐标是全局地图坐标，不是屏幕点击坐标。原始 `wall_layer` 必须保持不变并继续服务定位、事件配准和地图显示；`nav_wall_layer` 是由原始墙图派生出的 A* 专用障碍层。`request_full_map_localization()` / `request_global_relocalization()` 只用于清空 F2F 状态并强制下一帧走完整 `wall_layer` 模板匹配。
 
+Current typed boundary: `NavigationCore.localize_result()` delegates exactly once to the unchanged tuple-returning `localize()`, snapshots the already-written `last_frame_registration`, and returns `LocalizationResult`. It does not rerun HSV/template/F2F logic, capture frames, interact with GUI, or dispatch actions. `localize()` remains the public compatibility API for tuple consumers.
+
 ### `core/localization/navigation_core/state.py`
 职责：承接 `NavigationCore.__init__()` 中的 map path/default 参数初始化和运行态字段初始化。
 关键导出：`initialize_map_configuration`、`require_map_data_file`、`initialize_runtime_state`。
@@ -1087,6 +1090,12 @@ Level 3: navigation click path
 关键导出：`localize_frame`。
 对外依赖：OpenCV、NumPy、`core.localization.frame_matcher`。
 注意事项：该模块接收 `NavigationCore` 实例并写入其定位状态，因为 F2F、模板匹配、forced relocalization、jump rejection、frame registration 属于同一帧生命周期。旧 `NavigationCore.localize()` 保留为公开 facade。
+
+### `core/localization/result.py`
+职责：提供定位领域的不可变结果契约，把既有定位三元组和已写入的 `FrameRegistration` 快照为可复用的全局地图位置结果，而不重跑或了解 HSV、模板、F2F 决策。
+关键导出：`LocalizationResult`。
+对外依赖：`core.perception.models.CoordinateSpace`。
+注意事项：`position=None` 表示本帧未定位；`coordinate_space` 固定为 `GLOBAL_MAP`。`from_legacy_tuple()` 只解包一次 `(global_x, global_y, confidence)`，复制 registration 的 `source`、`valid` 和 `metadata`，因此后续 registration metadata 变更不会污染已返回结果。`as_legacy_tuple()` 保留旧消费者需要的三元组形状；它不限制置信度范围，因为 OpenCV 的历史模板分数可以为负。
 
 ### `core/localization/frame_registration.py`
 职责：集中构建 `NavigationCore.last_frame_registration`，把“定位失败帧”和“已知玩家点的有效帧配准”从 facade 中拆出。
@@ -1521,6 +1530,17 @@ Level 3: navigation click path
 失败行为：空 dialog 静默降级；不同 Qt 平台对 raise/activate 的实际表现可能不同，但调用顺序保持旧实现。
 调用关系：called by `toggle_owned_dialog()` and `NavigationModeWidget._show_owned_dialog()`。
 
+### `NavigationCore.localize_result(self, minimap_img, player_pos=None) -> LocalizationResult`
+行为：以兼容方式把一次既有最小地图定位调用转换为 core-owned typed result。
+算法：
+1. 调用 `self.localize(minimap_img, player_pos=player_pos)` 一次，完整保留历史 F2F、模板匹配、失败分支和 state mutation。
+2. 读取该调用已写入的 `self.last_frame_registration`。
+3. 调用 `LocalizationResult.from_legacy_tuple(result, registration=...)`，复制全局位置/置信度以及 registration 的 source、validity、metadata。
+4. 返回 `GLOBAL_MAP` 坐标空间的结果；未定位时 position 为 `None`，而 `as_legacy_tuple()` 仍可取回原三元组形状。
+副作用：仅复用历史 `localize()` 的定位状态写入；自身不抓屏、不执行输入、不修改 GUI。
+失败行为：历史 `localize()` 的异常继续向上传播；合法的历史失败三元组会变成 `position=None` 的结果而非异常。
+调用关系：called by `capture_navigation_localization_tick()`；calls `NavigationCore.localize()`、`LocalizationResult.from_legacy_tuple()`。
+
 ### `capture_navigation_localization_tick(*, build_capture_geometry, screen_capture, nav_config, nav_core, tracker, previous_player_local_pos) -> NavigationFrameTick | None`
 行为：执行导航循环开头的截图与定位输入段。
 算法：
@@ -1528,10 +1548,10 @@ Level 3: navigation click path
 2. 调用 `build_capture_geometry()` 获取 `capture_rect` 和默认玩家局部坐标；无有效截图几何时返回 `None`。
 3. 调用 `screen_capture.capture(left, top, width, height)` 抓取小地图帧；抓屏失败返回 `None`。
 4. 调用 `resolve_player_local_position()`：区域截图模式从 player mask/tracker 得到局部坐标，失败回退上一帧或截图中心；中心点截图模式使用默认局部坐标。
-5. 调用 `nav_core.localize(frame, player_pos=player_pos)` 获取 `(global_x, global_y, confidence)`。
-6. 用 `NavigationLocalizationResult.from_core_result()` 包装定位结果。
+5. 调用 `nav_core.localize_result(frame, player_pos=player_pos)`；该 facade 只调用一次历史 `localize()`，再快照 `FrameRegistration` provenance 为 core `LocalizationResult`。
+6. 直接使用该 core 结果，不创建 GUI result DTO。
 7. 返回 `NavigationFrameTick(capture_rect, default_player_pos, frame, player_pos, localization)`。
-副作用：读取屏幕截图；调用 `nav_core.localize()` 会更新定位核心内部状态。helper 本身不写 QWidget 字段。
+副作用：读取屏幕截图；`localize_result()` 内部调用的历史 `nav_core.localize()` 会更新定位核心内部状态。helper 本身不写 QWidget 字段。
 失败行为：缺少导航配置、截图几何无效或抓屏失败时返回 `None`；定位异常向上传播，保持原导航循环行为。
 调用关系：called by `NavigationRuntimeFrameLoop.run()` before event observation。
 
@@ -2342,7 +2362,7 @@ Level 3: navigation click path
 ### `NavigationRuntimeFrameLoop.run(self) -> None`
 行为：当前唯一导航循环，统一完成定位、事件观察、任务调度、overlay/status 更新和动作意图消费。
 算法：
-1. 调用 `capture_navigation_localization_tick()` 执行配置校验、截图几何构造、抓屏、玩家局部坐标解析和 `NavigationCore.localize()`。
+1. 调用 `capture_navigation_localization_tick()` 执行配置校验、截图几何构造、抓屏、玩家局部坐标解析和 `NavigationCore.localize_result()`。
 2. helper 返回空时直接结束本帧；返回有效 tick 时，widget 写回 `_current_capture_rect/_current_player_local_pos`。
 3. 调用 `observe_navigation_events()` 构造 `EventTick`、执行 `EventCoordinator.observe()`、刷新事件 overlay 和可见事件窗口任务表。
 4. 自动导航或手动事件测试启用时，计算 lookahead 并调用 `update_navigation_task_controller()`；普通自动导航允许 required/exit/event 统一调度，手动事件测试使用 `manual_event_only=True`。
@@ -3572,7 +3592,7 @@ Level 3: navigation click path
 ## 6. 完整数据流链路
 ### Flow: 自动导航移动点击
 1. `NavigationRuntimeFrameLoop.run()` 调用 `capture_navigation_localization_tick()` 获取 `capture_rect`、屏幕截图帧、玩家局部坐标和 `localized_pos=(global_x, global_y)`；副作用是更新定位核心状态，后续再更新地图上的玩家点、绿色定位框、橙色真实可见框和事件 marker。
-2. `NavigationCore.localize()` 输入实时小地图截图和 `player_pos`；输出地图全局坐标和置信度；副作用是更新 `current_pos/last_good_pos/prev_mask`。
+2. `NavigationCore.localize_result()` 输入实时小地图截图和 `player_pos`；内部调用历史 `localize()` 并输出 `LocalizationResult(GLOBAL_MAP)`；副作用仍是更新 `current_pos/last_good_pos/prev_mask` 与 `last_frame_registration`。
 3. `EventCoordinator.observe()` 输入 `EventTick(frame, frame_registration, player_global_pos)`；输出 memory 中的 active event tasks；副作用是检测 raw minimap 图标、稳定全局事件坐标、更新事件 overlay，但不推进 handler。
 4. GUI runtime 构造 `NavigationUpdateContext` 并调用 `NavigationTaskController.update_context()`；context 内含定位、`route["main"]`、`EventCoordinator.tasks()`、`nav_core.nav_wall_layer`、`explored_map` 和 `PathFinder`；控制器先用 `NavigationTaskBuilder` 构造 required/exit/event 任务，再由 `NavigationTaskScheduler` 选择一个当前任务；输出 `NavigationIntent`。
 5. 若 `NavigationIntent.metadata.force_relocalize` 为真，`handle_relocalization_navigation_intent()` 调用 `NavigationCore.request_global_relocalization(reason)`、写 `navigation forced global relocalization` 事件日志、追加“正在重新定位”状态栏后缀，并返回 `True` 让主循环提前结束本帧。
@@ -3907,7 +3927,7 @@ After the localization-view presentation split, `gui/modes/navigation/presentati
 
 After the event-observation runtime split, `gui/modes/navigation/runtime/loop.py::observe_navigation_events()` owns the per-frame event observation mini-flow: build tick, observe coordinator, render overlay, refresh visible event dialog tasks, and return `event_tick`. The two currently implemented event hooks live in the core task runner path rather than this GUI helper: `event_visible_target` fires when the selected event target first enters the real-view gate, and `event_completed` fires after the runner has completed memory state.
 
-After the localization tick split, `gui/modes/navigation/runtime/localization_tick.py::capture_navigation_localization_tick()` owns the first navigation-loop segment: capture geometry, screen capture, player local-position resolution, and `NavigationCore.localize()` result wrapping. `NavigationRuntimeFrameLoop` owns writing `_current_capture_rect/_current_player_local_pos`, event observation, task update, presentation refresh, and route overlay timing.
+After the localization result migration, `gui/modes/navigation/runtime/localization_tick.py::capture_navigation_localization_tick()` owns the first navigation-loop segment: capture geometry, screen capture, player local-position resolution, and retrieval of the core-owned `NavigationCore.localize_result()` outcome. `NavigationCore.localize()` remains the source-compatible tuple facade; `NavigationRuntimeFrameLoop` owns writing `_current_capture_rect/_current_player_local_pos`, event observation, task update, presentation refresh, and route overlay timing.
 
 After the minimap sample-capture split, `gui/modes/navigation/runtime/minimap_sample_capture.py` owns detector sample persistence: frame normalization to BGR, safe map-name directory creation, PNG writing through `cv2.imencode().tofile()`, and same-stem JSON metadata. `NavigationRuntimeFrameLoop` now also writes `_latest_minimap_frame/_latest_minimap_capture_rect/_latest_minimap_player_local_pos` immediately after localization capture, so the toolbar action can save the exact latest monitored minimap region without re-running event detection. If no cached frame exists, `NavigationModeWidget.save_minimap_sample()` falls back to one immediate capture using the current navigation monitor geometry.
 
@@ -4167,6 +4187,8 @@ This is an optional execution backend below `core.actions`, not a perception, co
 - P2's engine/Pipeline ownership boundary is complete. P3 provider contracts and P4 template/OCR adapters preserve the rule that resource acquisition and backend execution do not leak into stage APIs.
 - Legacy-integration boundary (verified 2026-09-04): `core/localization` + `core/vision/hsv` still form a stateful cropped-minimap-to-stitched-world pipeline; `core/events/types/portal` and `core/events/types/loot` still own event-local recognition/preprocessing and return `EventDetection`; `gui/modes/navigation/input/intent_executor.py::execute_navigation_intent()` still sends old `NavigationIntent` values directly to `MotionController`. None of those paths uses `PerceptionEngine`, `TargetDetection`, `MappedPoint`, or `ActionRequest`. Preserve them as compatibility paths. P7 must bridge evidence/result schemas and action dispatch one target at a time; never move Portal/Loot/minimap semantic exclusions into generic perception preprocessing.
 - Map-domain reuse boundary (verified 2026-09-04): `core/mapping/MapStitcher` is already a GUI-independent keyframe/frame-registration and weighted-map-merge core, but `gui/modes/mapping/runtime/session.py::MappingSession.tick()` couples capture and `HSVRecognizer.extract_combined()` to it through untyped masks and a local player tuple. Preserve the stitcher and its persisted wall/fog/explored map package; introduce typed visual-evidence and coordinate adapters at this composition edge rather than replacing map stitching with the perception engine.
+
+- Full-suite health (2026-09-04): `python -m unittest discover -s tests` currently runs 170 tests with 166 passing and 2 skipped. The remaining failures are outside the typed localization migration: `tests/test_advanced_settings_file_io.py` loads a package module as a loose file and therefore breaks its relative import; `tests/test_pathfinder.py` exposes three pre-existing behavior/specification conflicts (blocked-corner diagonals, unexplored-area walkability, and strict thin-wall behavior). Do not mask them by changing the new localization bridge; audit their intended pathfinding policy in a dedicated slice.
 
 ### Perception regression contracts
 

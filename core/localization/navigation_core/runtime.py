@@ -3,6 +3,7 @@ from __future__ import annotations
 from core.localization.localize_pipeline import localize_frame
 from core.localization.map_package import load_navigation_map_package
 from core.localization.rendering import render_navigation_map
+from core.localization.result import LocalizationResult
 from core.localization.visual_check import visual_check_position
 from core.vision.hsv_recognizer import HSVRecognizer
 from core.vision.phase_displacement import estimate_phase_displacement
@@ -132,6 +133,14 @@ class NavigationCore:
 
     def localize(self, minimap_img, player_pos=None):
         return localize_frame(self, minimap_img, player_pos=player_pos)
+
+    def localize_result(self, minimap_img, player_pos=None) -> LocalizationResult:
+        """Adapt one unchanged legacy localization call to the typed result contract."""
+        result = self.localize(minimap_img, player_pos=player_pos)
+        return LocalizationResult.from_legacy_tuple(
+            result,
+            registration=getattr(self, "last_frame_registration", None),
+        )
 
     def get_map_image(self):
         return render_navigation_map(self)

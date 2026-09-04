@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.localization import LocalizationResult
+
 
 @dataclass(frozen=True)
 class NavigationLocalizationResult:
@@ -21,5 +23,8 @@ class NavigationLocalizationResult:
 
     @classmethod
     def from_core_result(cls, result) -> "NavigationLocalizationResult":
+        if isinstance(result, LocalizationResult):
+            global_x, global_y, confidence = result.as_legacy_tuple()
+            return cls(global_x=global_x, global_y=global_y, confidence=confidence)
         global_x, global_y, confidence = result
         return cls(global_x=global_x, global_y=global_y, confidence=confidence)
