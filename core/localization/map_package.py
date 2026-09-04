@@ -6,6 +6,7 @@ import numpy as np
 
 from core.map_editing.composition import compose_effective_wall_layer
 from core.map_editing.storage import load_wall_overrides
+from core.map_editing.version_storage import load_wall_version_catalog
 from core.routing.obstacles import derive_navigation_wall_layer
 
 
@@ -14,18 +15,22 @@ def load_navigation_map_package(nav_core) -> None:
     try:
         data = np.load(nav_core.map_data_path)
         base_wall_layer = data["wall_layer"]
-        overrides = load_wall_overrides(
-            Path(nav_core.map_data_path).parent,
-            tuple(base_wall_layer.shape),
-        )
-        nav_core.wall_layer = compose_effective_wall_layer(base_wall_layer, overrides)
-        nav_core.nav_wall_layer = (
-            derive_navigation_wall_layer(
-                nav_core.wall_layer,
-                erode_iterations=nav_core.nav_wall_erode_iterations,
+        map_folder = Path(nav_core.map_data_path).parent
+        catalog = load_wall_version_catalog(map_folder, base_wall_layer)
+        # Complete snapshots are the only source of truth once a map was
+        # migrated/versioned.  Legacy masks remain a one-time compatibility
+        # fallback for maps which have not reached the editor yet.
+        nav_core.wall_layer = (
+            catalog.active_wall_layer
+            if catalog.active_version is not None
+            else compose_effective_wall_layer(
+                base_wall_layer,
+                load_wall_overrides(map_folder, tuple(base_wall_layer.shape)),
             )
-            if overrides.has_changes or "nav_wall_layer" not in data
-            else data["nav_wall_layer"]
+        )
+        nav_core.nav_wall_layer = derive_navigation_wall_layer(
+            nav_core.wall_layer,
+            erode_iterations=nav_core.nav_wall_erode_iterations,
         )
         nav_core.explored_map = data["explored_map"] if "explored_map" in data else None
         nav_core.fog_layer = data["fog_layer"] if "fog_layer" in data else np.zeros_like(nav_core.wall_layer)
