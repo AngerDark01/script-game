@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QStackedWidget, QApplication
@@ -10,11 +11,16 @@ from .theme import app_stylesheet
 from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
 from .dialogs.perception import PerceptionWorkbenchDialog
+from .gamepad.host_manager import GamepadHostManager
+from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
+
+
+GAMEPAD_CONFIG_ROOT = Path(__file__).resolve().parents[1] / "virtual_gamepad" / "configs"
 
 class MainWindow(QMainWindow):
     """主应用程序窗口，负责模式切换和UI骨架。"""
 
-    def __init__(self):
+    def __init__(self, *, gamepad_host_manager: GamepadHostManager | None = None):
         super().__init__()
         self.setWindowTitle("auto_modules · 实时小地图拼接系统")
         self.setGeometry(80, 80, 1100, 760)
@@ -23,6 +29,11 @@ class MainWindow(QMainWindow):
 
         # 1. 创建核心上下文
         self.app_context = AppContext(self)
+        self.gamepad_host_manager = gamepad_host_manager or GamepadHostManager()
+        self.gamepad_host_start_result = self.gamepad_host_manager.start()
+        self._gamepad_close_requested = False
+        self._gamepad_close_approved = False
+        self._runtimes_stopped = False
 
         # 2. 设置UI
         self.setup_ui()
@@ -50,9 +61,15 @@ class MainWindow(QMainWindow):
         self.mode_btn_nav.setCheckable(True)
         self.mode_btn_nav.clicked.connect(lambda: self.switch_mode(1))
 
-        self.mode_buttons = [self.mode_btn_mapping, self.mode_btn_nav]
+        self.mode_btn_gamepad = QPushButton("🎮 虚拟手柄")
+        self.mode_btn_gamepad.setProperty("role", "mode")
+        self.mode_btn_gamepad.setCheckable(True)
+        self.mode_btn_gamepad.clicked.connect(lambda: self.switch_mode(2))
+
+        self.mode_buttons = [self.mode_btn_mapping, self.mode_btn_nav, self.mode_btn_gamepad]
         mode_layout.addWidget(self.mode_btn_mapping)
         mode_layout.addWidget(self.mode_btn_nav)
+        mode_layout.addWidget(self.mode_btn_gamepad)
         mode_layout.addStretch()
         main_layout.addLayout(mode_layout)
 
@@ -67,6 +84,19 @@ class MainWindow(QMainWindow):
         # 注意：NavigationModeWidget的__init__也需要修改以接收app_context
         self.nav_widget = NavigationModeWidget(self.app_context, self)
         self.stacked_widget.addWidget(self.nav_widget)
+
+        # Driver and physical-input interception stay in the independent Host.
+        # This workbench page owns only profiles, controls, and visible status.
+        self.gamepad_page = GamepadPage(
+            self.gamepad_host_manager.create_client(),
+            profile_root=GAMEPAD_CONFIG_ROOT,
+            parent=self,
+            client_factory=self.gamepad_host_manager.create_client,
+        )
+        self.gamepad_page.shutdown_finished.connect(self._on_gamepad_shutdown_finished)
+        self.stacked_widget.addWidget(self.gamepad_page)
+        if not self.gamepad_host_start_result.connected:
+            self.gamepad_page.show_host_error(self.gamepad_host_start_result.message)
 
         self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
@@ -90,11 +120,39 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """关闭窗口时确保所有子进程和定时器都停止"""
-        self.mapping_widget.stop_runtime()
-        self.nav_widget.stop_runtime()
-        if self.perception_dialog is not None:
-            self.perception_dialog.close()
-        event.accept()
+        if self._gamepad_close_approved:
+            event.accept()
+            return
+
+        # Do not let Qt tear down its event loop while reset/pause work is
+        # still in flight: the independent Host would otherwise be able to
+        # keep bound physical keys locked after this window disappears.
+        event.ignore()
+        if self._gamepad_close_requested:
+            return
+        self._gamepad_close_requested = True
+        self.setEnabled(False)
+        if not self._runtimes_stopped:
+            self._runtimes_stopped = True
+            self.mapping_widget.stop_runtime()
+            self.nav_widget.stop_runtime()
+            if self.perception_dialog is not None:
+                self.perception_dialog.close()
+        self.gamepad_page.shutdown()
+
+    def _on_gamepad_shutdown_finished(self, page_succeeded: bool, page_message: str) -> None:
+        """Only complete close after virtual-input cleanup is confirmed safe."""
+        host_result = self.gamepad_host_manager.shutdown()
+        safe_to_close = page_succeeded or host_result.succeeded or host_result.stopped_owned_host
+        if not safe_to_close:
+            self._gamepad_close_requested = False
+            self.setEnabled(True)
+            message = page_message or "; ".join(host_result.errors) or "Virtual gamepad cleanup could not be confirmed."
+            self.gamepad_page.show_host_error(f"Close cancelled: {message} Retry after the Host is available.")
+            return
+        self._gamepad_close_approved = True
+        self.setEnabled(True)
+        self.close()
 
     def open_perception_workbench(self):
         """Open the independent perception profile editor."""

@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from tests.gamepad_test_support import InertGamepadHostManager
 
 
 class NavigationUiLayoutTests(unittest.TestCase):
@@ -14,7 +15,7 @@ class NavigationUiLayoutTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.window = MainWindow()
+        self.window = MainWindow(gamepad_host_manager=InertGamepadHostManager())
         self.window.switch_mode(1)
         self.nav = self.window.nav_widget
 

@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from gui.main_window import MainWindow
+from tests.gamepad_test_support import InertGamepadHostManager
 
 
 class NavigationCompactActionsTests(unittest.TestCase):
@@ -14,7 +15,7 @@ class NavigationCompactActionsTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_low_frequency_actions_move_to_more_menu(self):
-        window = MainWindow()
+        window = MainWindow(gamepad_host_manager=InertGamepadHostManager())
         window.switch_mode(1)
         window.show()
         self.app.processEvents()

@@ -37,12 +37,20 @@ keyboard.execute(ActionCommand(ActionKind.KEY_CHORD, KeyboardTarget(("ctrl", "sh
 declared order and releases them in reverse order, including if a later key
 fails to press.
 
-## Existing Virtual Xbox host composition
+## Virtual Xbox host composition
 
-The independent `virtual_gamepad` host/UI remains responsible for elevation,
+The independent `virtual_gamepad` Host remains responsible for elevation,
 driver lifecycle, Controller 1/2 start and pause, and its F7/F8/F9 controls.
-It must already be running before the following code connects.  This action
-library does not start the host, install a driver, or bypass game protections.
+Starting the total `auto_modules` workbench now attaches to an existing Host
+or starts one when needed, and presents the controls on its `虚拟手柄` page.
+There is no second normal-use handpad window.
+
+`VirtualGamepadActionAdapter` uses a separate named-pipe client, so an
+automation workflow may send commands while the embedded page remains open.
+The action adapter deliberately does not install drivers or bypass game
+protections. A background workflow should connect only after the workbench
+has reported the Host ready (or after another trusted launcher has started
+the Host).
 
 ```python
 from core.actions import (
@@ -86,7 +94,10 @@ gamepad.close()
 Every virtual-gamepad target carries an explicit Controller 1/2 route, source,
 and positive TTL.  A loop that needs sustained stick, trigger, or button state
 must refresh its command before the TTL expires; a cancellation path should
-send `GAMEPAD_RESET`.
+send `GAMEPAD_RESET`. `GAMEPAD_RESET` neutralizes buttons, sticks, and
+triggers; it does not change the user's mapping enablement. The UI or
+workflow should pause its controller when it no longer intends to drive
+physical mapped input.
 
 ## Next composition layer
 

@@ -1,5 +1,23 @@
 # auto_modules
 
+## 虚拟手柄工作台
+
+在 Windows 10/11 上，`main.py` 现在会以管理员权限启动统一工作台，并在顶部提供 `🎮 虚拟手柄` 页面。它会复用独立的 C# Host 来提供两个 Xbox 360 XInput 虚拟手柄：
+
+- Controller 1 / Controller 2 有独立配置，分别用 F7 / F8 启动或暂停；F9 会紧急重置两个手柄。
+- 按键通过下拉列表配置，鼠标绑定始终通过鼠标下拉列表配置；暂停、关闭和重置时不会拦截已绑定输入。
+- 自动化模块可通过 `core.actions.VirtualGamepadActionAdapter` 与页面同时连接同一个 Host，向 Controller 1 或 2 发送按钮、摇杆、扳机和重置信号。
+- 关闭工作台时会先确认两个控制器 reset/pause；由工作台启动的 Host 会随之安全结束。
+
+启动命令：
+
+```powershell
+cd D:\ACloud\auto_modules
+D:\ACloud\.venv\Scripts\python.exe main.py
+```
+
+首次使用前需要安装已签名的 ViGEmBus 驱动；本项目不会使用任何第三方项目自带的未知安装包。
+
 实时小地图拼接系统
 
 ## 项目简介
