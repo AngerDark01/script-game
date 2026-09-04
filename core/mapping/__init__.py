@@ -7,6 +7,7 @@ from .frame_preparation import (
     scaled_player_pos,
     standardize_wall_thickness,
 )
+from .evidence import MapFrameEvidence
 from .frame_pipeline import add_frame_to_stitcher
 from .package_io import load_stitcher_map_package, save_stitcher_map_package
 from .performance import PerformanceMonitor, Timer
@@ -16,6 +17,7 @@ from .weighted_merge import merge_frame_weighted
 
 __all__ = [
     "MapStitcher",
+    "MapFrameEvidence",
     "PerformanceMonitor",
     "Timer",
     "add_frame_to_stitcher",

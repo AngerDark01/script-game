@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from core.recognizer_optimized import HSVRecognizer
+from core.vision import HSVRecognizer
 
 
 class RecognizerOptimizedTest(unittest.TestCase):

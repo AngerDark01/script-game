@@ -13,6 +13,7 @@ from .registry import AlgorithmRegistry
 from .builtins import create_default_algorithm_registry
 from .pipeline import PerceptionPipeline
 from .engine import PerceptionEngine
+from .preprocessing import ImageArtifact, ImageGeometry
 
 __all__ = [
     "BoundingBox",
@@ -27,4 +28,6 @@ __all__ = [
     "create_default_algorithm_registry",
     "PerceptionPipeline",
     "PerceptionEngine",
+    "ImageArtifact",
+    "ImageGeometry",
 ]

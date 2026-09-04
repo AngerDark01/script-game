@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pydirectinput
+from core.input.pydirectinput_backend import get_pydirectinput
 
 
 def set_params(
@@ -58,5 +58,5 @@ def press_key(controller, key: str, reason: str = "event_key"):
         print("Empty key requested. Skipping key press.")
         return None
     print(f"Executing key press: key={normalized_key}, reason={reason}")
-    pydirectinput.press(normalized_key)
+    get_pydirectinput().press(normalized_key)
     return {"key": normalized_key, "reason": reason}

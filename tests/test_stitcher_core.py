@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from core.stitcher_core import MapStitcher
+from core.mapping import MapStitcher
 
 
 class MapStitcherTest(unittest.TestCase):

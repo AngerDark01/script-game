@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import pydirectinput
-
 from core.input.click_diagnostics import format_window_info
 from core.input.click_executor import send_click
+from core.input.pydirectinput_backend import get_pydirectinput
 from core.input.screen_bounds import clamp_screen_pos, screen_height_from_driver_or_size
 
 try:
@@ -60,6 +59,10 @@ def clamp_controller_screen_pos(controller, screen_pos: tuple[int, int]) -> tupl
 
 
 def safe_pydirectinput_call(name: str):
+    try:
+        pydirectinput = get_pydirectinput()
+    except RuntimeError as exc:
+        return f"{type(exc).__name__}: {exc}"
     func = getattr(pydirectinput, name, None)
     if not callable(func):
         return None

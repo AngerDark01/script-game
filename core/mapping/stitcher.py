@@ -14,6 +14,7 @@ from core.mapping.frame_preparation import (
     scaled_player_pos,
     standardize_wall_thickness,
 )
+from core.mapping.evidence import MapFrameEvidence
 from core.mapping.frame_pipeline import add_frame_to_stitcher
 from core.mapping.package_io import load_stitcher_map_package, save_stitcher_map_package
 from core.mapping.performance import PerformanceMonitor
@@ -127,6 +128,19 @@ class MapStitcher:
 
     def add_frame(self, img, match_mask, save_mask, fog_mask, raw_gray=None, player_pos=None):
         return add_frame_to_stitcher(self, img, match_mask, save_mask, fog_mask, raw_gray=raw_gray, player_pos=player_pos)
+
+    def add_evidence(self, evidence: MapFrameEvidence):
+        """Accept typed map evidence while preserving the historical add_frame path."""
+        if not isinstance(evidence, MapFrameEvidence):
+            raise TypeError("evidence must be a MapFrameEvidence")
+        return self.add_frame(
+            evidence.image,
+            evidence.match_mask,
+            evidence.save_mask,
+            evidence.fog_mask,
+            raw_gray=evidence.raw_gray,
+            player_pos=evidence.player_position,
+        )
 
     def _smooth_displacement(self, dx, dy, quality):
         self.displacement_history.append((dx, dy))

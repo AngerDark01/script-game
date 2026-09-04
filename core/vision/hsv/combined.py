@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-import cv2
 import numpy as np
+
+from core.perception.preprocessing.image_ops import canny_edges, to_gray
+from core.perception.preprocessing.masks import (
+    circle_mask,
+    intersect_masks,
+    morphology,
+    saturation_mask,
+    subtract_mask,
+    weighted_mask_fusion,
+)
 
 
 def extract_combined_masks(recognizer, img, player_pos=None):
@@ -9,8 +18,8 @@ def extract_combined_masks(recognizer, img, player_pos=None):
     fog_mask = recognizer.extract_fog(img, is_processed=False)
 
     img_wall_processed = recognizer._preprocess_for_wall(img)
-    gray = cv2.cvtColor(img_wall_processed, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, recognizer.edge_low, recognizer.edge_high)
+    gray = to_gray(img_wall_processed)
+    edges = canny_edges(gray, low=recognizer.edge_low, high=recognizer.edge_high)
 
     if recognizer.sat_filter_enabled:
         dynamic_mask = dynamic_color_mask(recognizer, img, player_pos=player_pos)
@@ -26,44 +35,54 @@ def extract_combined_masks(recognizer, img, player_pos=None):
 
     radius = int(recognizer.player_clear_radius)
     if radius > 0:
-        cv2.circle(wall_mask, (cx, cy), radius, 0, -1)
-        cv2.circle(fog_mask, (cx, cy), radius, 0, -1)
-        cv2.circle(edges, (cx, cy), radius, 0, -1)
+        player_exclusion = circle_mask(
+            wall_mask.shape,
+            center=(cx, cy),
+            radius=radius,
+        )
+        wall_mask = subtract_mask(wall_mask, player_exclusion)
+        fog_mask = subtract_mask(fog_mask, player_exclusion)
+        edges = subtract_mask(edges, player_exclusion)
 
     match_mask = weighted_match_mask(recognizer, wall_mask, edges)
     if radius > 0:
-        cv2.circle(match_mask, (cx, cy), radius, 0, -1)
+        match_mask = subtract_mask(match_mask, player_exclusion)
 
     return match_mask.astype(np.uint8), wall_mask, fog_mask
 
 
 def dynamic_color_mask(recognizer, img, player_pos=None):
-    hsv_raw = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    _, s_raw, _ = cv2.split(hsv_raw)
-    color_mask = s_raw > recognizer.sat_filter_thresh
+    dynamic_mask = saturation_mask(img, threshold=recognizer.sat_filter_thresh)
 
     if recognizer.sat_filter_radius > 0:
         h_img, w_img = img.shape[:2]
-        mask_radius = np.zeros((h_img, w_img), dtype=np.uint8)
         if player_pos:
             cx_p, cy_p = player_pos
         else:
             cx_p, cy_p = w_img // 2, h_img // 2
-        cv2.circle(mask_radius, (cx_p, cy_p), recognizer.sat_filter_radius, 255, -1)
-        color_mask = color_mask & (mask_radius > 0)
+        dynamic_mask = intersect_masks(
+            dynamic_mask,
+            circle_mask(
+                (h_img, w_img),
+                center=(cx_p, cy_p),
+                radius=recognizer.sat_filter_radius,
+            ),
+        )
 
-    dynamic_mask = (color_mask.astype(np.uint8) * 255)
-    return cv2.dilate(dynamic_mask, recognizer.kernel_small, iterations=1) > 0
+    return morphology(
+        dynamic_mask,
+        operation="dilate",
+        kernel_shape="rect",
+        kernel_size=recognizer.kernel_small.shape[0],
+    ) > 0
 
 
 def weighted_match_mask(recognizer, wall_mask, edges):
     wall_weight = max(0, recognizer.wall_weight)
     edge_weight = max(0, recognizer.edge_weight)
-    total = max(1, wall_weight + edge_weight)
-    return cv2.addWeighted(
-        wall_mask,
-        wall_weight / total,
-        edges,
-        edge_weight / total,
-        0,
+    return weighted_mask_fusion(
+        first=wall_mask,
+        first_weight=wall_weight,
+        second=edges,
+        second_weight=edge_weight,
     )

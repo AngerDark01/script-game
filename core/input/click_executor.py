@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-import pydirectinput
+from core.input.pydirectinput_backend import get_pydirectinput
 
 
 def send_click(
@@ -35,6 +35,7 @@ def send_click(
         info["moved_by_driver"] = True
         return info
 
+    pydirectinput = get_pydirectinput()
     pydirectinput.click(int(x), int(y), button=click_button)
     if not confirm_after_click:
         return info
@@ -53,4 +54,4 @@ def send_click(
 
 def fallback_pydirect_click(x: int, y: int, *, click_button: str) -> None:
     """Fallback click used when the preferred backend raises."""
-    pydirectinput.click(int(x), int(y), button=click_button)
+    get_pydirectinput().click(int(x), int(y), button=click_button)
