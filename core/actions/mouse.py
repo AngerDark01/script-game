@@ -7,7 +7,8 @@ from typing import Callable, Protocol
 
 from core.perception.models import CoordinateSpace
 
-from .models import ActionKind, ActionRequest, ActionResult
+from .contracts import ActionCommand, ActionKind, ActionResult, PointerTarget
+from .models import ActionRequest
 
 
 class MouseDevice(Protocol):
@@ -42,44 +43,59 @@ class MouseActionAdapter:
         self._sleep = sleep or time.sleep
         self._device_id = device_id
 
-    def execute(self, request: ActionRequest) -> ActionResult:
+    def execute(self, request: ActionRequest | ActionCommand) -> ActionResult:
         """Move to a validated physical point, then optionally perform one double click."""
-        if not isinstance(request, ActionRequest):
-            raise TypeError("request must be an ActionRequest")
-        if request.point.destination_space is not CoordinateSpace.PHYSICAL_SCREEN:
+        command = _as_pointer_command(request)
+        target = command.target
+        if not isinstance(target, PointerTarget):
+            raise ValueError("mouse actions require a PointerTarget")
+        if target.point.destination_space is not CoordinateSpace.PHYSICAL_SCREEN:
             raise ValueError("mouse actions require a PHYSICAL_SCREEN mapped point")
-        x = int(round(request.point.destination_point.x))
-        y = int(round(request.point.destination_point.y))
+        x = int(round(target.point.destination_point.x))
+        y = int(round(target.point.destination_point.y))
         started_at_ms = int(self._clock_ms())
         moved = self._device.move_to(x, y)
         if moved is False:
             raise ActionExecutionError(f"mouse device could not move to ({x}, {y})")
 
         click_count = 0
-        if request.kind is ActionKind.DOUBLE_CLICK:
+        if command.kind is ActionKind.DOUBLE_CLICK:
             self._click_once()
-            self._sleep(request.interval_ms / 1000.0)
+            self._sleep(command.interval_ms / 1000.0)
             self._click_once()
             click_count = 2
-        elif request.kind is not ActionKind.MOVE:
-            raise ValueError(f"unsupported mouse action kind: {request.kind}")
+        elif command.kind is not ActionKind.MOVE:
+            raise ValueError(f"unsupported mouse action kind: {command.kind}")
 
         completed_at_ms = int(self._clock_ms())
         return ActionResult(
             executed=True,
-            point=(x, y),
             device_id=self._device_id,
-            kind=request.kind,
+            kind=command.kind,
             started_at_ms=started_at_ms,
             completed_at_ms=completed_at_ms,
+            point=(x, y),
+            target=target,
             metadata={
                 "click_count": click_count,
-                "source_space": request.point.source_space.value,
-                "destination_space": request.point.destination_space.value,
-                "mapping": dict(request.point.metadata),
+                "source_space": target.point.source_space.value,
+                "destination_space": target.point.destination_space.value,
+                "mapping": dict(target.point.metadata),
             },
         )
 
     def _click_once(self) -> None:
         self._device.mouse_down("left")
         self._device.mouse_up("left")
+
+
+def _as_pointer_command(request: ActionRequest | ActionCommand) -> ActionCommand:
+    if isinstance(request, ActionRequest):
+        return ActionCommand(
+            kind=request.kind,
+            target=PointerTarget(request.point),
+            interval_ms=request.interval_ms,
+        )
+    if isinstance(request, ActionCommand):
+        return request
+    raise TypeError("request must be an ActionRequest or ActionCommand")

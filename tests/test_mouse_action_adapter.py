@@ -1,6 +1,6 @@
 import unittest
 
-from core.actions import ActionKind, ActionRequest, MouseActionAdapter
+from core.actions import ActionCommand, ActionKind, ActionRequest, MouseActionAdapter, PointerTarget
 from core.perception.models import CoordinateSpace
 from core.spatial import MappedPoint, Point2D
 
@@ -21,6 +21,21 @@ class _FakeMouseDevice:
 
 
 class MouseActionAdapterTests(unittest.TestCase):
+    def test_move_accepts_a_generic_pointer_command(self):
+        device = _FakeMouseDevice()
+        adapter = MouseActionAdapter(device=device, clock_ms=lambda: 1000, sleep=lambda _seconds: None)
+        command = ActionCommand(
+            kind=ActionKind.MOVE,
+            target=PointerTarget(_mapped_point(480.4, 270.6)),
+        )
+
+        result = adapter.execute(command)
+
+        self.assertEqual([("move", 480, 271)], device.calls)
+        self.assertTrue(result.executed)
+        self.assertEqual((480, 271), result.point)
+        self.assertEqual(ActionKind.MOVE, result.kind)
+
     def test_double_click_moves_then_sends_two_left_down_up_pairs(self):
         device = _FakeMouseDevice()
         adapter = MouseActionAdapter(device=device, clock_ms=lambda: 1000, sleep=lambda _seconds: None)
