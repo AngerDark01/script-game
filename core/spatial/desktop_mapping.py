@@ -61,6 +61,20 @@ class MappedPoint:
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
+def physical_screen_point(x: float, y: float) -> MappedPoint:
+    """Declare an already-physical desktop point as an explicit identity mapping."""
+    point = Point2D(x, y)
+    if not isfinite(point.x) or not isfinite(point.y):
+        raise ValueError("physical screen point coordinates must be finite")
+    return MappedPoint(
+        source_point=point,
+        source_space=CoordinateSpace.PHYSICAL_SCREEN,
+        destination_point=point,
+        destination_space=CoordinateSpace.PHYSICAL_SCREEN,
+        metadata={"transform": "identity", "declared_physical": True},
+    )
+
+
 class DesktopCoordinateMapper:
     """Map one full-desktop capture's pixel plane into physical desktop coordinates."""
 

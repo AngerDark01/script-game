@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from core.navigation_tasks.models import NavigationIntentType
+from core.input import MotionControllerActionAdapter
+
+from .actions import MapMovementAction, PrimitiveNavigationAction, translate_navigation_intent
 
 
 @dataclass(frozen=True)
@@ -19,26 +21,26 @@ def execute_navigation_intent(
     motion_controller,
     navigation_task_controller,
     enable_game_input_mode: Callable[[], None],
+    action_adapter=None,
 ) -> NavigationIntentExecutionResult:
-    """Execute a navigation intent against the GUI-owned input adapter."""
-    if intent is None or intent.type in (NavigationIntentType.NONE, NavigationIntentType.WAIT):
+    """Execute a typed navigation composition action through compatibility backends."""
+    action = translate_navigation_intent(intent)
+    if action is None:
         return NavigationIntentExecutionResult()
 
-    if intent.type == NavigationIntentType.MOVE_MAP:
-        if not intent.player_pos or not intent.subgoal:
-            return NavigationIntentExecutionResult()
+    if isinstance(action, MapMovementAction):
         enable_game_input_mode()
         motion_controller.set_control_enabled(True)
-        if intent.metadata.get("force_click_target"):
+        if action.force_click_target:
             click_info = motion_controller.click_map_target_once(
-                intent.player_pos,
-                intent.subgoal,
+                action.player_position,
+                action.target_position,
                 reason=intent.message or "navigation_forced_target",
             )
         else:
             click_info = motion_controller.move_to_map_target(
-                intent.player_pos,
-                intent.subgoal,
+                action.player_position,
+                action.target_position,
             )
         if click_info:
             navigation_task_controller.record_intent_click(intent, now_ms)
@@ -51,23 +53,12 @@ def execute_navigation_intent(
             )
         return NavigationIntentExecutionResult(handled=True)
 
-    if intent.type == NavigationIntentType.CLICK_SCREEN:
-        screen_pos = intent.metadata.get("screen_pos")
-        if screen_pos:
-            enable_game_input_mode()
-            motion_controller.click_screen_position(
-                screen_pos,
-                reason=intent.message or "navigation_event_click",
-            )
-            return NavigationIntentExecutionResult(handled=True)
-        return NavigationIntentExecutionResult()
-
-    if intent.type == NavigationIntentType.PRESS_KEY:
-        key = intent.metadata.get("key")
-        if key:
-            enable_game_input_mode()
-            motion_controller.press_key(key, reason=intent.message or "navigation_event_key")
-            return NavigationIntentExecutionResult(handled=True)
-        return NavigationIntentExecutionResult()
+    if isinstance(action, PrimitiveNavigationAction):
+        enable_game_input_mode()
+        (action_adapter or MotionControllerActionAdapter(controller=motion_controller)).execute(
+            action.command,
+            reason=action.reason,
+        )
+        return NavigationIntentExecutionResult(handled=True)
 
     return NavigationIntentExecutionResult()

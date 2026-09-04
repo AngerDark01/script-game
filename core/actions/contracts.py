@@ -14,6 +14,7 @@ class ActionKind(StrEnum):
     """The primitive actions understood by the initial device adapters."""
 
     MOVE = "move"
+    CLICK = "click"
     DOUBLE_CLICK = "double_click"
     KEY_DOWN = "key_down"
     KEY_UP = "key_up"
@@ -151,6 +152,7 @@ class ActionCommand:
             raise ValueError("interval_ms must be a non-negative integer")
         expected_target = {
             ActionKind.MOVE: PointerTarget,
+            ActionKind.CLICK: PointerTarget,
             ActionKind.DOUBLE_CLICK: PointerTarget,
             ActionKind.KEY_DOWN: KeyboardTarget,
             ActionKind.KEY_UP: KeyboardTarget,

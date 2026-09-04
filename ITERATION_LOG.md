@@ -5207,3 +5207,196 @@ The EOF whitespace was removed, the model-resource source was re-staged, and the
 **Full-suite audit:** `python -m unittest discover -s tests` ran 170 tests: 166 passed, 2 skipped, and 4 failures remain outside this slice. One is a dynamic loose-file import in `tests/test_advanced_settings_file_io.py` that makes `advanced_settings/file_io.py` lose package-relative imports. Three are `PathFinder` behavior/specification conflicts: diagonal movement crosses a blocked corner, unexplored space is walkable, and a strict thin-wall expectation differs from current implementation. The migrated localization result/tick has no call-path overlap with those failures; they are recorded for their own diagnostic task rather than hidden.
 
 **Next migration:** translate navigation intents to a device-neutral action command at the composition boundary, while leaving `MotionController` as the temporary backend adapter. Portal and Loot remain untouched until their perception/output bridge is independently regression-locked.
+
+## [Legacy convergence — complete perception-to-action chain] 2026-09-04
+
+### A. Scope declared before reading
+
+**Objective:** finish the currently known Torchlight/minimap compatibility chain as a composed, testable path: legacy capture/recognition and localization → typed map/global result → navigation or event intent → device-neutral action command → mouse, keyboard, or gamepad backend. Bridge Portal and Loot perception outputs to the shared detection schema without moving their game-specific templates, filtering, temporal policy, or handler state machines into core generic modules.
+
+**Initial files to inspect:**
+
+- `core/actions/` public contracts and adapters — identify the actual device-neutral command vocabulary and backend capabilities.
+- `gui/modes/navigation/input/intent_executor.py` plus its runtime caller — enumerate every live `NavigationIntent` to direct-input transition.
+- `core/events/` public models/types and Portal/Loot detector boundaries — locate `EventDetection` production and conversion seams.
+- focused navigation-intent, action, portal, and loot tests — freeze observable behavior before each bridge.
+
+**Rules:** no GUI import may enter `core.actions`, perception, spatial, or event DTO modules; new generic contracts must not contain Torchlight resource IDs, HSV ranges, templates, pickup keys, portal policies, or route state. `MotionController` remains a compatibility backend until every current caller has migrated. Full-suite baseline failures remain separately tracked and must not be hidden.
+
+### C. Initial chain findings
+
+- **(verified):** `gui.modes.navigation.input.execute_navigation_intent()` is the single live transition from `NavigationIntent` to direct side effects. It directly invokes three `MotionController` families: map movement, physical screen click, and key press. `NavigationRuntimeFrameLoop` only supplies GUI callbacks and status presentation.
+- **(verified):** `core.actions` already contains a broader device-neutral command vocabulary than the earlier mouse proof: pointer, keyboard, and virtual-gamepad targets plus concrete adapters. Its legacy `ActionRequest` is deliberately pointer-only and must not be expanded into a navigation/game-domain object.
+- **(verified):** Portal/Loot handlers produce legacy `EventAction`, then the navigation task layer translates it to `NavigationIntent` before the GUI executor. Their detection output is `EventDetection(local_minimap_pos, ...)`, which the event position stabilizer projects through `FrameRegistration`.
+- **Architecture decision:** retain the existing domain transitions (`EventAction → NavigationIntent`) and add a GUI composition adapter that turns only concrete screen/key intents into `core.actions.ActionCommand`. Map-movement intent remains a domain/spatial request for the existing `MotionController` while its mapping/execution split is audited separately. This avoids falsely treating a stitched-map target as a physical pointer command.
+
+## [Complete chain — action contract read] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** verify `ActionCommand` target semantics and adapters, then define a navigation composition adapter that uses them without adding a GUI dependency to `core.actions` or losing current click/key behavior.
+
+**Files to inspect:** `core/actions/contracts.py`, `core/actions/mouse.py`, `core/actions/keyboard.py`, and navigation intent/executor tests.
+
+**Decision gate:** only introduce a `MotionController` backend adapter if the generic command target already carries enough information for physical pointer/key dispatch; map-space movement remains explicit and unmodified otherwise.
+
+### C. Action-contract findings
+
+- **(verified):** `ActionCommand` is a sound generic primitive contract. Pointer commands require an already-calibrated `MappedPoint` whose destination is `PHYSICAL_SCREEN`; keyboard and gamepad commands carry validated device targets. The adapters deliberately have no map/game/window awareness.
+- **(verified):** the current `CLICK_SCREEN` navigation intent carries only a legacy `screen_pos`; it is not enough to fabricate a generic pointer action safely, because the contract must state whether it is a logical capture pixel, a game-window point, or a physical desktop point.
+- **(verified):** `PRESS_KEY` can immediately become `ActionCommand(KEY_CHORD, KeyboardTarget(...))`, but replacing its concrete dispatch needs a composition-level keyboard device/backend that preserves current `MotionController.press_key()` behavior and its window-input policy.
+- **Corrected implementation order:** before changing the executor, inspect the existing `MotionController` click/key coordinate and backend behavior plus the existing desktop mapping factory. Then add an explicit legacy-navigation action request/dispatcher at the GUI boundary. It will preserve `MOVE_MAP` as a map-domain command, map a declared screen coordinate to `PHYSICAL_SCREEN` before forming pointer commands, and dispatch only primitive commands through the generic adapters.
+
+## [Complete chain — legacy input and spatial read] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** identify the precise source coordinate spaces and side effects of legacy navigation screen click/key/move operations, and reuse the existing desktop-mapping contract rather than treating raw tuples as physical coordinates.
+
+**Files to inspect:** `core/input/controller.py` or its concrete `MotionController` methods, `core/spatial/desktop_mapping.py`, the desktop action composition/proof, and the `NavigationIntent` model.
+
+**Decision gate:** if the legacy executor's `screen_pos` is already physical desktop space, add an explicit identity mapping adapter with validation; if not, compose through existing calibration. Do not change behavior merely to fit an action DTO.
+
+### C. Legacy input/spatial findings
+
+- **(verified):** map movement is semantically distinct from primitive pointer input: `MotionController.move_to_map_target()` applies global-map direction projection, click-radius policy, bottom-UI guard, and its own real-input pipeline. It must remain a domain/spatial action until that mapping boundary is separately decomposed.
+- **(verified):** generic `ActionCommand` currently lacks a one-click kind, while legacy `CLICK_SCREEN` performs exactly one click. Adding `ActionKind.CLICK` is a genuine generic contract gap; overloading double-click would change behavior.
+- **(verified):** legacy direct screen click and key press are routed through the same `MotionController` controls, which enforce `control_enabled` and preserve existing focus/backend policy. The correct first backend bridge is therefore an adapter over those existing methods, not a second independent OS input route.
+- **Implementation decision:** add generic single-click support, an explicit validated physical-screen identity mapping helper, and an interim `MotionControllerActionAdapter` that executes primitive `ActionCommand`s through the old controller. At the navigation composition edge, translate `MOVE_MAP` into a typed map-movement request and `CLICK_SCREEN`/`PRESS_KEY` into generic primitive commands. This creates one complete typed chain without pretending map coordinates are desktop pixels.
+
+## [Complete chain — input semantics and tests] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** freeze the observable single-click/key behavior and verify the source of legacy event screen coordinates before adding the generic action bridge.
+
+**Files to inspect:** `core/input/motion_controller/controls.py`, Portal/Loot handler interaction modules that construct `EventAction.click_screen` or `EventAction.press_key`, and existing input/navigation test locations.
+
+**Expected regression contract:** disabled control produces no physical action; enabled direct click remains one click at the same physical coordinates; enabled key press retains its existing duration/backend path; `MOVE_MAP` is not converted into a desktop-pointer command.
+
+### C. Input-semantics findings
+
+- **(verified):** the current Portal and Loot handlers emit `EventAction.press_key(...)` only: Portal uses `d`; Loot uses the configurable pickup key. They do not create a direct-screen-click action today. Their key/action policy remains in the handlers and is not moved into the generic action package.
+- **(verified):** `MotionController.click_screen_position()` passes its integer tuple to the controller's physical click pipeline unchanged; `MotionController.press_key()` enforces `control_enabled`, normalizes a key and delegates to the existing lazy PyDirectInput backend. Both are suitable temporary backend methods for typed primitive commands.
+- **(verified):** navigation event hooks separately call `MotionController.press_key()` and must use the same new primitive-command dispatcher; otherwise the old direct-input escape hatch would remain.
+- **Plan:** implement the action bridge in three guarded layers: generic `CLICK` + physical-point constructor; `MotionControllerActionAdapter` as a compatibility action backend; navigation/hook composition translators. Then create a pure EventDetection↔TargetDetection adapter and wire Portal/Loot detector outputs through it at the event monitor boundary. This makes all presently active old paths observable through common schemas while preserving the event state machines.
+## [Complete chain — primitive action slice] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** implement Tasks 1–2 of the approved complete-chain plan: generic single click, explicit physical point construction, and an interim `MotionController` backend adapter with no navigation/event imports.
+
+**Files to inspect:** `core/spatial/__init__.py`, `core/spatial/models.py`, current generic action test files, and `core/input/__init__.py` export conventions.
+
+**Compatibility rules:** `ActionRequest` retains its historical move/double-click restriction; `MouseActionAdapter` gains click behavior only through `ActionCommand`; `MotionControllerActionAdapter` delegates to old public controller methods and never imports GUI, navigation task, Portal, or Loot modules.
+
+### C. Primitive-action implementation findings
+
+- **(verified):** `MappedPoint` already carries both source and destination coordinate spaces, and `Point2D` is the only additional spatial DTO needed. A `physical_screen_point()` constructor can safely mark a pre-existing physical point as an explicit identity mapping without pretending it came from an image calibration.
+- **(verified):** `ActionResult` supports successful and deliberately skipped dispatch (`executed=False`) with command/target metadata, so disabled legacy control can be represented without raising or changing existing `MotionController` behavior.
+- **Test plan:** extend the generic action and mouse tests for one click, add physical-identity mapping coverage, and add a fake-controller backend test for click/key success, disabled skip, and command-kind rejection. The tests must fail until the new primitive and adapter exist.
+
+## [SYNC] 2026-09-04 — primitive actions and MotionController backend
+
+### A. SYNC scope declaration
+
+**Trigger:** add generic `CLICK`, physical-screen identity mapping, and `MotionControllerActionAdapter` as the compatibility backend for physical click and one-key commands.
+
+**Directly changed files:** `core/actions/contracts.py`, `core/actions/mouse.py`, `core/spatial/desktop_mapping.py`, `core/spatial/__init__.py`, `core/input/action_adapter.py`, `core/input/__init__.py`, and focused action/spatial/controller tests.
+
+**Impact chain:** `ActionCommand(CLICK|KEY_CHORD)` → validated `PointerTarget`/`KeyboardTarget` → `MouseActionAdapter` or `MotionControllerActionAdapter` → existing device or `MotionController` control policy.
+
+### C. SYNC result
+
+**Re-read impact surface:** generic action validation, generic mouse dispatch, spatial mapped-point semantics, `core.input` public exports, existing MotionController direct click/key policy, and their focused regressions.
+
+**Verified behavior:** `CLICK` is a new generic command only; legacy `ActionRequest` still rejects it. The direct physical-point helper is explicit identity mapping, never desktop-frame mapping. The compatibility backend calls the historical `MotionController` public methods and records a skipped result when those methods decline disabled input.
+
+**Verification:** initial red tests failed because `CLICK`, `physical_screen_point`, and the backend adapter were absent. After implementation, action/spatial/controller suites passed 14/14; existing public-action, keyboard, and gamepad suites passed 8/8; compilation and scoped diff checks passed.
+
+**CODEBASE.md synchronized:** input/action/spatial inventory and module details now describe the single-click primitive, declared physical coordinates, and temporary controller backend.
+
+## [Complete chain — navigation action composition] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** implement Task 3: make the live navigation executor and event-key hooks translate intents to typed composition actions, dispatch primitive actions through `MotionControllerActionAdapter`, and retain map movement through its explicit legacy spatial backend.
+
+**Files to inspect:** `gui/modes/navigation/hooks/registration.py`, `tests/test_navigation_compact_actions.py`, and navigation task event-action conversion code that creates `CLICK_SCREEN` / `PRESS_KEY` intents.
+
+**Compatibility rules:** intent `message` remains the human/audit reason; map click selection and `record_intent_click()` timing remain unchanged; missing `screen_pos`/key stays a no-op; only `CLICK_SCREEN` is declared existing `PHYSICAL_SCREEN` input at this compatibility boundary.
+
+### C. Navigation-composition findings
+
+- **(verified):** `core.navigation_tasks.intent_factory` is the sole event-action conversion boundary. It preserves `EventAction` in metadata and passes raw `screen_pos`/key forward, so the GUI input adapter is the correct place to assign the legacy direct-click coordinate-space declaration without contaminating events.
+- **(verified):** `NavigationHookRuntime._press_key_once()` has a separate direct key path, explicitly turns control on, and returns its backend result to the hook instance. It can use the same one-key `ActionCommand` bridge without changing core hook registration or event semantics.
+- **Implementation decision:** add `gui.modes.navigation.input.actions` as the domain-to-composition translator. It has an explicit `MapMovementAction` for stitched-map intent and a `PrimitiveNavigationAction` wrapping an `ActionCommand`; it is not a generic core module. Update the executor/hook runtime to consume it and permit an injected adapter in tests.
+- **Regression plan:** a pure translator test locks coordinate declaration and no-op behavior; executor tests lock map direct-method selection, click/key command shape/reason, and click-record timing; hook tests lock that key hooks use the common primitive backend.
+
+## [SYNC] 2026-09-04 — navigation intent and hook action composition
+
+### A. SYNC scope declaration
+
+**Trigger:** add explicit navigation composition actions and migrate live `CLICK_SCREEN` / `PRESS_KEY` intent dispatch plus navigation key hooks to `ActionCommand` and `MotionControllerActionAdapter`.
+
+**Directly changed files:** `gui/modes/navigation/input/actions.py`, `gui/modes/navigation/input/__init__.py`, `gui/modes/navigation/input/intent_executor.py`, `gui/modes/navigation/hooks/registration.py`, and focused navigation intent/hook tests.
+
+**Impact chain:** `EventAction` → unchanged `NavigationIntent` → `translate_navigation_intent()` → `MapMovementAction` or `PrimitiveNavigationAction` → `MotionController` map policy or `MotionControllerActionAdapter` → legacy input backend.
+
+### C. SYNC result
+
+**Re-read impact surface:** navigation intent factory payload shape, executor map-click branch, Hook runtime key dispatch, generic primitive contract/backend, and focused non-GUI regressions.
+
+**Verified behavior preservation:** the executor retains the legacy map movement methods, force-click selection, input enablement, click-record timing, status suffix, and absent payload no-op behavior. Click/key actions now receive explicit typed commands and route through the existing `MotionController` methods, so they keep legacy control-enable and platform policy. Key hooks use the same backend after their pre-existing explicit enablement.
+
+**Verification:** initial translator/hook tests failed before the new composition module and injected adapter existed; after implementation, 6 focused tests passed. `compileall` and scoped diff checks passed.
+
+**CODEBASE.md synchronized:** navigation input inventory, executor/hook responsibilities, full compatibility flow, and current-risk statement now distinguish map-space movement from physical primitive dispatch.
+
+## [Complete chain — event perception schema bridge] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** implement Tasks 4–5: define a pure, reversible EventDetection ↔ TargetDetection bridge and identify the event monitor composition point that can run legacy Portal/Loot output through it without modifying detector algorithms or handler state machines.
+
+**Files to inspect:** `core/events/models.py`, `core/events/monitor.py`, `core/events/types/portal/minimap_detection/conversion.py`, and `core/events/types/loot/detection/conversion.py`.
+
+**Contract:** `EventDetection.local_minimap_pos` maps only to `TargetDetection(center, coordinate_space=MINIMAP)`; event type, confidence, timestamp and all existing metadata must survive a copied conversion. Generic detections in any other coordinate space must be rejected before event stabilization/projection.
+
+## [Complete chain — event bridge implementation] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** finish the approved Portal/Loot perception-schema seam and run the full compatibility-chain audit. The bridge must pass each legacy `EventDetection` through the generic `TargetDetection` contract at the `EventMonitor` composition point, retain the legacy event returned to stabilization/memory/handlers, and expose a copied generic observation list for later UI/debug or new perception producers.
+
+**Files to inspect:** `core/events/models.py`, `core/events/monitor.py`, Portal/Loot conversion modules, shared perception DTOs, and event-monitor tests.
+
+**Acceptance rules:** the bridge is pure and reversible for minimap detections; coordinate-space mismatch is rejected explicitly; metadata has no shared mutable reference; detector algorithms, Portal/Loot configuration, handler state, and `EventPositionStabilizer` behavior are unchanged. After focused tests, run the complete suite and document any pre-existing failures separately from this work.
+
+### C. Event-bridge findings and implementation result
+
+- **(verified):** Portal and Loot detector outputs share a single live composition seam in `EventMonitor.detect()`. Normalizing there makes the shared perception contract active in both runtime paths without putting game templates, HSV rules, pickup keys, timing, or handler state into `core.perception` or the bridge.
+- **(verified):** `EventDetection.local_minimap_pos` maps losslessly to `TargetDetection.center` in `MINIMAP`; event type is deliberately a required explicit input for the reverse direction, so an arbitrary generic target cannot silently enter an event state machine.
+- **(verified):** deep-copied metadata protects both detector output and `EventMonitor.last_target_detections` from nested-mutation leaks. Valid legacy bbox/text are exposed through standardized fields while raw metadata stays intact for a round trip.
+- **Corrected scope statement:** the completed bridge is a runtime-schema migration, not a replacement of Portal/Loot algorithms with `PerceptionEngine`. Their existing detector packages remain the tested compatibility implementations; a future provider-backed replacement can enter the same reverse bridge deliberately.
+- **Regression result:** 43 focused mapping/localization/navigation/action/event tests pass. The full discovery suite now contains 197 tests: 191 pass, 2 skip, 3 `PathFinder` specification failures, and 1 advanced-settings loose-import error. The four failures match the pre-existing audit categories and do not import the new event bridge or action-composition modules.
+
+## [SYNC] 2026-09-04 — complete legacy perception-to-action chain
+
+### A. SYNC scope declaration
+
+**Trigger:** introduce the reusable event-perception adapter and connect the last active Portal/Loot output seam after the previously completed mapping evidence, localization result, and navigation/action composition slices.
+
+**Directly changed files:** `core/events/perception_adapter.py`, `core/events/monitor.py`, `core/events/__init__.py`, event-bridge tests, and the affected architecture/checkpoint documents. This final slice is composed with the already modified generic action, spatial, input, navigation input, and hook files in the approved plan.
+
+**Impact chain:** legacy Portal/Loot detector → `EventDetection` → `TargetDetection(MINIMAP)` → independent `EventDetection` → unchanged `EventPositionStabilizer` → `EventMemory`/`EventTask` → `EventAction` → `NavigationIntent` → typed map request or `ActionCommand` → existing MotionController/device policy.
+
+### C. SYNC result
+
+**Re-read impact surface:** shared perception DTO coordinate rules, EventMonitor detector cache/output ordering, position stabilization, memory task creation, generic action backend, navigation intent execution, and hook key dispatch.
+
+**CODEBASE.md synchronized:** directory inventory now lists the perception adapter; event module notes and function index specify both conversion contracts and the monitor composition step; the integration-flow/risk note now records that the schema bridge is complete rather than pending.
+
+**Verification:** event bridge tests 5/5; end-to-end compatibility focus set 43/43; `compileall -q core gui tests` and `git diff --check` pass. Full discovery is 191 passed, 2 skipped, 3 known PathFinder failures, and 1 known advanced-settings loader error out of 197 tests.
+
+**Next work is intentionally separate:** P4 feature/motion/ML provider adapters, P5 game-window/viewport calibration controls, P6 workbench GUI composition, P8 concrete workflows (including the later PoE scenario), and a dedicated diagnosis/fix decision for the four independent full-suite baseline failures.

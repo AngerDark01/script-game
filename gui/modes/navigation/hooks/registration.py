@@ -7,6 +7,8 @@ from core.events.hooks.instances import (
     KeyPressHookInstance,
     key_press_settings_from_dict,
 )
+from core.actions import ActionCommand, ActionKind, KeyboardTarget
+from core.input import MotionControllerActionAdapter
 
 
 class NavigationHookRuntime:
@@ -18,10 +20,12 @@ class NavigationHookRuntime:
         navigation_task_controller,
         motion_controller,
         enable_game_input_mode: Callable[[], None],
+        action_adapter=None,
     ) -> None:
         self.navigation_task_controller = navigation_task_controller
         self.motion_controller = motion_controller
         self.enable_game_input_mode = enable_game_input_mode
+        self.action_adapter = action_adapter or MotionControllerActionAdapter(controller=motion_controller)
         self._unsubscribers: list[Callable[[], object]] = []
 
     def apply_event_config(self, event_config) -> int:
@@ -51,7 +55,10 @@ class NavigationHookRuntime:
     def _press_key_once(self, key: str, reason: str) -> object:
         self.enable_game_input_mode()
         self.motion_controller.set_control_enabled(True)
-        return self.motion_controller.press_key(key, reason=reason)
+        return self.action_adapter.execute(
+            ActionCommand(ActionKind.KEY_CHORD, KeyboardTarget((key,))),
+            reason=reason,
+        )
 
 
 def _hook_instances(event_config) -> list[dict]:

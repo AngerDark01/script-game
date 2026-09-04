@@ -13,7 +13,9 @@ Current runtime lifecycle:
 ```text
 EventCoordinator.observe(tick)
   ├── EventMonitor.detect(tick, config)
-  │     └── EventDefinition.create_detector(config).detect(...)
+  │     ├── EventDefinition.create_detector(config).detect(...)
+  │     └── EventDetection -> TargetDetection(MINIMAP) -> independent EventDetection
+  │           └── expose generic observations via EventMonitor.last_target_detections
   ├── EventPositionStabilizer.update(detections, frame_registration, config, now_ms)
   ├── EventMemory.merge_observations(observations, config, now_ms)
   │     ├── create EventTask(state=OBSERVED)
@@ -47,7 +49,8 @@ Important detail: `EventCoordinator.observe()` does not execute handlers. It onl
 | `models.py` | Event tick, detection, observation, task, and action models. | Stable contract candidate. |
 | `config.py` | Default event config and map-level config IO. | Could split pure defaults/schema from filesystem adapter. |
 | `registry.py` | Event definition registry. | Good extension seam for event packages. |
-| `monitor.py` | Runs enabled detectors and caches them. | Hook point for detection lifecycle. |
+| `monitor.py` | Runs enabled detectors, caches them, and composes legacy results through the perception adapter. | Hook point for detector lifecycle and shared-schema observation. |
+| `perception_adapter.py` | Pure `EventDetection`/`TargetDetection(MINIMAP)` conversion and batch normalization. | Reusable schema seam; must not contain Portal/Loot recognition or handler policy. |
 | `position_stabilizer.py` | Projects local detections to global positions and clusters over frames. | Reusable algorithm component. |
 | `memory.py` | Event task lifecycle, dedupe, confirm, cooldown, failure/completion state. | Core state module; likely deep but needs careful reading. |
 | `scheduler.py` | Picks pending/running event tasks. | Small scheduler module. |

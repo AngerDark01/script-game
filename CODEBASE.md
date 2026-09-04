@@ -106,9 +106,10 @@ gui/modes/navigation/display/lifecycle.py - 导航地图 scene item、route/even
 gui/modes/navigation/event_adapter.py - 导航模式与事件系统之间的轻量桥接 helper。
 gui/modes/navigation/input/__init__.py - 导航输入 adapter 包入口。
 gui/modes/navigation/input/window_mode.py - 自动输入期间主窗口取消置顶、降低和停止后恢复置顶的状态 adapter。
-gui/modes/navigation/input/intent_executor.py - 将 `NavigationIntent` 的 MOVE_MAP/CLICK_SCREEN/PRESS_KEY 分发到 `MotionController`。
+gui/modes/navigation/input/actions.py - 将 `NavigationIntent` 明确翻译为地图移动或通用 primitive action 的导航组合 DTO。
+gui/modes/navigation/input/intent_executor.py - 将 typed 导航组合动作分发到地图空间 `MotionController` 或 primitive action compatibility backend。
 gui/modes/navigation/hooks/__init__.py - 导航 hook runtime 注册包入口。
-gui/modes/navigation/hooks/registration.py - 将 `event_config.hooks.instances` 注册到 `NavigationTaskController.event_hooks`，并通过 `MotionController` 执行按键 hook。
+gui/modes/navigation/hooks/registration.py - 将 `event_config.hooks.instances` 注册到 `NavigationTaskController.event_hooks`，并经通用 primitive action backend 执行按键 hook。
 gui/modes/navigation/config/__init__.py - 导航配置生命周期包入口。
 gui/modes/navigation/config/lifecycle.py - 导航配置参数变化、runtime 应用、当前地图保存、默认保存和反馈顺序的状态 facade。
 gui/modes/navigation/map/__init__.py - 导航地图/config adapter 包入口。
@@ -303,6 +304,7 @@ core/navigation_tasks/event_approach/pipeline.py - `EventApproachController.upda
 core/navigation_tasks/debug.py - 将导航任务日志写入事件运行日志。
 architecture_docs/zh-CN/core/FACADE_EXTRACTION_METHOD.md - core facade 逐步抽取方法论，说明旧入口保留、分类 helper、pipeline helper 和每轮验证流程。
 core/input/controller.py - `MotionController` 正式类入口，拥有输入控制运行态并委托 motion_controller helper 包。
+core/input/action_adapter.py - 通用 primitive `ActionCommand` 到现有 `MotionController` 点击/按键策略的兼容 backend adapter。
 core/events/models.py - 事件系统通用数据结构和动作类型。
 core/events/config.py - 事件配置兼容 facade，re-export 配置模型、IO 和 TUI 事件选项输出。
 core/events/config_model.py - `EventSystemConfig`、默认事件配置、deep merge 和 legacy detector mode 兼容。
@@ -342,6 +344,7 @@ core/events/debug/formatting.py - 事件日志字段和值格式化兼容 helper
 core/events/capture_provider.py - 为事件 handler 提供小地图/主画面截图来源。
 core/events/window_finder.py - Windows 游戏窗口枚举、DPI awareness 和窗口矩形获取。
 core/events/detectors/template_matcher.py - 多模板、多尺度图标匹配通用工具。
+core/events/perception_adapter.py - 将 legacy `EventDetection` 与通用 `TargetDetection(MINIMAP)` 纯转换、反向转换和批量归一化；不包含 Portal/Loot 算法或事件策略。
 core/events/types/portal/definition.py - `portal` 完整事件包对外定义。
 core/events/types/portal/minimap_detector.py - 传送门小地图图标 detector facade，持有 `PortalMinimapDetector`、模板缓存、feature signature 和日志节流状态。
 core/events/types/portal/minimap_detection/__init__.py - portal minimap detector helper package 入口，聚合 mode、诊断和 hit 转换 helper。
@@ -655,10 +658,16 @@ Level 3: navigation click path
 对外依赖：无内部业务模块依赖；使用 PySide6 `Qt.WindowStaysOnTopHint`。
 注意事项：这是 GUI 专属 input seam；不发送鼠标键盘输入，只维护窗口状态。`set_enabled(True)` 第一次记录原 topmost 状态并 lower 主窗口；`set_enabled(False)` 只在此前启用过时恢复，避免停止命令反复改窗口 flag。
 ### `gui/modes/navigation/input/intent_executor.py`
-职责：把统一导航任务层输出的 `NavigationIntent` 转换为 `MotionController` 调用。
+职责：把统一导航任务层输出的 `NavigationIntent` 翻译为 typed 导航组合动作，再委托对应 compatibility backend。
 关键导出：`NavigationIntentExecutionResult`、`execute_navigation_intent`。
-对外依赖：`core.navigation_tasks.models.NavigationIntentType`。
-注意事项：`MOVE_MAP` 会启用游戏输入模式和 motion control；带 `force_click_target` 时调用 `click_map_target_once()`，否则调用 `move_to_map_target()`；成功点击后调用 `NavigationTaskController.record_intent_click()` 并返回状态栏后缀。`CLICK_SCREEN` 和 `PRESS_KEY` 只读取 metadata 中的 `screen_pos` 或 `key`，缺字段时静默跳过。
+对外依赖：`core.input.MotionControllerActionAdapter`、`navigation.input.actions`。
+注意事项：`translate_navigation_intent()` 将 `MOVE_MAP` 保持为 `MapMovementAction`，因此仍会启用游戏输入和 motion control，并按旧分支调用 `click_map_target_once()` 或 `move_to_map_target()`；成功点击后的 `NavigationTaskController.record_intent_click()` 与状态栏半径文本不变。`CLICK_SCREEN` 被显式声明为 `PHYSICAL_SCREEN` identity-mapped `CLICK`，`PRESS_KEY` 被转为一键 `KEY_CHORD`；二者均经 `MotionControllerActionAdapter` 回到历史 control/focus/backend policy。缺少/非法 payload 仍静默 no-op。
+
+### `gui/modes/navigation/input/actions.py`
+职责：在 GUI navigation composition 层明确区分 stitched-map movement 和通用设备 primitive，而不让地图坐标伪装成物理鼠标坐标。
+关键导出：`MapMovementAction`、`PrimitiveNavigationAction`、`translate_navigation_intent`。
+对外依赖：`core.actions`、`core.navigation_tasks.models.NavigationIntentType`、`core.spatial.physical_screen_point`。
+注意事项：只接受可执行的 `MOVE_MAP`、`CLICK_SCREEN`、`PRESS_KEY`；`NONE/WAIT`、缺失或无效 payload 返回 `None`。`CLICK_SCREEN` 是唯一在此 legacy edge 被明确声明为已有 `PHYSICAL_SCREEN` 坐标的 intent；未来游戏窗口/viewport 坐标必须先经独立 mapper 进入本层。该模块没有输入副作用。
 ### `gui/modes/navigation/hooks/__init__.py`
 职责：导航 hook runtime 注册包入口。
 关键导出：`NavigationHookRuntime`。
@@ -668,7 +677,7 @@ Level 3: navigation click path
 职责：把 `EventSystemConfig.hooks.instances` 中的 hook 实例注册到 `NavigationTaskController.event_hooks`。
 关键导出：`NavigationHookRuntime`。
 对外依赖：`core.events.hooks.instances`。
-注意事项：该模块是 GUI 组合根与 core hook registry 的 adapter。`apply_event_config()` 会先注销上一轮由本 runtime 注册的 handler，再按当前配置注册 enabled key_press 实例；实例必须同时有 `event_types` 和 `triggers` 才会注册，避免 hook 默认对所有事件生效。一个实例的 `triggers` 可包含 `event_visible_target` 和 `event_completed`，因此同一个按键 hook 可同时挂两个触发点。按键执行通过注入的 `enable_game_input_mode()` 和 `MotionController.press_key()` 完成，不让 core hook 实例直接依赖 GUI 或平台输入。
+注意事项：该模块是 GUI 组合根与 core hook registry 的 adapter。`apply_event_config()` 会先注销上一轮由本 runtime 注册的 handler，再按当前配置注册 enabled key_press 实例；实例必须同时有 `event_types` 和 `triggers` 才会注册，避免 hook 默认对所有事件生效。一个实例的 `triggers` 可包含 `event_visible_target` 和 `event_completed`，因此同一个按键 hook 可同时挂两个触发点。按键执行通过注入的 `enable_game_input_mode()`、`MotionController.set_control_enabled(True)` 和统一的一键 `ActionCommand → MotionControllerActionAdapter` 完成，不让 core hook 实例直接依赖 GUI 或平台输入。
 ### `NavigationHookRuntime.apply_event_config(self, event_config) -> int`
 行为：根据当前事件配置重建 hook handler 注册。
 算法：1. 调用 `clear()` 注销本 runtime 之前注册的所有 handler。2. 读取 `event_config.hooks["instances"]`，忽略非 dict 或未知类型。3. 对 `type="key_press"` 的实例调用 `key_press_settings_from_dict()` 规范化配置。4. 跳过未启用、空 key、无 `event_types` 或无 triggers 的实例。5. 创建 `KeyPressHookInstance(settings, self._press_key_once)`，并对实例的每个 trigger 调用 `navigation_task_controller.event_hooks.register()`。6. 返回本次注册的 trigger 数量。
@@ -1191,7 +1200,7 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 职责：事件系统核心层。`EventCoordinator` 是导航模式唯一事件入口；`EventRegistry` 只注册完整事件包；`EventMemory` 管理事件实例生命周期；`EventRunner` 调用具体事件 handler。
 关键导出：`FrameRegistration`、`EventTick`、`EventDetection`、`EventObservation`、`EventTask`、`EventAction`、`EventCoordinator`、`EventRegistry`、`EventSystemConfig`。
 对外依赖：标准库；视觉工具依赖 OpenCV/NumPy。
-注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventCoordinator.observe()` 只做检测、事件定位、memory 合并、任务表/overlay 状态更新；`EventCoordinator.run_task(task_id, tick)` 只推进被统一导航调度器选中的事件任务。旧 UI 层事件允许集合兼容入口已删除，避免重新引入 UI 层事件仲裁。`EventPositionStabilizer` 默认仍会按同一帧隔离聚类，但传送门在 detector conversion 层先用 `minimap_nms_radius` 抑制同一图标的局部重复 hit，再用 `localization_cluster_radius/dedupe_radius` 合并多帧投影抖动；如果实测存在真正相邻双门被合并，应在事件面板把这些半径调小。事件执行抢占规则已迁移到 `NavigationTaskScheduler`，事件本身作为动态必经点参与 required/exit 的统一调度。
+注意事项：事件 handler 不直接操作鼠标键盘，只返回 `EventAction`；TUI/配置层只能看到 `EventDefinition` 级完整事件，例如 `portal`。`EventCoordinator.observe()` 只做检测、事件定位、memory 合并、任务表/overlay 状态更新；`EventCoordinator.run_task(task_id, tick)` 只推进被统一导航调度器选中的事件任务。`EventMonitor.detect()` 现在会把每个 legacy `EventDetection` 经过 `TargetDetection(coordinate_space=MINIMAP)` 再构造独立的 legacy 副本，返回给既有稳定器；同时将通用结果公开在 `last_target_detections`，因此新 UI/debug 或未来通用感知 producer 可观察同一 schema，而 Portal/Loot 的模板、HSV、时序策略和 handler 状态保持原处。旧 UI 层事件允许集合兼容入口已删除，避免重新引入 UI 层事件仲裁。`EventPositionStabilizer` 默认仍会按同一帧隔离聚类，但传送门在 detector conversion 层先用 `minimap_nms_radius` 抑制同一图标的局部重复 hit，再用 `localization_cluster_radius/dedupe_radius` 合并多帧投影抖动；如果实测存在真正相邻双门被合并，应在事件面板把这些半径调小。事件执行抢占规则已迁移到 `NavigationTaskScheduler`，事件本身作为动态必经点参与 required/exit 的统一调度。
 `EventPositionStabilizer` 当前是同名 facade package：`runtime.py` 保留类和旧私有 wrapper，`projection.py` 只负责 local->global 投影，`clusters.py` 负责聚类/同帧隔离/过期清理，`observations.py` 负责稳定 gate 和 `EventObservation` 构造，`models.py` 负责 sample/cluster 数据结构。旧 import `from core.events.position_stabilizer import EventPositionStabilizer` 仍可用。
 `EventMemory` 当前是 facade package：`merge_observations()` 委托 `memory/merge.py`，任务查找和冷却委托 `memory/lookup.py`，传送会话/失败重试/附近任务抑制委托 `memory/completion.py`，距离和日志节流委托 `memory/utils.py`。旧 `_find_*`、`_completed_cooldown_info()`、`_distance()`、`_int_pos()` 仍保留 wrapper。
 `core.events.debug` 当前是同名 package：`writer.py` 保留 event log session 和文件写入副作用，`topics.py` 负责 per-topic log 分流，`descriptions.py` 负责 action/task 描述，`formatting.py` 负责统一字段格式化。旧 import `from core.events.debug import event_log, start_event_log_session, describe_action, describe_task` 仍可用；日志路径仍写到项目根目录 `logs/`，不是 `core/logs/`。
@@ -2851,11 +2860,32 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 失败行为：输入图像 shape 或 HSV 范围类型不合法时由 OpenCV/Numpy 异常向上传播。
 调用关系：called by `ColorPickerDialog.update_preview()`。
 
+### `event_detection_to_target_detection(detection: EventDetection) -> TargetDetection`
+职责：把一个 legacy 小地图事件转换为通用感知结果，供统一观察、调试和未来通用识别 producer 使用。
+算法：1. 深拷贝 detector metadata，避免 generic consumer 改写旧事件或其嵌套诊断数据。2. 验证 `local_minimap_pos` 为两个有限坐标。3. 构造 `TargetDetection(target_type=event_type, center=local_minimap_pos, coordinate_space=MINIMAP)`，保留 source、confidence 和 detected time。4. 若 metadata 中的 `bbox` 是四个有限数值，则额外建立 `BoundingBox`；`text` 存在时额外写入 target text，原 metadata 始终保留。
+副作用：无。
+失败行为：空/非有限局部坐标抛出 `ValueError`；超出 `TargetDetection` 的 0..1 confidence 契约会抛出 `ValueError`，以免不受支持的旧分数静默进入通用层。
+调用关系：called by `normalize_legacy_event_detections()`；indirectly called by `EventMonitor.detect()`。
+
+### `target_detection_to_event_detection(detection: TargetDetection, *, event_type: str) -> EventDetection`
+职责：把已明确归类到一个事件定义的通用小地图目标输入原有稳定器、memory 和 handler 链。
+算法：1. 拒绝不是 `MINIMAP` 的 detection，防止全屏/窗口/全局坐标被错误投影。2. 验证调用方显式指定的非空 `event_type`。3. 深拷贝 metadata；若原 metadata 没有 bbox/text，则把 generic `BoundingBox`/text 以 legacy metadata 形状补入。4. 将有限中心坐标四舍五入成 legacy 整数小地图像素，保留 source/confidence/time 并返回 `EventDetection`。
+副作用：无。
+失败行为：非 MINIMAP 空间、空 event type 或非有限中心抛出 `ValueError`；缺少 required keyword `event_type` 由 Python 抛出 `TypeError`。
+调用关系：called by `normalize_legacy_event_detections()`；结果被 `EventMonitor.detect()` 返回给 `EventPositionStabilizer.update()`。
+
+### `normalize_legacy_event_detections(detections: Iterable[EventDetection]) -> tuple[tuple[EventDetection, ...], tuple[TargetDetection, ...]]`
+职责：在不改变 event 输出顺序、类型或 detector 语义的情况下，让一批旧检测经过共享 schema。
+算法：1. 按输入顺序转换每个 legacy detection 为 target detection。2. 用原 event type 显式反向转换该 target。3. 返回独立 metadata 的 reconstructed legacy tuple 和 parallel target tuple。
+副作用：无。
+失败行为：单条检测违反共享模型契约时立即传播明确的 `ValueError`，不会把不确定空间写入稳定器。
+调用关系：called by `EventMonitor.detect()`。
+
 ### `EventCoordinator.observe(self, tick) -> None`
 行为：运行事件检测、局部到全局定位、任务记忆和显示任务选择，但不推进任何事件 handler。
 算法：
 1. 全局事件配置关闭时停止/清理 active runner，清空 last action 和 selected task。
-2. 调用 `EventMonitor.detect()` 在 raw minimap frame 上产生局部 `EventDetection`。
+2. 调用 `EventMonitor.detect()` 在 raw minimap frame 上产生局部 `EventDetection`；monitor 在此组合接缝先经过 `TargetDetection(MINIMAP)` 并保存 `last_target_detections`，再返回等价的独立 legacy detection 给后续代码。
 3. 调用 `EventPositionStabilizer.update()` 使用 `FrameRegistration` 将局部检测投影为稳定全局 `EventObservation`。
 4. 调用 `EventMemory.merge_observations()` 合并、确认、去重和冷却任务，并把当前 tasks 写入 `tick.event_tasks`。
 5. 用全部启用 active tasks 选择 `display_task`，用于 status/overlay/任务表。
@@ -4143,13 +4173,15 @@ PerceptionEngine.detect(frame, profile)
 
 `core/spatial/models.py` and `core/spatial/calibration.py` - Explicit coordinate-space DTOs, window rectangles, affine transforms, anchor fitting, and registered mapping. These modules are recognition/action agnostic and currently do not replace `MotionController`.
 
-`core/spatial/desktop_mapping.py` - Pure desktop-capture-to-input geometry adapter. `ScreenGeometry(left, top, width, height, dpi_scale_x=1.0, dpi_scale_y=1.0)` normalizes finite values, requires positive extents/scales, and uses half-open containment so a point on the right/bottom edge cannot pass as an input target. `MappedPoint(source_point, source_space, destination_point, destination_space, metadata)` requires explicit coordinate-space enum values and freezes a copy of transform evidence. `DesktopCoordinateMapper(source_size, destination)` accepts a positive two-pixel source extent, computes `scale_x = destination.width / source_width` and `scale_y = destination.height / source_height`, then stores the corresponding existing `AffineTransform` with desktop origin translation. `map_point(point, source_space)` only accepts finite in-image `FULL_SCREEN` points, maps through that transform, rejects points outside the physical rectangle, and returns `MappedPoint(..., destination_space=PHYSICAL_SCREEN)` with source/destination dimensions, scales, origin, DPI observation, and transform label. It has no capture, OCR, input, window focus, or game policy side effect.
+`core/spatial/desktop_mapping.py` - Pure desktop-capture-to-input geometry adapter. `ScreenGeometry(left, top, width, height, dpi_scale_x=1.0, dpi_scale_y=1.0)` normalizes finite values, requires positive extents/scales, and uses half-open containment so a point on the right/bottom edge cannot pass as an input target. `MappedPoint(source_point, source_space, destination_point, destination_space, metadata)` requires explicit coordinate-space enum values and freezes a copy of transform evidence. `physical_screen_point(x, y)` is the explicit identity constructor for a coordinate already declared to be `PHYSICAL_SCREEN`; it rejects non-finite values and does not imply capture/calibration. `DesktopCoordinateMapper(source_size, destination)` accepts a positive two-pixel source extent, computes `scale_x = destination.width / source_width` and `scale_y = destination.height / source_height`, then stores the corresponding existing `AffineTransform` with desktop origin translation. `map_point(point, source_space)` only accepts finite in-image `FULL_SCREEN` points, maps through that transform, rejects points outside the physical rectangle, and returns `MappedPoint(..., destination_space=PHYSICAL_SCREEN)` with source/destination dimensions, scales, origin, DPI observation, and transform label. It has no capture, OCR, input, window focus, or game policy side effect.
 
 `core/platform/desktop_frame_source.py` - Runtime desktop-frame/geometry composition. `WindowsDesktopGeometryProvider.__init__()` is Windows-only and requests per-monitor DPI awareness before later input/capture code creates coordinate-sensitive Win32 objects; already-aware or unavailable APIs are non-fatal. `current_geometry()` reads Win32 virtual-screen left/top/width/height plus system DPI and returns `ScreenGeometry`. `DesktopFrameSource.capture()` obtains exactly one geometry, passes it to its injectable capture backend, verifies a non-empty array shape, and produces `FrameContext(image, width, height, coordinate_space=FULL_SCREEN, metadata=physical desktop + DPI)` paired with that same geometry. `_capture_desktop()` uses a temporary existing `SquareScreenCapture` for precisely that rectangle and closes it in `finally`. The source never recognizes targets or sends input.
 
-`core/actions/models.py` - Device-independent action schema. `ActionKind` currently defines `MOVE` and `DOUBLE_CLICK`. `ActionRequest(kind, point, interval_ms=80)` requires an `ActionKind`, one `MappedPoint`, and non-negative integer timing. `ActionResult(executed, point, device_id, kind, started_at_ms, completed_at_ms, metadata)` integer-normalizes its executed point, rejects empty device IDs, and freezes result diagnostics. The models neither know OCR text nor import a Windows/mouse backend.
+`core/actions/contracts.py` + `core/actions/models.py` - Device-independent action schema. `ActionCommand` validates device targets for `MOVE`, `CLICK`, `DOUBLE_CLICK`, keyboard, and virtual-gamepad primitives; legacy `ActionRequest(kind, point, interval_ms=80)` intentionally remains limited to move/double-click mapped-pointer compatibility. `ActionResult(executed, point, device_id, kind, started_at_ms, completed_at_ms, metadata)` integer-normalizes its executed point, rejects empty device IDs, and freezes result diagnostics. These contracts neither know OCR text nor import a Windows/mouse backend.
 
-`core/actions/mouse.py` - Mouse-specific implementation behind `MouseDevice(move_to, mouse_down, mouse_up)` Protocol. `MouseActionAdapter.execute(request)` rejects non-physical destinations, rounds the already-validated physical float coordinates once at the device boundary, calls `move_to` once, returns a move-only result for `MOVE`, or sends exactly two left down/up pairs separated by `interval_ms` for `DOUBLE_CLICK`. A `False` movement result raises `ActionExecutionError`; device errors propagate. It deliberately does not clamp, focus a window, capture a screen, select OCR candidates, or use navigation's `MotionController` pipeline.
+`core/actions/mouse.py` - Mouse-specific implementation behind `MouseDevice(move_to, mouse_down, mouse_up)` Protocol. `MouseActionAdapter.execute(request)` rejects non-physical destinations, rounds the already-validated physical float coordinates once at the device boundary, calls `move_to` once, returns a move-only result for `MOVE`, sends one left down/up pair for generic `CLICK`, or sends exactly two pairs separated by `interval_ms` for `DOUBLE_CLICK`. A `False` movement result raises `ActionExecutionError`; device errors propagate. It deliberately does not clamp, focus a window, capture a screen, select OCR candidates, or use navigation's `MotionController` pipeline.
+
+`core/input/action_adapter.py` - `MotionControllerActionAdapter` is the temporary backend bridge for generic primitive commands. It accepts only `CLICK` at an explicit physical mapped point and one-key `KEY_CHORD`, then delegates to `MotionController.click_screen_position()` / `press_key()` so control enablement, click focus, bottom guard and installed backend policy remain authoritative. It returns `executed=False` when the legacy controller deliberately skips disabled input and rejects map movement or other unsupported command kinds before any controller I/O.
 
 `workflows/desktop_ocr_action_proof.py` - Thin, explicit safety composition for a desktop mapping demonstration. `DesktopOcrActionProof.run(target_text, execute=False)` captures once through `DesktopFrameProvider`, builds the existing `ProviderBackedOcrDetector` with an exact case-sensitive configured text predicate and confidence floor, returns `not_found` for zero matches and `ambiguous` for any count other than one, maps the one detection center with `DesktopCoordinateMapper`, and returns `rejected` if the geometry/coordinate contract fails. Otherwise it returns a `dry_run` report; only `execute=True` builds `ActionRequest(DOUBLE_CLICK, mapped_point)` and invokes the injected `MappedActionAdapter`. `DesktopProofReport` retains frame extent, geometry, detection, mapped point, action result, and refusal reason so callers can audit every hop. This is the only module that combines detection, mapping, and action; all target text is workflow/CLI configuration rather than core logic.
 
@@ -4185,7 +4217,7 @@ This is an optional execution backend below `core.actions`, not a perception, co
 ### Current risks and next seams
 
 - P2's engine/Pipeline ownership boundary is complete. P3 provider contracts and P4 template/OCR adapters preserve the rule that resource acquisition and backend execution do not leak into stage APIs.
-- Legacy-integration boundary (verified 2026-09-04): `core/localization` + `core/vision/hsv` still form a stateful cropped-minimap-to-stitched-world pipeline; `core/events/types/portal` and `core/events/types/loot` still own event-local recognition/preprocessing and return `EventDetection`; `gui/modes/navigation/input/intent_executor.py::execute_navigation_intent()` still sends old `NavigationIntent` values directly to `MotionController`. None of those paths uses `PerceptionEngine`, `TargetDetection`, `MappedPoint`, or `ActionRequest`. Preserve them as compatibility paths. P7 must bridge evidence/result schemas and action dispatch one target at a time; never move Portal/Loot/minimap semantic exclusions into generic perception preprocessing.
+- Legacy-integration boundary (verified 2026-09-04): mapping emits `MapFrameEvidence`, localization exposes `LocalizationResult` while retaining its tuple API, navigation input translates intents to typed map/primitive composition actions, and physical click/key primitives traverse `ActionCommand → MotionControllerActionAdapter`. Portal/Loot retain event-local recognition/preprocessing and return `EventDetection`; `EventMonitor.detect()` now passes each result through the pure `EventDetection ↔ TargetDetection(MINIMAP)` bridge before the unchanged stabilizer/memory/handler chain, retaining generic observations in `last_target_detections`. Map movement remains an explicit stitched-map action handled by `MotionController` projection policy, not a desktop pointer action. Never move Portal/Loot/minimap semantic exclusions into generic perception preprocessing.
 - Map-domain reuse boundary (verified 2026-09-04): `core/mapping/MapStitcher` is already a GUI-independent keyframe/frame-registration and weighted-map-merge core, but `gui/modes/mapping/runtime/session.py::MappingSession.tick()` couples capture and `HSVRecognizer.extract_combined()` to it through untyped masks and a local player tuple. Preserve the stitcher and its persisted wall/fog/explored map package; introduce typed visual-evidence and coordinate adapters at this composition edge rather than replacing map stitching with the perception engine.
 
 - Full-suite health (2026-09-04): `python -m unittest discover -s tests` currently runs 170 tests with 166 passing and 2 skipped. The remaining failures are outside the typed localization migration: `tests/test_advanced_settings_file_io.py` loads a package module as a loose file and therefore breaks its relative import; `tests/test_pathfinder.py` exposes three pre-existing behavior/specification conflicts (blocked-corner diagonals, unexplored-area walkability, and strict thin-wall behavior). Do not mask them by changing the new localization bridge; audit their intended pathfinding policy in a dedicated slice.

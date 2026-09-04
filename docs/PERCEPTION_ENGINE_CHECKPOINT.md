@@ -54,7 +54,7 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 
 - Concrete frame capture, template resource, feature, and motion adapters.
 - Runtime screen capture and automatic window/viewport calibration integration.
-- Portal, Loot, map-device, waystone, trial, and scene-transition bridges.
+- Direct provider-driven implementations for Portal, Loot, map-device, waystone, trial, and scene-transition recognition. The legacy Portal/Loot output bridge is complete, but their existing detectors intentionally remain compatibility adapters rather than PerceptionEngine algorithms.
 - Workflow orchestration for the complete event chain.
 
 ## Ordered Task Queue
@@ -68,9 +68,9 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 | P4 | Reusable algorithm adapters and capability states | in progress | `feat: add reusable template algorithm adapters` |
 | P5 | Runtime coordinate mapping and calibration adapter | in progress | desktop OCR-to-action proof slice |
 | P6 | Rewire GUI workbench through engine public API | pending | `refactor: route workbench through perception engine` |
-| P7 | Legacy Portal/Loot/minimap bridges | pending | one target per commit |
+| P7 | Legacy Portal/Loot/minimap bridges | complete | complete perception-to-action chain commit |
 | P8 | Workflow modules for the event chain | pending | one workflow per commit |
-| P9 | Full dependency, regression, and error audit | pending | `test: complete perception architecture audit` |
+| P9 | Full dependency, regression, and error audit | in progress | complete-chain audit; separate baseline diagnostics remain |
 
 ## Verification Policy
 
@@ -230,3 +230,11 @@ core.perception -/-> gui, input actions, navigation policy, game-specific module
 - `python -m unittest discover -s tests` ran 170 tests: 166 passed, 2 skipped, 3 `PathFinder` assertions failed, and one advanced-settings test import failed. None uses `LocalizationResult` or the migrated capture tick.
 - The advanced-settings failure is a test-loader issue: `tests/test_advanced_settings_file_io.py` executes `gui/dialogs/advanced_settings/file_io.py` outside its package, so its relative import fails.
 - The three `PathFinder` failures concern blocked-corner diagonal traversal, unexplored-area walkability, and strict thin-wall expectations. Their policy must be audited separately; do not alter the localization migration to make unrelated legacy tests green.
+
+## 2026-09-04 — Legacy Portal/Loot schema bridge and complete chain audit
+
+- `core.events.perception_adapter` now provides the pure, reversible `EventDetection ↔ TargetDetection` seam. It only permits `MINIMAP` targets to return to the event runtime, requires an explicit event type on the reverse operation, copies all metadata deeply, and exposes valid legacy bbox/text through standard perception fields.
+- `EventMonitor.detect()` is the live composition point: each Portal/Loot detector result passes through the shared `TargetDetection(MINIMAP)` contract and back to an independent `EventDetection` before the unchanged `EventPositionStabilizer`, `EventMemory`, and handler flow. `monitor.last_target_detections` exposes the generic observation list to future UI/debug consumers without mutating detector-owned data.
+- The now-complete compatibility path is: legacy minimap screenshot/recognizer → `MapFrameEvidence`/stitcher → `LocalizationResult`/frame registration → `EventDetection` or `NavigationIntent` → `TargetDetection(MINIMAP)` bridge or typed navigation composition → `ActionCommand` or explicit map movement → `MotionController` compatibility policy → current OS input backend. No Portal/Loot templates, HSV parameters, pickup keys, or handler states moved into generic core modules.
+- Verification: event bridge 5/5; cross-chain focus set 43/43; `compileall -q core gui tests` and diff validation pass. Full discovery now sees 197 tests: 191 pass, 2 skip, and the same 4 isolated baseline issues (one advanced-settings loose-import error plus three PathFinder policy assertions). These failures do not exercise the new chain.
+- This completes P7’s legacy output integration, but does not claim that every future algorithm or workflow exists. P4 still lacks feature/motion/ML provider adapters; P5 still lacks game-window/viewport calibration UI; P6 workbench composition and P8 concrete game workflows remain deliberate follow-on work.

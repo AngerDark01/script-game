@@ -5,8 +5,10 @@ from core.actions import (
     ActionKind,
     GamepadStickTarget,
     KeyboardTarget,
+    PointerTarget,
     VirtualControllerRoute,
 )
+from core.spatial import physical_screen_point
 
 
 class ActionContractTests(unittest.TestCase):
@@ -33,6 +35,17 @@ class ActionContractTests(unittest.TestCase):
     def test_key_down_requires_exactly_one_key(self):
         with self.assertRaises(ValueError):
             ActionCommand(ActionKind.KEY_DOWN, KeyboardTarget(("ctrl", "s")))
+
+    def test_click_requires_a_pointer_target(self):
+        command = ActionCommand(
+            ActionKind.CLICK,
+            PointerTarget(physical_screen_point(10, 20)),
+        )
+
+        self.assertIs(ActionKind.CLICK, command.kind)
+
+        with self.assertRaises(ValueError):
+            ActionCommand(ActionKind.CLICK, KeyboardTarget(("d",)))
 
 
 if __name__ == "__main__":

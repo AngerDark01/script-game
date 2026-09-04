@@ -8,6 +8,7 @@ from .click_diagnostics import (
 )
 from .click_executor import fallback_pydirect_click, send_click
 from .click_pipeline import execute_click
+from .action_adapter import MotionControllerActionAdapter
 from .controller import MotionController
 from .motion_mapping import (
     ClickMappingResult,
@@ -27,6 +28,7 @@ __all__ = [
     "ClickMappingResult",
     "InputDriver",
     "MotionController",
+    "MotionControllerActionAdapter",
     "RECT",
     "apply_bottom_click_guard",
     "calculate_mapped_target_click",

@@ -11,6 +11,11 @@ from .hooks import (
     EventHookHandler,
     EventHookRegistry,
 )
+from .perception_adapter import (
+    event_detection_to_target_detection,
+    normalize_legacy_event_detections,
+    target_detection_to_event_detection,
+)
 
 __all__ = [
     "EVENT_HOOK_COMPLETED",
@@ -18,4 +23,7 @@ __all__ = [
     "EventHookContext",
     "EventHookHandler",
     "EventHookRegistry",
+    "event_detection_to_target_detection",
+    "normalize_legacy_event_detections",
+    "target_detection_to_event_detection",
 ]

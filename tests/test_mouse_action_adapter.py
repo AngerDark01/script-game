@@ -62,6 +62,23 @@ class MouseActionAdapterTests(unittest.TestCase):
         self.assertEqual("mouse", result.device_id)
         self.assertEqual(ActionKind.DOUBLE_CLICK, result.kind)
 
+    def test_click_moves_then_sends_one_left_down_up_pair(self):
+        device = _FakeMouseDevice()
+        adapter = MouseActionAdapter(device=device, clock_ms=lambda: 1000, sleep=lambda _seconds: None)
+
+        result = adapter.execute(
+            ActionCommand(
+                kind=ActionKind.CLICK,
+                target=PointerTarget(_mapped_point(100.4, 200.6)),
+            )
+        )
+
+        self.assertEqual(1, result.metadata["click_count"])
+        self.assertEqual(
+            [("move", 100, 201), ("down", "left"), ("up", "left")],
+            device.calls,
+        )
+
 
 def _mapped_point(x, y):
     return MappedPoint(

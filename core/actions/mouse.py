@@ -44,7 +44,7 @@ class MouseActionAdapter:
         self._device_id = device_id
 
     def execute(self, request: ActionRequest | ActionCommand) -> ActionResult:
-        """Move to a validated physical point, then optionally perform one double click."""
+        """Move to a validated physical point, then optionally click."""
         command = _as_pointer_command(request)
         target = command.target
         if not isinstance(target, PointerTarget):
@@ -59,7 +59,10 @@ class MouseActionAdapter:
             raise ActionExecutionError(f"mouse device could not move to ({x}, {y})")
 
         click_count = 0
-        if command.kind is ActionKind.DOUBLE_CLICK:
+        if command.kind is ActionKind.CLICK:
+            self._click_once()
+            click_count = 1
+        elif command.kind is ActionKind.DOUBLE_CLICK:
             self._click_once()
             self._sleep(command.interval_ms / 1000.0)
             self._click_once()
