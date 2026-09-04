@@ -5080,3 +5080,4 @@ The EOF whitespace was removed, the model-resource source was re-staged, and the
 - `core/routing/__init__.py`
 - `core/localization/__init__.py`
 - `core/vision/__init__.py`
+<!-- 2026-09-04 continuation scope declaration: close the existing MappingSession → MapFrameEvidence runtime migration, then inspect the typed localization boundary and its navigation composition caller. Read only the migration plan, affected session/evidence contract, localization runtime boundary, their focused tests, and the current architecture/checkpoint entries before selecting the next compatibility adapter. -->
