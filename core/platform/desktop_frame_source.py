@@ -1,4 +1,4 @@
-"""Whole-desktop capture with explicit physical desktop geometry metadata."""
+"""Display-region capture with explicit physical geometry metadata."""
 
 from __future__ import annotations
 
@@ -19,35 +19,14 @@ class DesktopGeometryProvider(Protocol):
     def current_geometry(self) -> ScreenGeometry: ...
 
 
-class WindowsDesktopGeometryProvider:
-    """Read virtual desktop bounds through Win32 after best-effort DPI awareness."""
-
-    _SM_XVIRTUALSCREEN = 76
-    _SM_YVIRTUALSCREEN = 77
-    _SM_CXVIRTUALSCREEN = 78
-    _SM_CYVIRTUALSCREEN = 79
+class _WindowsGeometryProvider:
+    """Shared Win32 physical-coordinate bootstrap for display geometry providers."""
 
     def __init__(self) -> None:
         if os.name != "nt":
             raise RuntimeError("WindowsDesktopGeometryProvider requires Windows")
         self._user32 = ctypes.windll.user32
         self._set_dpi_awareness()
-
-    def current_geometry(self) -> ScreenGeometry:
-        """Return virtual-screen physical bounds and the system DPI observation."""
-        left = self._user32.GetSystemMetrics(self._SM_XVIRTUALSCREEN)
-        top = self._user32.GetSystemMetrics(self._SM_YVIRTUALSCREEN)
-        width = self._user32.GetSystemMetrics(self._SM_CXVIRTUALSCREEN)
-        height = self._user32.GetSystemMetrics(self._SM_CYVIRTUALSCREEN)
-        dpi = self._system_dpi()
-        return ScreenGeometry(
-            left=left,
-            top=top,
-            width=width,
-            height=height,
-            dpi_scale_x=dpi / 96.0,
-            dpi_scale_y=dpi / 96.0,
-        )
 
     def _set_dpi_awareness(self) -> None:
         """Request per-monitor DPI coordinates without failing an already-aware host."""
@@ -76,8 +55,63 @@ class WindowsDesktopGeometryProvider:
             return 96
 
 
+class WindowsDesktopGeometryProvider(_WindowsGeometryProvider):
+    """Read virtual desktop bounds through Win32 after best-effort DPI awareness."""
+
+    _SM_XVIRTUALSCREEN = 76
+    _SM_YVIRTUALSCREEN = 77
+    _SM_CXVIRTUALSCREEN = 78
+    _SM_CYVIRTUALSCREEN = 79
+
+    def current_geometry(self) -> ScreenGeometry:
+        """Return virtual-screen physical bounds and the system DPI observation."""
+        left = self._user32.GetSystemMetrics(self._SM_XVIRTUALSCREEN)
+        top = self._user32.GetSystemMetrics(self._SM_YVIRTUALSCREEN)
+        width = self._user32.GetSystemMetrics(self._SM_CXVIRTUALSCREEN)
+        height = self._user32.GetSystemMetrics(self._SM_CYVIRTUALSCREEN)
+        dpi = self._system_dpi()
+        return ScreenGeometry(
+            left=left,
+            top=top,
+            width=width,
+            height=height,
+            dpi_scale_x=dpi / 96.0,
+            dpi_scale_y=dpi / 96.0,
+        )
+
+
+class WindowsPrimaryMonitorGeometryProvider(_WindowsGeometryProvider):
+    """Read the physical bounds of the Windows primary monitor.
+
+    This is deliberately separate from :class:`WindowsDesktopGeometryProvider`:
+    the latter remains the reusable, explicit opt-in for a full virtual desktop.
+    """
+
+    _SM_CXSCREEN = 0
+    _SM_CYSCREEN = 1
+
+    def current_geometry(self) -> ScreenGeometry:
+        """Return the primary monitor's physical bounds and DPI observation."""
+        width = self._user32.GetSystemMetrics(self._SM_CXSCREEN)
+        height = self._user32.GetSystemMetrics(self._SM_CYSCREEN)
+        dpi = self._system_dpi()
+        return ScreenGeometry(
+            left=0,
+            top=0,
+            width=width,
+            height=height,
+            dpi_scale_x=dpi / 96.0,
+            dpi_scale_y=dpi / 96.0,
+        )
+
+
 class DesktopFrameSource:
-    """Capture a whole desktop and pair its source image with destination geometry."""
+    """Capture a display region and pair its source image with physical geometry.
+
+    A no-argument source captures the primary monitor.  Callers that need all
+    monitors must explicitly pass ``WindowsDesktopGeometryProvider()`` (or a
+    different ``DesktopGeometryProvider``) as the geometry provider.
+    """
 
     def __init__(
         self,
@@ -85,11 +119,11 @@ class DesktopFrameSource:
         geometry_provider: DesktopGeometryProvider | None = None,
         capture_backend: Callable[[ScreenGeometry], Any] | None = None,
     ) -> None:
-        self._geometry_provider = geometry_provider or WindowsDesktopGeometryProvider()
+        self._geometry_provider = geometry_provider or WindowsPrimaryMonitorGeometryProvider()
         self._capture_backend = capture_backend or _capture_desktop
 
     def capture(self) -> tuple[FrameContext, ScreenGeometry]:
-        """Capture once and return a full-screen frame plus its observed geometry."""
+        """Capture once and return a full-source frame plus its observed geometry."""
         geometry = self._geometry_provider.current_geometry()
         if not isinstance(geometry, ScreenGeometry):
             raise TypeError("geometry_provider must return ScreenGeometry")

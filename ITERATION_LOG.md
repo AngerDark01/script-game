@@ -5400,3 +5400,36 @@ The EOF whitespace was removed, the model-resource source was re-staged, and the
 **Verification:** event bridge tests 5/5; end-to-end compatibility focus set 43/43; `compileall -q core gui tests` and `git diff --check` pass. Full discovery is 191 passed, 2 skipped, 3 known PathFinder failures, and 1 known advanced-settings loader error out of 197 tests.
 
 **Next work is intentionally separate:** P4 feature/motion/ML provider adapters, P5 game-window/viewport calibration controls, P6 workbench GUI composition, P8 concrete workflows (including the later PoE scenario), and a dedicated diagnosis/fix decision for the four independent full-suite baseline failures.
+
+## [Primary-monitor capture default] 2026-09-04
+
+### A. Scope declared before implementation
+
+**Goal:** make the application's screenshot-localization default capture only the Windows primary monitor and map recognition coordinates to that same monitor's physical rectangle. Preserve virtual-desktop capture only as an explicit reusable provider choice.
+
+**Verified non-compliance:** `DesktopFrameSource()` currently defaults to `WindowsDesktopGeometryProvider`, whose `current_geometry()` reads `SM_X/Y/CX/CYVIRTUALSCREEN`; the OCR action proof therefore captures the full virtual desktop by default.
+
+**Files in scope:** `core/platform/desktop_frame_source.py`, its focused frame-source tests, OCR-action composition coverage, and the perception checkpoint/codebase notes. The change must not affect minimap capture or any caller that explicitly injects a geometry provider.
+
+### C. Primary-monitor default implementation result
+
+- **(verified):** the prior no-argument composition selected `WindowsDesktopGeometryProvider`, which reads `SM_X/Y/CX/CYVIRTUALSCREEN`; this was the exact cause of the unintended multi-monitor capture.
+- `WindowsPrimaryMonitorGeometryProvider` now reuses the established Windows DPI-awareness bootstrap and reads only `SM_CXSCREEN` / `SM_CYSCREEN`, returning the primary monitor's physical rectangle at `(0, 0)`.
+- `DesktopFrameSource()` now uses that primary-monitor provider by default. It still accepts any injected `DesktopGeometryProvider`, and `WindowsDesktopGeometryProvider` remains exported as the intentional all-monitor option. No recognition algorithm, coordinate mapper, action adapter, minimap capture, or legacy navigation caller was changed.
+- Regression coverage proves both the primary metrics/physical geometry and the no-argument composition choice. The pre-existing injected negative-origin virtual-desktop test remains intact, so the generic multi-monitor route is protected too.
+
+## [SYNC] 2026-09-04 - primary-monitor capture default
+
+### A. SYNC scope declaration
+
+**Trigger:** screenshot localization must use the Windows primary monitor only, while preserving the reusable virtual-desktop provider for an explicitly selected multi-monitor workflow.
+
+**Directly changed files:** `core/platform/desktop_frame_source.py`, `core/platform/__init__.py`, `tests/test_desktop_frame_source.py`, and the affected architecture/checkpoint records.
+
+### C. SYNC result
+
+**Impact chain:** `utils/run_desktop_ocr_action_proof.py` -> `DesktopFrameSource()` -> `WindowsPrimaryMonitorGeometryProvider` -> primary-monitor `ScreenGeometry` -> capture -> `FULL_SCREEN` detection -> `DesktopCoordinateMapper` -> `PHYSICAL_SCREEN` mouse action. An explicit `WindowsDesktopGeometryProvider()` remains the alternate all-monitor geometry source.
+
+**Verification:** the focused source/mapping/OCR-workflow suite passes 7/7; `compileall -q core/platform core/spatial workflows utils`, public platform imports, and `git diff --check` pass. A read-only live `DesktopFrameSource().capture()` produced a `2560 × 1600` image with matching primary physical geometry `(0, 0, 2560, 1600)` at 150% DPI; it did not invoke OCR, mouse movement, or clicking.
+
+**Full-suite audit:** `python -m unittest discover -s tests` ran 210 tests: 203 passed, 2 skipped, 3 pre-existing `PathFinder` policy assertion failures, and 2 unrelated test-loader errors. One loader error is the existing advanced-settings loose-module import; the other is `test_wall_version_storage`, which imports a map-editor version-storage module not present in this worktree. Neither failure imports the changed platform/frame-source files.
