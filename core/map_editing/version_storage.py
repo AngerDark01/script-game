@@ -100,6 +100,21 @@ def activate_wall_version(
     return version
 
 
+def load_wall_version(
+    map_folder: str | Path,
+    version_id: str,
+    shape: tuple[int, int],
+) -> tuple[WallVersion, np.ndarray]:
+    """Read one named immutable snapshot without changing the active pointer."""
+    folder = Path(map_folder)
+    config = _load_config(folder)
+    if VERSION_CONFIG_KEY not in config:
+        raise ValueError("wall version catalog is missing")
+    versions, _active = _parse_metadata(config[VERSION_CONFIG_KEY])
+    version = _find_version(versions, version_id)
+    return version, _load_version_wall_layer(folder, version, shape)
+
+
 def migrate_legacy_wall_overrides(map_folder: str | Path, base_wall_layer: np.ndarray) -> WallVersion | None:
     """Import an old add/erase document once without deleting its source files."""
     _validate_wall_layer(base_wall_layer)

@@ -19,12 +19,13 @@ class MapEditorWidgetTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_widget_loads_draws_and_saves_one_map_without_rewriting_map_data(self) -> None:
+    def test_widget_erases_the_preview_to_black_and_confirms_a_new_navigation_version(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             map_root = Path(root) / "map_data"
             folder = map_root / "test-route"
             folder.mkdir(parents=True)
             base = np.zeros((50, 60), dtype=np.uint8)
+            base[20, 20] = 255
             np.savez_compressed(folder / "map_data.npz", wall_layer=base)
             package_before = (folder / "map_data.npz").read_bytes()
             saved_folders: list[str] = []
@@ -33,19 +34,20 @@ class MapEditorWidgetTests(unittest.TestCase):
             widget.map_saved.connect(saved_folders.append)
             try:
                 self.assertTrue(widget.load_selected_map())
-                self.assertTrue(widget.canvas.isEnabled())
+                self.assertIsNone(widget.controller.active_version_id)
 
+                widget.erase_wall_button.setChecked(True)
                 widget.canvas.stroke_started.emit((20, 20))
-                widget.canvas.stroke_extended.emit((25, 20))
                 widget.canvas.stroke_finished.emit()
 
-                self.assertTrue(widget.controller.is_dirty)
+                self.assertEqual(0, widget.controller.preview_wall_layer[20, 20])
+                self.assertFalse(np.any(widget.canvas._erase_array))
                 self.assertTrue(widget.save_current_map())
-                self.assertFalse(widget.controller.is_dirty)
+                self.assertEqual("v0001", widget.controller.active_version_id)
                 self.assertEqual([str(folder)], saved_folders)
-                self.assertTrue((folder / "wall_overrides.npz").is_file())
+                self.assertTrue((folder / "wall_versions" / "v0001.npz").is_file())
                 self.assertEqual(package_before, (folder / "map_data.npz").read_bytes())
-                self.assertIn("重新加载此地图", widget.status_label.text())
+                self.assertIn("当前导航版本", widget.active_version_label.text())
             finally:
                 widget.deleteLater()
                 self.app.processEvents()

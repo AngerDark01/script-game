@@ -6,66 +6,79 @@ import unittest
 
 import numpy as np
 
+from core.map_editing.models import WallOverrideDocument
+from core.map_editing.storage import save_wall_overrides
 from gui.modes.map_editor.controller import MapEditorController
 
 
 class MapEditorControllerTests(unittest.TestCase):
-    def test_controller_tracks_dirty_state_and_restores_masks_across_undo_redo_and_save(self) -> None:
+    def test_load_migrates_legacy_state_and_erase_updates_the_preview_wall_directly(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root)
             base = np.zeros((24, 24), dtype=np.uint8)
+            base[8, 8] = 255
+            np.savez_compressed(folder / "map_data.npz", wall_layer=base)
+            legacy = WallOverrideDocument.empty(base.shape)
+            legacy.add_mask[12, 12] = 255
+            save_wall_overrides(folder, legacy)
+
+            controller = MapEditorController.load(folder)
+
+            self.assertEqual("v0001", controller.active_version_id)
+            self.assertEqual(255, controller.preview_wall_layer[8, 8])
+            self.assertEqual(255, controller.preview_wall_layer[12, 12])
+            self.assertTrue(controller.apply_brush((8, 8), radius=1, mode="erase"))
+            self.assertEqual(0, controller.preview_wall_layer[8, 8])
+            self.assertTrue(controller.is_dirty)
+
+    def test_confirm_creates_a_new_active_version_and_old_snapshot_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root)
+            base = np.zeros((24, 24), dtype=np.uint8)
+            base[8, 8] = 255
             np.savez_compressed(folder / "map_data.npz", wall_layer=base)
             controller = MapEditorController.load(folder)
 
-            self.assertFalse(controller.is_dirty)
-            self.assertTrue(controller.apply_brush((8, 8), radius=3, mode="add"))
-            self.assertTrue(controller.is_dirty)
-            self.assertTrue(np.any(controller.document.add_mask))
+            controller.apply_brush((8, 8), radius=1, mode="erase")
+            first = controller.confirm_as_new_version()
+            first_path = folder / first.file
+            first_bytes = first_path.read_bytes()
+            controller.apply_brush((12, 12), radius=1, mode="add")
+            second = controller.confirm_as_new_version()
 
-            self.assertTrue(controller.undo())
-            self.assertFalse(np.any(controller.document.add_mask))
+            self.assertEqual("v0001", first.id)
+            self.assertEqual("v0002", second.id)
+            self.assertEqual(second.id, controller.active_version_id)
             self.assertFalse(controller.is_dirty)
-            self.assertTrue(controller.redo())
-            self.assertTrue(np.any(controller.document.add_mask))
+            self.assertEqual(first_bytes, first_path.read_bytes())
+            self.assertEqual(0, controller.preview_wall_layer[8, 8])
 
-            controller.save()
-            self.assertFalse(controller.is_dirty)
-            reloaded = MapEditorController.load(folder)
-            np.testing.assert_array_equal(reloaded.document.add_mask, controller.document.add_mask)
+    def test_checkout_and_activate_an_older_version_does_not_modify_any_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root)
+            base = np.zeros((12, 12), dtype=np.uint8)
+            base[4, 4] = 255
+            np.savez_compressed(folder / "map_data.npz", wall_layer=base)
+            controller = MapEditorController.load(folder)
+            controller.confirm_as_new_version()
+            controller.apply_brush((4, 4), radius=1, mode="erase")
+            controller.confirm_as_new_version()
+            second_path = folder / "wall_versions" / "v0002.npz"
+            second_bytes = second_path.read_bytes()
+
+            controller.checkout_version("v0001")
+            controller.activate_checked_out_version()
+
+            self.assertEqual("v0001", controller.active_version_id)
+            self.assertEqual(255, controller.preview_wall_layer[4, 4])
+            self.assertEqual(second_bytes, second_path.read_bytes())
 
     def test_loading_a_package_without_a_two_dimensional_wall_layer_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root)
             np.savez_compressed(folder / "map_data.npz", wall_layer=np.zeros((3, 3, 2), dtype=np.uint8))
-
             with self.assertRaisesRegex(ValueError, "two-dimensional"):
                 MapEditorController.load(folder)
-
-    def test_discard_clear_and_stroke_undo_never_rewrite_the_base_package(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            folder = Path(root)
-            base = np.zeros((30, 30), dtype=np.uint8)
-            base[4, 4] = 255
-            np.savez_compressed(folder / "map_data.npz", wall_layer=base, unrelated=np.array([3]))
-            package_before = (folder / "map_data.npz").read_bytes()
-            controller = MapEditorController.load(folder)
-
-            controller.begin_stroke()
-            controller.apply_brush((10, 10), radius=3, mode="add")
-            controller.apply_brush((16, 10), radius=3, mode="add")
-            controller.end_stroke()
-            self.assertTrue(controller.can_undo)
-            self.assertTrue(controller.undo())
-            self.assertFalse(np.any(controller.document.add_mask))
-            self.assertTrue(controller.redo())
-            self.assertTrue(np.any(controller.document.add_mask))
-
-            controller.save()
-            controller.clear_overrides()
-            self.assertTrue(controller.is_dirty)
-            controller.discard_changes()
-            self.assertTrue(np.any(controller.document.add_mask))
-            self.assertEqual(package_before, (folder / "map_data.npz").read_bytes())
 
 
 if __name__ == "__main__":

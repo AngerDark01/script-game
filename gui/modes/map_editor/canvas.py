@@ -74,6 +74,11 @@ class WallEditorCanvas(QWidget):
         self._fit_on_resize = True
         self.fit_map()
 
+    def set_wall_layer(self, wall_layer: np.ndarray) -> None:
+        """Display one final black/white wall draft without edit-mask overlays."""
+        empty_mask = np.zeros_like(wall_layer, dtype=np.uint8)
+        self.set_map_layers(wall_layer, empty_mask, empty_mask)
+
     def clear_map_layers(self) -> None:
         self._base_array = self._add_array = self._erase_array = None
         self._base_image = self._add_image = self._erase_image = None

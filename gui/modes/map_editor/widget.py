@@ -87,6 +87,24 @@ class MapEditorWidget(QWidget):
         map_layout.addWidget(self.load_map_button)
         sidebar_layout.addWidget(map_group)
 
+        version_group = QGroupBox("墙体版本")
+        version_layout = QVBoxLayout(version_group)
+        self.active_version_label = QLabel("当前导航版本：未加载")
+        self.active_version_label.setProperty("role", "muted")
+        self.version_combo = QComboBox()
+        self.version_combo.setObjectName("map_editor_version_combo")
+        version_actions = QHBoxLayout()
+        self.checkout_version_button = QPushButton("作为编辑基线")
+        self.checkout_version_button.setObjectName("map_editor_checkout_version")
+        self.activate_version_button = QPushButton("设为导航版本")
+        self.activate_version_button.setObjectName("map_editor_activate_version")
+        version_actions.addWidget(self.checkout_version_button)
+        version_actions.addWidget(self.activate_version_button)
+        version_layout.addWidget(self.active_version_label)
+        version_layout.addWidget(self.version_combo)
+        version_layout.addLayout(version_actions)
+        sidebar_layout.addWidget(version_group)
+
         tool_group = QGroupBox("墙体修正工具")
         tool_layout = QVBoxLayout(tool_group)
         tool_buttons = QHBoxLayout()
@@ -124,11 +142,10 @@ class MapEditorWidget(QWidget):
         self.redo_button.setObjectName("map_editor_redo")
         history_row.addWidget(self.undo_button)
         history_row.addWidget(self.redo_button)
-        self.reload_button = QPushButton("重新加载（放弃未保存）")
-        self.reload_button.setToolTip("放弃当前未保存的墙体修改，并恢复磁盘中已保存的修正。")
-        self.clear_button = QPushButton("清空修正")
-        self.clear_button.setToolTip("清空当前人工墙体修正；仍需点击保存才会写入文件。")
-        self.clear_button.setProperty("role", "warning")
+        self.reload_button = QPushButton("放弃草稿")
+        self.reload_button.setToolTip("放弃当前未确认的墙体草稿，恢复当前编辑基线。")
+        self.clear_button = QPushButton("重新载入地图")
+        self.clear_button.setToolTip("从当前导航版本重新载入地图；未确认草稿会被放弃。")
         history_layout.addLayout(history_row)
         history_actions = QHBoxLayout()
         history_actions.addWidget(self.reload_button)
@@ -136,17 +153,17 @@ class MapEditorWidget(QWidget):
         history_layout.addLayout(history_actions)
         sidebar_layout.addWidget(history_group)
 
-        self.save_button = QPushButton("保存墙体修正")
+        self.save_button = QPushButton("确认并保存为新版本")
         self.save_button.setObjectName("map_editor_save")
         self.save_button.setProperty("role", "success")
         sidebar_layout.addWidget(self.save_button)
 
-        legend = QGroupBox("图层说明")
+        legend = QGroupBox("预览说明")
         legend_layout = QVBoxLayout(legend)
         legend_layout.setSpacing(5)
-        legend_layout.addWidget(self._legend_label("#A5B4C4", "灰白：原始墙体"))
-        legend_layout.addWidget(self._legend_label("#EF4444", "红色：手动增加的墙体"))
-        legend_layout.addWidget(self._legend_label("#22D3EE", "青色：手动擦除的原始墙体"))
+        legend_layout.addWidget(self._legend_label("#F8FAFC", "白色：当前草稿中的墙体"))
+        legend_layout.addWidget(self._legend_label("#91A4B8", "黑色：可通行空白区域"))
+        legend_layout.addWidget(self._legend_label("#91A4B8", "擦除后立即显示黑色；确认后才创建版本"))
         sidebar_layout.addWidget(legend)
 
         workspace = QVBoxLayout()
@@ -194,13 +211,15 @@ class MapEditorWidget(QWidget):
 
     def _connect_signals(self) -> None:
         self.load_map_button.clicked.connect(self.load_selected_map)
+        self.checkout_version_button.clicked.connect(self.checkout_selected_version)
+        self.activate_version_button.clicked.connect(self.activate_checked_out_version)
         self.add_wall_button.toggled.connect(lambda checked: checked and self._update_canvas_tool())
         self.erase_wall_button.toggled.connect(lambda checked: checked and self._update_canvas_tool())
         self.brush_radius_spin.valueChanged.connect(lambda _value: self._update_canvas_tool())
         self.undo_button.clicked.connect(self.undo)
         self.redo_button.clicked.connect(self.redo)
         self.reload_button.clicked.connect(self.reload_current_map)
-        self.clear_button.clicked.connect(self.clear_overrides)
+        self.clear_button.clicked.connect(self.reload_selected_map)
         self.save_button.clicked.connect(self.save_current_map)
         self.zoom_out_button.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom / 1.25))
         self.zoom_in_button.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom * 1.25))
@@ -247,21 +266,24 @@ class MapEditorWidget(QWidget):
             return False
         self._show_controller_layers(fit=True)
         self._set_editor_enabled(True)
-        self._show_status("地图已加载。左键绘制；右键、中键或按住空格/Shift + 左键可拖动地图；滚轮缩放。")
+        self._show_status(
+            f"地图已加载，编辑基线为 {self.controller.checked_out_label}。擦除会直接显示黑色；确认后才保存为新版本。"
+        )
         return True
 
     def save_current_map(self) -> bool:
         if self.controller is None:
             return False
         try:
-            path = self.controller.save()
+            version = self.controller.confirm_as_new_version()
         except (OSError, ValueError) as error:
             self._show_status(f"保存失败：{error}", error=True)
             return False
+        self._show_controller_layers(fit=False)
         self._update_editor_actions()
         self.map_saved.emit(str(self.controller.map_folder))
         self._show_status(
-            f"已保存到 {path.name}。已运行的导航需要重新加载此地图后，定位和寻路才会使用新墙体。"
+            f"已确认并保存为 {version.id}，它已成为当前导航版本。已运行的导航需要重新加载地图后才会使用它。"
         )
         return True
 
@@ -271,8 +293,8 @@ class MapEditorWidget(QWidget):
         if self.controller.is_dirty:
             choice = QMessageBox.question(
                 self,
-                "放弃未保存修改",
-                "未保存的墙体修正将被放弃，是否继续？",
+                "放弃草稿",
+                "当前墙体草稿尚未确认保存为新版本，是否放弃？",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -280,19 +302,65 @@ class MapEditorWidget(QWidget):
                 return False
         try:
             self.controller.discard_changes()
-        except (OSError, ValueError) as error:
-            self._show_status(f"重新加载失败：{error}", error=True)
+        except ValueError as error:
+            self._show_status(f"恢复草稿失败：{error}", error=True)
             return False
         self._show_controller_layers(fit=False)
-        self._show_status("已重新加载已保存的墙体修正。")
+        self._show_status(f"已恢复 {self.controller.checked_out_label} 的已确认墙体版本。")
         return True
 
-    def clear_overrides(self) -> None:
+    def reload_selected_map(self) -> bool:
+        if self.controller is not None and self.controller.is_dirty:
+            choice = QMessageBox.question(
+                self,
+                "重新载入地图",
+                "当前草稿尚未确认保存为新版本，是否放弃并重新载入？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
+        return self.load_selected_map()
+
+    def checkout_selected_version(self) -> bool:
         if self.controller is None:
-            return
-        self.controller.clear_overrides()
+            return False
+        version_id = self.version_combo.currentData()
+        if version_id == self.controller.source_version_id:
+            return True
+        if self.controller.is_dirty:
+            choice = QMessageBox.question(
+                self,
+                "切换编辑基线",
+                "当前草稿尚未确认保存为新版本，是否放弃并切换？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
+        try:
+            self.controller.checkout_version(version_id)
+        except (OSError, ValueError) as error:
+            self._show_status(f"切换版本失败：{error}", error=True)
+            return False
         self._show_controller_layers(fit=False)
-        self._show_status("人工墙体修正已清空；点击“保存墙体修正”后才写入文件。")
+        self._show_status(f"已检出 {self.controller.checked_out_label} 作为新的编辑基线。")
+        return True
+
+    def activate_checked_out_version(self) -> bool:
+        if self.controller is None:
+            return False
+        if self.controller.is_dirty:
+            self._show_status("请先确认保存草稿，或放弃草稿后再切换导航版本。", error=True)
+            return False
+        try:
+            version = self.controller.activate_checked_out_version()
+        except (OSError, ValueError) as error:
+            self._show_status(f"设置导航版本失败：{error}", error=True)
+            return False
+        self._show_controller_layers(fit=False)
+        self._show_status(f"{version.id} 已设为导航版本；导航重新加载地图后生效。")
+        return True
 
     def undo(self) -> None:
         if self.controller is not None and self.controller.undo():
@@ -336,15 +404,12 @@ class MapEditorWidget(QWidget):
 
     def _show_controller_layers(self, *, fit: bool) -> None:
         assert self.controller is not None
-        self.canvas.set_map_layers(
-            self.controller.base_wall_layer,
-            self.controller.document.add_mask,
-            self.controller.document.erase_mask,
-        )
+        self.canvas.set_wall_layer(self.controller.preview_wall_layer)
         if fit:
             self.canvas.fit_map()
         width, height = self.controller.map_shape[1], self.controller.map_shape[0]
         self.map_info_label.setText(f"{self.controller.map_folder.name} · {width} × {height}")
+        self._refresh_version_list()
         self._update_canvas_tool()
         self._update_editor_actions()
 
@@ -353,6 +418,9 @@ class MapEditorWidget(QWidget):
             self.add_wall_button,
             self.erase_wall_button,
             self.brush_radius_spin,
+            self.version_combo,
+            self.checkout_version_button,
+            self.activate_version_button,
             self.undo_button,
             self.redo_button,
             self.reload_button,
@@ -371,9 +439,28 @@ class MapEditorWidget(QWidget):
             return
         self.undo_button.setEnabled(controller.can_undo)
         self.redo_button.setEnabled(controller.can_redo)
-        self.save_button.setEnabled(controller.is_dirty)
+        self.save_button.setEnabled(controller.is_dirty or controller.source_version_id is None)
         self.reload_button.setEnabled(True)
         self.clear_button.setEnabled(True)
+        self.checkout_version_button.setEnabled(True)
+        self.activate_version_button.setEnabled(
+            controller.source_version_id is not None and not controller.is_dirty
+        )
+
+    def _refresh_version_list(self) -> None:
+        assert self.controller is not None
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.addItem("原始地图（编辑基线）", None)
+        active_id = self.controller.active_version_id
+        for version in self.controller.versions:
+            label = f"{version.id}{' · 当前导航' if version.id == active_id else ''}"
+            self.version_combo.addItem(label, version.id)
+        selected_index = self.version_combo.findData(self.controller.source_version_id)
+        self.version_combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        self.version_combo.blockSignals(False)
+        active_label = active_id or "原始地图（尚未创建版本）"
+        self.active_version_label.setText(f"当前导航版本：{active_label}")
 
     def _update_canvas_tool(self) -> None:
         self.canvas.set_tool(
