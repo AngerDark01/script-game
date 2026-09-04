@@ -10,6 +10,7 @@ from .app_context import AppContext
 from .theme import app_stylesheet
 from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
+from .modes.map_editor import MapEditorWidget
 from .dialogs.perception import PerceptionWorkbenchDialog
 from .gamepad.host_manager import GamepadHostManager
 from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
@@ -66,10 +67,21 @@ class MainWindow(QMainWindow):
         self.mode_btn_gamepad.setCheckable(True)
         self.mode_btn_gamepad.clicked.connect(lambda: self.switch_mode(2))
 
-        self.mode_buttons = [self.mode_btn_mapping, self.mode_btn_nav, self.mode_btn_gamepad]
+        self.mode_btn_map_editor = QPushButton("🧱 地图编辑")
+        self.mode_btn_map_editor.setProperty("role", "mode")
+        self.mode_btn_map_editor.setCheckable(True)
+        self.mode_btn_map_editor.clicked.connect(lambda: self.switch_mode(3))
+
+        self.mode_buttons = [
+            self.mode_btn_mapping,
+            self.mode_btn_nav,
+            self.mode_btn_gamepad,
+            self.mode_btn_map_editor,
+        ]
         mode_layout.addWidget(self.mode_btn_mapping)
         mode_layout.addWidget(self.mode_btn_nav)
         mode_layout.addWidget(self.mode_btn_gamepad)
+        mode_layout.addWidget(self.mode_btn_map_editor)
         mode_layout.addStretch()
         main_layout.addLayout(mode_layout)
 
@@ -98,6 +110,9 @@ class MainWindow(QMainWindow):
         if not self.gamepad_host_start_result.connected:
             self.gamepad_page.show_host_error(self.gamepad_host_start_result.message)
 
+        self.map_editor_widget = MapEditorWidget(source_file=__file__, parent=self)
+        self.stacked_widget.addWidget(self.map_editor_widget)
+
         self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
         self.perception_button.clicked.connect(self.open_perception_workbench)
@@ -117,6 +132,8 @@ class MainWindow(QMainWindow):
 
         if index == 1:
             self.nav_widget.refresh_map_list()
+        elif index == 3:
+            self.map_editor_widget.refresh_map_list()
 
     def closeEvent(self, event):
         """关闭窗口时确保所有子进程和定时器都停止"""

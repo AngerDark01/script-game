@@ -53,8 +53,8 @@ class GamepadPageInMainWindowTests(unittest.TestCase):
         with patch("gui.main_window.GamepadPage", _FakePage):
             window = MainWindow(gamepad_host_manager=manager)
             self.assertEqual(1, manager.start_calls)
-            self.assertEqual(3, window.stacked_widget.count())
-            self.assertEqual(3, len(window.mode_buttons))
+            self.assertEqual(4, window.stacked_widget.count())
+            self.assertEqual(4, len(window.mode_buttons))
 
             window.switch_mode(2)
             self.assertIs(window.gamepad_page, window.stacked_widget.currentWidget())

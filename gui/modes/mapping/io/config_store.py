@@ -69,5 +69,18 @@ def load_root_config(file_path: str | Path) -> dict | None:
 
 def save_map_config(map_folder: str | Path, config: dict) -> Path:
     path = Path(map_folder) / "config.json"
-    save_json_config(path, config)
+    # Mapping saves update their own capture/recognizer settings.  Keep map
+    # extensions owned by other workbench modes, such as wall-overrides,
+    # otherwise re-saving a map would silently disable those corrections.
+    existing: dict = {}
+    if path.exists():
+        try:
+            loaded = load_json_config(path)
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    updated = dict(existing)
+    updated.update(config)
+    save_json_config(path, updated)
     return path
