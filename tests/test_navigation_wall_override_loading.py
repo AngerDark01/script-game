@@ -33,6 +33,7 @@ class NavigationWallOverrideLoadingTests(unittest.TestCase):
 
             core = NavigationCore(str(folder), nav_wall_erode_iterations=0)
 
+            self.assertTrue((folder / "wall_versions" / "v0001.npz").is_file())
             self.assertEqual(core.wall_layer[3, 3], 0)
             self.assertEqual(core.wall_layer[1, 1], 255)
             self.assertEqual(core.nav_wall_layer[3, 3], 0)
