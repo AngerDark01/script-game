@@ -10,9 +10,11 @@ public sealed class NullXInputBackend : IXInputBackend
 {
     public bool IsConnected => false;
 
+    public int ControllerCount => 2;
+
     public void Start() { }
 
-    public void Submit(GamepadState state) { }
+    public void Submit(int controller, GamepadState state) { }
 
     public void Stop() { }
 

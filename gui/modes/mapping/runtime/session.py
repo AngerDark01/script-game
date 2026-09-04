@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from core.mapping import MapFrameEvidence
+
 from .models import MappingTickResult
 
 
@@ -36,13 +38,15 @@ class MappingSession:
             player_pos=player_pos,
         )
         raw_gray = self.app_context.recognizer.get_raw_gray(img)
-        self.app_context.stitcher.add_frame(
-            img,
-            combined,
-            wall_mask,
-            fog_mask,
-            raw_gray=raw_gray,
-            player_pos=player_pos,
+        self.app_context.stitcher.add_evidence(
+            MapFrameEvidence(
+                image=img,
+                match_mask=combined,
+                save_mask=wall_mask,
+                fog_mask=fog_mask,
+                raw_gray=raw_gray,
+                player_position=player_pos,
+            )
         )
         h_img, w_img = img.shape[:2]
         return MappingTickResult(

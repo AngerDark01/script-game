@@ -7,72 +7,31 @@ namespace VirtualGamepadHost.Runtime;
 
 public sealed class HostComposition : IAsyncDisposable
 {
-    private readonly StateStore _store;
-    private readonly SafetyController _safety;
+    private readonly ControllerRegistry _registry;
     private readonly IXInputBackend _backend;
     private readonly ReportLoop _reportLoop;
     private readonly NamedPipeServer _pipeServer;
-    private readonly MappingEngine _mapping;
     private readonly RawInputCapture? _rawInput;
     private readonly DriverStatus _driverStatus;
     private readonly CancellationTokenSource _shutdown = new();
     private Task? _reportTask;
     private Task? _pipeTask;
 
-    private HostComposition(
-        StateStore store,
-        SafetyController safety,
-        IXInputBackend backend,
-        ReportLoop reportLoop,
-        NamedPipeServer pipeServer,
-        DriverStatus driverStatus,
-        MappingEngine mapping,
-        RawInputCapture? rawInput)
+    private HostComposition(ControllerRegistry registry, IXInputBackend backend, ReportLoop reportLoop, NamedPipeServer pipeServer, DriverStatus driverStatus, RawInputCapture? rawInput)
     {
-        _store = store;
-        _safety = safety;
+        _registry = registry;
         _backend = backend;
         _reportLoop = reportLoop;
         _pipeServer = pipeServer;
         _driverStatus = driverStatus;
-        _mapping = mapping;
         _rawInput = rawInput;
     }
 
     public static HostComposition Create()
     {
-        var store = new StateStore();
-        var safety = new SafetyController(store);
-        var mapping = new MappingEngine(store);
-        RawInputCapture? rawInput = null;
-        try
-        {
-            rawInput = new RawInputCapture(
-                mapping.Apply,
-                action =>
-                {
-                    if (action == HotkeyAction.TogglePause)
-                    {
-                        safety.TogglePause();
-                    }
-                    else
-                    {
-                        safety.EmergencyReset();
-                    }
-                });
-            rawInput.Start();
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Raw Input unavailable: {ex.Message}");
-            rawInput?.Dispose();
-            rawInput = null;
-        }
         var probe = new ViGEmDriverProbe();
         var driverStatus = probe.Probe();
-        IXInputBackend backend = driverStatus.Installed
-            ? new ViGEmXInputBackend()
-            : new NullXInputBackend();
+        IXInputBackend backend = driverStatus.Installed ? new ViGEmXInputBackend() : new NullXInputBackend();
 
         try
         {
@@ -82,20 +41,71 @@ public sealed class HostComposition : IAsyncDisposable
         {
             backend.Dispose();
             backend = new NullXInputBackend();
-            driverStatus = new DriverStatus(false, $"Virtual controller unavailable: {ex.Message}");
+            driverStatus = new DriverStatus(false, $"Virtual controllers unavailable: {ex.Message}");
         }
 
-        var reportLoop = new ReportLoop(store, backend);
-        HostStatus Status() => new(safety.RunState, driverStatus.Installed, backend.IsConnected, driverStatus.Message);
-        var router = new CommandRouter(store, safety, Status, mapping, () => backend.IsConnected);
-        return new HostComposition(store, safety, backend, reportLoop, new NamedPipeServer(router), driverStatus, mapping, rawInput);
+        var registry = ControllerRegistry.CreateDefault(backend);
+        RawInputCapture? rawInput = null;
+        try
+        {
+            rawInput = new RawInputCapture(
+                input =>
+                {
+                    foreach (var slot in registry.Slots.Where(slot => slot.Safety.RunState == RunState.Running))
+                    {
+                        slot.Mapping.Apply(input);
+                    }
+                },
+                onHotkey: action =>
+                {
+                    switch (action)
+                    {
+                        case HotkeyAction.ToggleController1:
+                            registry[1].Safety.TogglePause();
+                            break;
+                        case HotkeyAction.ToggleController2:
+                            registry[2].Safety.TogglePause();
+                            break;
+                        case HotkeyAction.EmergencyResetAll:
+                            registry.EmergencyResetAll();
+                            break;
+                    }
+                },
+                shouldSuppress: input =>
+                    backend.IsConnected
+                    && registry.Slots.Any(slot => slot.Safety.RunState == RunState.Running && IsNotControlHotkey(input) && slot.Mapping.ShouldSuppress(input)));
+            rawInput.Start();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Raw Input unavailable: {ex.Message}");
+            rawInput?.Dispose();
+            rawInput = null;
+        }
+
+        HostStatus Status()
+        {
+            var inputStatus = rawInput?.CaptureMode ?? "Input capture unavailable";
+            var controllerStatuses = registry.Slots.Select(slot => new ControllerStatus(slot.Number, slot.Safety.RunState, backend.IsConnected && slot.Number <= backend.ControllerCount, slot.Store.Snapshot())).ToArray();
+            var firstState = controllerStatuses.FirstOrDefault();
+            return new(firstState?.RunState ?? RunState.Ready, driverStatus.Installed, backend.IsConnected, $"{driverStatus.Message} Input: {inputStatus}.", controllerStatuses);
+        }
+
+        var router = new CommandRouter(registry, Status, () => backend.IsConnected);
+        return new HostComposition(registry, backend, new ReportLoop(registry, backend), new NamedPipeServer(router), driverStatus, rawInput);
     }
 
-    public HostStatus Status => new(
-        _safety.RunState,
-        _driverStatus.Installed,
-        _backend.IsConnected,
-        _driverStatus.Message);
+    private static bool IsNotControlHotkey(PhysicalInput input)
+        => input.Source is not "keyboard:F7" and not "keyboard:F8" and not "keyboard:F9";
+
+    public HostStatus Status
+    {
+        get
+        {
+            var statuses = _registry.Slots.Select(slot => new ControllerStatus(slot.Number, slot.Safety.RunState, _backend.IsConnected && slot.Number <= _backend.ControllerCount, slot.Store.Snapshot())).ToArray();
+            return new(statuses[0].RunState, _driverStatus.Installed, _backend.IsConnected, _driverStatus.Message, statuses);
+        }
+    }
 
     public Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -116,11 +126,10 @@ public sealed class HostComposition : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                // Expected during normal shutdown.
             }
         }
 
-        _safety.EmergencyReset();
+        _registry.EmergencyResetAll();
         _rawInput?.Dispose();
         _backend.Stop();
         _backend.Dispose();

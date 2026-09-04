@@ -15,6 +15,11 @@ if (args.Contains("--version", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (!Elevation.EnsureAdministrator(args, Console.Error.WriteLine))
+{
+    return;
+}
+
 await using var host = HostComposition.Create();
 Console.WriteLine($"Driver: {(host.Status.DriverInstalled ? "ready" : "missing")}");
 Console.WriteLine($"Device: {(host.Status.DeviceConnected ? "connected" : "unavailable")}");

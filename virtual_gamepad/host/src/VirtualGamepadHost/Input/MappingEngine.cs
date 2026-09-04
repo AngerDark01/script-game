@@ -7,8 +7,8 @@ public sealed class MappingEngine
 {
     private const int FullAxis = short.MaxValue;
     private readonly StateStore _store;
+    private readonly object _configGate = new();
     private MappingConfig _config;
-    private readonly HashSet<string> _activeSources = new(StringComparer.OrdinalIgnoreCase);
 
     public MappingEngine(StateStore store, MappingConfig? config = null)
     {
@@ -16,38 +16,58 @@ public sealed class MappingEngine
         _config = config ?? MappingConfig.Default;
     }
 
-    public MappingConfig Config => _config;
+    public MappingConfig Config
+    {
+        get
+        {
+            lock (_configGate)
+            {
+                return _config;
+            }
+        }
+    }
 
     public void SetConfig(MappingConfig config)
     {
         Validate(config);
-        _config = config;
-        _activeSources.Clear();
+        lock (_configGate)
+        {
+            _config = config;
+        }
         _store.ClearSources("mapping:");
     }
 
     public void Apply(PhysicalInput input)
     {
+        var config = Config;
         if (input.Type == PhysicalInputType.MouseMove)
         {
-            ApplyMouseMove(input);
+            ApplyMouseMove(input, config);
             return;
         }
 
         var active = input.Type is PhysicalInputType.KeyDown or PhysicalInputType.MouseButtonDown;
-        if (active)
-        {
-            _activeSources.Add(input.Source);
-        }
-        else
-        {
-            _activeSources.Remove(input.Source);
-        }
-
-        foreach (var binding in _config.Bindings.Where(binding => binding.Source.Equals(input.Source, StringComparison.OrdinalIgnoreCase)))
+        foreach (var binding in config.Bindings.Where(binding => binding.Source.Equals(input.Source, StringComparison.OrdinalIgnoreCase)))
         {
             ApplyBinding(binding, active);
         }
+    }
+
+    public bool ShouldSuppress(PhysicalInput input)
+    {
+        var config = Config;
+        if (input.Type == PhysicalInputType.MouseMove)
+        {
+            if (config.MouseMovePassthrough)
+            {
+                return false;
+            }
+
+            return (input.DeltaX != 0 && config.Bindings.Any(binding => binding.Source.Equals("mouse:move_x", StringComparison.OrdinalIgnoreCase)))
+                || (input.DeltaY != 0 && config.Bindings.Any(binding => binding.Source.Equals("mouse:move_y", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return config.Bindings.Any(binding => binding.Source.Equals(input.Source, StringComparison.OrdinalIgnoreCase));
     }
 
     private void ApplyBinding(Binding binding, bool active)
@@ -72,10 +92,10 @@ public sealed class MappingEngine
         }
     }
 
-    private void ApplyMouseMove(PhysicalInput input)
+    private void ApplyMouseMove(PhysicalInput input, MappingConfig config)
     {
-        var horizontal = _config.Bindings.FirstOrDefault(binding => binding.Source.Equals("mouse:move_x", StringComparison.OrdinalIgnoreCase));
-        var vertical = _config.Bindings.FirstOrDefault(binding => binding.Source.Equals("mouse:move_y", StringComparison.OrdinalIgnoreCase));
+        var horizontal = config.Bindings.FirstOrDefault(binding => binding.Source.Equals("mouse:move_x", StringComparison.OrdinalIgnoreCase));
+        var vertical = config.Bindings.FirstOrDefault(binding => binding.Source.Equals("mouse:move_y", StringComparison.OrdinalIgnoreCase));
         if (horizontal is not null)
         {
             _store.SetAxis("mapping:mouse_x", GamepadAxis.RightX, (int)Math.Clamp(input.DeltaX * horizontal.Sensitivity * 1200, short.MinValue, short.MaxValue), TimeSpan.FromMilliseconds(40));
@@ -93,6 +113,11 @@ public sealed class MappingEngine
         if (config.Bindings.Any(binding => string.IsNullOrWhiteSpace(binding.Source) || string.IsNullOrWhiteSpace(binding.Target)))
         {
             throw new ArgumentException("Every binding requires a source and target.");
+        }
+
+        if (double.IsNaN(config.MouseSensitivity) || double.IsInfinity(config.MouseSensitivity) || config.MouseSensitivity <= 0)
+        {
+            throw new ArgumentException("Mouse sensitivity must be a positive finite number.");
         }
 
         if (config.Bindings.Any(binding => double.IsNaN(binding.Value) || double.IsInfinity(binding.Value) || double.IsNaN(binding.Sensitivity) || double.IsInfinity(binding.Sensitivity)))

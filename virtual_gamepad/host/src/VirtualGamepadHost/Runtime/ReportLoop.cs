@@ -5,7 +5,8 @@ namespace VirtualGamepadHost.Runtime;
 
 public sealed class ReportLoop
 {
-    private readonly StateStore _store;
+    private readonly ControllerRegistry? _registry;
+    private readonly StateStore? _store;
     private readonly IXInputBackend _backend;
     private readonly TimeSpan _interval;
 
@@ -16,7 +17,23 @@ public sealed class ReportLoop
         _interval = interval ?? TimeSpan.FromMilliseconds(8);
     }
 
-    public void SubmitOnce() => _backend.Submit(_store.Snapshot());
+    public ReportLoop(ControllerRegistry registry, IXInputBackend backend, TimeSpan? interval = null)
+    {
+        _registry = registry;
+        _backend = backend;
+        _interval = interval ?? TimeSpan.FromMilliseconds(8);
+    }
+
+    public void SubmitOnce()
+    {
+        if (_registry is not null)
+        {
+            _registry.SubmitAll();
+            return;
+        }
+
+        _backend.Submit(1, _store!.Snapshot());
+    }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {

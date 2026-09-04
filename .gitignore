@@ -38,6 +38,10 @@ virtual_gamepad/**/bin/
 virtual_gamepad/**/obj/
 virtual_gamepad/**/__pycache__/
 
+# Per-machine virtual-controller bindings and runtime captures.
+virtual_gamepad/configs/controller-*.json
+logs/
+
 # Probe/debug outputs are generated locally and can be very large.
 # Keep reusable probe scripts under debug/ tracked, but ignore their
 # timestamped screenshots, reports, and evaluation directories.

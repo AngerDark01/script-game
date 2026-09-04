@@ -3,59 +3,94 @@ namespace VirtualGamepadHost.State;
 public sealed class SafetyController
 {
     private readonly StateStore _store;
+    private readonly object _gate = new();
+    private RunState _runState;
 
     public SafetyController(StateStore store)
     {
         _store = store;
-        RunState = RunState.Ready;
+        // A newly created Host must never begin consuming mapped physical
+        // input.  Treat both controller slots as explicitly paused from their
+        // first report, rather than using an ambiguous ready state.
+        _runState = RunState.Paused;
+        _store.SetPaused(true);
     }
 
-    public RunState RunState { get; private set; }
+    public RunState RunState
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _runState;
+            }
+        }
+    }
 
     public void Start()
     {
-        RunState = RunState.Running;
-        _store.SetPaused(false);
+        lock (_gate)
+        {
+            _runState = RunState.Running;
+            _store.SetPaused(false);
+        }
     }
 
     public void Pause()
     {
-        RunState = RunState.Paused;
-        _store.SetPaused(true);
+        lock (_gate)
+        {
+            _runState = RunState.Paused;
+            _store.SetPaused(true);
+        }
     }
 
     public void TogglePause()
     {
-        if (RunState == RunState.Running)
+        lock (_gate)
         {
-            Pause();
-        }
-        else
-        {
-            Start();
+            if (_runState == RunState.Running)
+            {
+                _runState = RunState.Paused;
+                _store.SetPaused(true);
+            }
+            else
+            {
+                _runState = RunState.Running;
+                _store.SetPaused(false);
+            }
         }
     }
 
     public void Reset()
     {
-        _store.ClearAll();
-        if (RunState == RunState.Paused)
+        lock (_gate)
         {
-            _store.SetPaused(true);
+            _store.ClearAll();
+            if (_runState == RunState.Paused)
+            {
+                _store.SetPaused(true);
+            }
         }
     }
 
     public void EmergencyReset()
     {
-        _store.ClearAll();
-        _store.SetPaused(true);
-        RunState = RunState.Paused;
+        lock (_gate)
+        {
+            _store.ClearAll();
+            _store.SetPaused(true);
+            _runState = RunState.Paused;
+        }
     }
 
     public void Fail()
     {
-        _store.ClearAll();
-        _store.SetPaused(true);
-        RunState = RunState.Error;
+        lock (_gate)
+        {
+            _store.ClearAll();
+            _store.SetPaused(true);
+            _runState = RunState.Error;
+        }
     }
 }

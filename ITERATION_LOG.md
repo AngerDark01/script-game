@@ -3858,3 +3858,1225 @@ Create the failing P2 stage tests and record the missing-module failure before i
 **连带重读文件：** `core/perception/engine.py`，确认构造时仍复制 mapping、runner 仍接收 factory overrides，compatibility pipeline 冲突校验不变。
 
 **验证：** 下一次 P4 staged 检查将覆盖 32 条聚焦测试与 compileall；此修改不引入新测试分支。
+## [Virtual gamepad dual-input design discovery] 2026-09-04
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `virtual_gamepad/host/src/VirtualGamepadHost/Input/RawInputCapture.cs`：确认当前原始输入源识别、设备生命周期和事件模型。
+- `virtual_gamepad/host/src/VirtualGamepadHost/Input/MappingConfig.cs`：确认现有绑定配置是否支持多个 source、同键多绑定和持久化。
+- `virtual_gamepad/host/src/VirtualGamepadHost/Input/MappingEngine.cs`：确认映射合并、冲突、输出目标按键的当前规则。
+- `virtual_gamepad/ui/virtual_gamepad_ui/main_window.py`、`models.py`：确认当前 UI 是否已有单/多 profile 结构、绑定编辑入口和状态刷新路径。
+- `virtual_gamepad/ui/tests/`：确认既有测试覆盖，避免破坏用户当前修改。
+
+**本轮要澄清：** 两个输入源是“两个独立物理手柄设备”还是“同一设备的两个逻辑通道”；两个界面应分别编辑 source A/source B，最终由一个合并层生成虚拟输出；同一目标按键允许多 source 同时绑定，并明确按下/释放引用计数规则。
+
+## [P4 OCR provider adapter discovery] 2026-09-04
+
+### A. Scope declaration
+**Goal files:** `core/perception/providers/contracts.py`, `core/perception/algorithms/template_adapter.py`, `core/perception/builtins.py`, `core/perception/engine.py`, and focused perception tests.
+**Question:** define a provider-backed OCR adapter that turns raw `OcrSpan` evidence into target-level `TargetDetection` while keeping provider objects out of profile JSON and retaining the provider-free registry boundary.
+**Boundary:** this slice must not add an OCR engine, GUI path, screen capture, coordinate mapping, workflow call, or game-specific target rule.
+
+### C. Findings
+**Verified:** `OcrProvider.recognize(frame, parameters)` returns raw `OcrSpan` values that already carry text, bounding box, coordinate space, confidence, language, and raw metadata, while carrying no target semantics. `ProviderBackedTemplateDetector` establishes the correct precedent: validate the provider boundary and delegate/normalize without moving provider objects into profiles.
+**Design decision:** `ProviderBackedOcrDetector` will execute the injected provider for each frame, require `OcrSpan` output, apply a configurable generic text predicate (`exact`, `contains`, or `regex`) and minimum OCR confidence, then produce one `TargetDetection` per matching span. It will preserve the span's geometry and coordinate space, place raw details in evidence, and allow provider/configuration errors to reach `DetectorRunner`'s existing per-instance isolation.
+**Compatibility:** the default OCR descriptor stays discoverable but unavailable because no OCR backend is bundled. A runtime `PerceptionEngine.algorithm_factories["ocr"]` closure may make it executable without serializing provider objects or adding a mandatory OCR dependency.
+**Next task:** document the adapter contract, create one red contract test, then implement the smallest adapter/factory/export slice.
+
+### C. Slice 1 red result
+**Failure evidence:** `tests.test_perception_ocr_adapter` fails at import time with `ModuleNotFoundError: core.perception.algorithms.ocr_adapter`, as expected. The test locks the first public behavior: one injected provider call per frame; exact case-insensitive query matching; confidence filtering; and geometry, timing, text, language, metadata, source, and target-type preservation in `TargetDetection`.
+**Next task:** add only `ProviderBackedOcrDetector` to satisfy the first contract; do not change the algorithm registry, GUI, providers, engine, or profile model in this green step.
+
+## [SYNC] 2026-09-04 - OCR provider adapter
+
+### A. SYNC scope declaration
+**Trigger:** P4 adds a provider-backed OCR algorithm adapter, its runtime factory, public algorithm export, editable descriptor parameters, focused tests, and design record.
+**Directly changed files:** `core/perception/algorithms/ocr_adapter.py`, `core/perception/algorithms/__init__.py`, `core/perception/builtins.py`, `tests/test_perception_ocr_adapter.py`, and `docs/plans/2026-09-04-ocr-provider-adapter-design.md`.
+**Dependency review:** `providers/contracts.py` remains the raw OcrSpan boundary; `PerceptionEngine` and `DetectorRunner` reuse their existing runtime-factory override seam; GUI, profile serialization, spatial mapping, capture, input, navigation, and workflows remain unaffected.
+
+### C. SYNC result
+**Implemented behavior:** `ProviderBackedOcrDetector` calls an explicit OCR provider once per frame, requires `OcrSpan` evidence, filters configured exact/contains/regex matches and confidence, preserves each selected span's geometry/coordinate space/text/timestamp, ranks candidates by confidence, and emits standard `TargetDetection` values. No bundled OCR engine, GUI route, or action behavior was added.
+**Composition and compatibility:** `create_ocr_detector()` requires an explicit provider; the existing `PerceptionEngine.algorithm_factories` closure seam enables it while default registry OCR remains discoverable/unavailable. Existing color/template factory behavior, templates, profiles, providers, and pipeline APIs are unchanged.
+**Verification:** 10/10 OCR adapter tests passed; 42/42 focused provider/template/OCR/algorithm/engine/stage/pipeline tests passed; `compileall -q core/perception` passed.
+**CODEBASE.md synchronized:** updated C4 call path, OCR adapter/module/public-surface/factory/engine details, risk statement, and OCR regression contract. `docs/PERCEPTION_ENGINE_CHECKPOINT.md` records the completed OCR slice; the next P4 candidates are shape, feature, and motion adapters.
+**Coverage update:** `core/perception/algorithms/ocr_adapter.py` and `tests/test_perception_ocr_adapter.py` are deeply read and documented; `algorithms/__init__.py`, `builtins.py`, engine/runner/provider contracts, and prior template adapter were re-read for dependency impact.
+
+## [P4 shape adapter discovery] 2026-09-04
+
+### A. Scope declaration
+**Goal files:** `core/perception/algorithms/shape.py`, `core/perception/builtins.py`, `core/perception/algorithms/__init__.py`, and focused perception tests.
+**Question:** add a deterministic OpenCV contour/geometry detector that accepts reusable shape parameters and emits `TargetDetection` without requiring a resource provider, ML model, game target name, GUI, coordinate mapper, or action layer.
+**Boundary:** shape evidence derives only from the supplied `FrameContext`; it must not access desktop capture, templates, OCR, input, navigation, legacy minimap code, or workflows.
+
+## [P4 fast OCR provider discovery] 2026-09-04
+
+### A. Scope declaration
+**User request:** select and implement a fast local OCR core that locates recognized text in an image, then test the provider-to-`OcrSpan` and adapter-to-`TargetDetection` paths.
+**Read targets:** installed Python/ONNX/OCR capabilities, project dependency policy, `OcrProvider` contract, provider registry/catalog, and existing OCR adapter tests.
+**Boundary:** the concrete backend must remain optional and lazily imported; importing `core.perception` must not download a model, initialize OCR, access a screen, or make Paddle/Tesseract/ONNX mandatory for unrelated users.
+
+### C. Findings
+**Verified:** generic perception has no shape implementation. Existing Portal/Loot contour routines are target-specific compatibility code and must remain untouched. Current dependencies already include OpenCV/NumPy, and `ColorRegionDetector` establishes the normalized contour-to-`TargetDetection` output pattern.
+**Design decision:** create a provider-free `ShapeDetector` based on a thresholded grayscale frame, optional morphology, external contours, polygon approximation, and generic area/vertex/circularity/solidity filters. It will report bounded geometry metrics as evidence and rank surviving candidates by fill/solidity quality. The descriptor will be available because no optional backend is required.
+**Next task:** document the behavior and add an isolated red test for circle/rectangle contour filtering before registering the detector or altering the existing unavailable `shape` descriptor.
+## [SYNC] 2026-09-04 — RapidOCR 实际文字定位 Provider
+
+### A. SYNC 范围声明
+
+**触发任务：** 为通用感知引擎接入可选、延迟加载的 RapidOCR 后端，使整屏或 ROI 图像中的文字可输出统一位置标注；补足单元与真实后端冒烟测试。
+
+**直接变更文件：** `core/perception/providers/rapidocr.py`、provider 导出/注册文件、`tests/test_perception_rapidocr_provider.py`、可选 OCR 依赖清单，以及对应设计、断点和代码库索引文档。
+
+**预计连带影响：** `FrameContext -> OcrProvider -> OcrSpan -> ProviderBackedOcrDetector -> TargetDetection` 感知链；不修改输入、GUI、坐标映射和游戏工作流。
+### C. SYNC 结果
+
+**连带重读文件：** `core/perception/providers/contracts.py`、`core/perception/providers/__init__.py`、`core/perception/providers/builtins.py`、`core/perception/algorithms/ocr_adapter.py`、`core/perception/builtins.py`、`core/perception/engine.py`、现有 provider/OCR 相关测试与断点文档。
+
+**实现结果：** 新增可选 `RapidOcrProvider`。它在第一次识别时才导入并创建 RapidOCR ONNX 模型，后续帧复用同一个引擎；将文字四边形转换为统一 `OcrSpan` bbox；支持全屏与可配置 ROI，并把 ROI 局部坐标恢复为原 `FrameContext.coordinate_space`。`ProviderBackedOcrDetector`、融合、确认、选择、坐标映射、GUI 与工作流边界保持不变。
+
+**参数与性能结论：** profile 的 `provider_parameters` 可传 `roi`、语言结果标签和 RapidOCR `backend_options`；底层 `engine_options` 支持线程等模型初始化设置且只在首次构建时读取。当前机器生成的 900×260 英文图基准中，默认 warm inference 约 3.09s，`intra_op_num_threads=4`/`inter_op_num_threads=1` 约 0.72s；这是本机基准，实际游戏应结合 ROI 与 metadata 的 `elapsed_seconds` 调参。
+
+**验证：** 红测试先按预期报 `ModuleNotFoundError: core.perception.providers.rapidocr`；实现后 RapidOCR 专项 6/6 通过，provider/catalog 联测 12/12 通过，完整 perception 测试集 68/68 通过，`compileall -q core/perception`、公共导入 smoke 与真实 ONNX 文本定位基准通过。真实结果识别出 `ENTER MAP`，bbox 为 `(72.0, 66.0, 549.0, 105.0)`。
+
+**CODEBASE.md 同步：** 更新 C4 OCR 调用路径、provider 文件职责与导出、默认 catalog、RapidOCR 全部函数索引、完整数据流、外部集成/错误边界、数据契约、风险条目和回归测试索引；新增设计文档 `docs/plans/2026-09-04-rapidocr-provider-design.md`。
+
+**下一步：** P4 仍待实现 feature 与 motion adapter；随后 P5 将标准 `TargetDetection` 接入运行时坐标映射和校准，P6 才让 GUI workbench 显式选择/配置该 provider。不要在这之前把流放之路特定 OCR 文本、点击或场景规则写进 `RapidOcrProvider`。
+## [2026-09-04] OCR model resource switching
+
+### A. This-round scope declaration (before reading)
+
+**Goal:** Turn the verified Traditional-Chinese-capable RapidOCR recognition model into a generic, explicit model resource: a named manifest entry, verified local resolution, and a separate installer. Keep the existing `RapidOcrProvider` API and its unified `OcrSpan` / `TargetDetection` output intact.
+
+**Planned target files:**
+
+- `core/perception/providers/rapidocr_models.py` — model manifest and local-path/checksum resolver.
+- `core/perception/providers/rapidocr.py` — inspect only to preserve provider compatibility; alter only if a small integration seam is necessary.
+- `core/perception/providers/__init__.py` — public exports, if that is the project convention.
+- `utils/install_perception_ocr_model.py` — explicit, atomic downloader and verifier.
+- `tests/test_perception_rapidocr_models.py` — offline resolver and installer tests.
+- `tests/test_perception_rapidocr_provider.py` — inspect existing OCR integration contract and add a local optional Traditional-Chinese smoke test only if it fits.
+- `requirements-ocr.txt`, `.gitignore`, `CODEBASE.md`, `docs/PERCEPTION_ENGINE_CHECKPOINT.md`, and a focused design note — inspect/update only where the new resource contract requires it.
+
+**Questions to answer:**
+
+1. How is the current RapidOCR provider constructed and injected without import-time OCR dependencies?
+2. What public configuration seam can select an installed model without binding to a game, scene, or target word?
+3. Which test conventions and documentation sections must be updated to keep the perception architecture truthful?
+### C. Findings after first focused read
+
+**Key findings (verified):**
+
+- `RapidOcrProvider` delays importing `rapidocr_onnxruntime` and constructing `RapidOCR` until its first `recognize` call. Its constructor already accepts a copied `engine_options` mapping, so a model resolver can return `rec_model_path` without changing frame recognition, ROI coordinate restoration, or unified `OcrSpan` output.
+- `ProviderBackedOcrDetector` is exercised by the provider test and continues to consume only provider output. Model selection therefore belongs outside the detector and outside every game workflow.
+- Provider-package public exports are explicit in `core/perception/providers/__init__.py`; the resolver should be exported there after implementation.
+- The real RapidOCR test is optional and its default model only recognizes an ASCII image. A Traditional-Chinese smoke test must also remain optional and only run when the explicitly installed external model file exists.
+- The worktree contains unrelated active `virtual_gamepad` and event changes. This OCR model-resource change will stage only its own exact files.
+
+**Corrected prior conclusion:** Passing `rec_model_path` directly is enough for a one-off experiment, but it does not make a reusable model safely selectable. A manifest plus an explicit checksum-verified local resolver is needed so profiles/configuration can name a stable model ID rather than depend on an opaque local path.
+
+**Next focused read:** inspect the existing OCR requirement, ignore rules, tests/helpers, and perception documentation to set installer location, asset exclusion, error conventions, and CODEBASE documentation scope before adding code.
+### C. Findings after resource/documentation read
+
+**Key findings (verified):**
+
+- `requirements-ocr.txt` intentionally isolates `rapidocr-onnxruntime==1.4.4`; the new model registry must not add an automatic dependency or change base requirements.
+- `.gitignore` has no perception-model asset rule. The installer destination must be ignored so downloaded ONNX binaries cannot be accidentally staged.
+- The perception checkpoint defines an explicit provider/adapter boundary and P4 is still in progress. A model spec is provider composition data: it may produce backend options, but must not perform text matching, screen capture, coordinate mapping, or actions.
+- The existing RapidOCR design already treats model initialization as a composition-time decision through `RapidOcrProvider(engine_options=...)`. The missing piece is a stable model ID, asset integrity validation, and operator-facing installation path.
+- `CODEBASE.md` has an existing RapidOCR provider description and provider-test entry; it needs a targeted SYNC addition for the model manifest and installer after code changes, not a broad rewrite.
+
+**Corrected prior conclusion:** A `language` value in per-call `provider_parameters` is only a result label. It does not select OCR recognition language or swap the loaded ONNX model; model selection must be supplied through the provider's construction options.
+
+**Next focused read:** inspect utility CLI patterns and perception exception/testing conventions, then write a red offline contract test before the model manifest and installer implementation.
+### C. Utility discovery update
+
+**Key finding (verified):** The repository has no tracked `utils/` installer convention. Perception provider tests are all standard `unittest` modules under `tests/`, so the new installer will use a small standard-library CLI at `utils/install_perception_ocr_model.py` and its test will import the function-level implementation directly rather than spawn a process or access the network.
+
+**Next action:** create offline red tests covering named model lookup, absent/corrupt assets, immutable engine option construction, and a downloader's temporary-file/atomic-replace behavior using a local fake URL opener.
+### C. Installer CLI debugging record
+
+**Reproduction (verified):** Running `python utils/install_perception_ocr_model.py --help` from the repository root exits with `ModuleNotFoundError: No module named 'core'`. The new direct-execution regression test reproduces the same failure.
+
+**Pattern analysis (verified):** Existing executable utilities such as `utils/route_context_probe.py`, `utils/portal_screen_probe.py`, and `utils/input_probe.py` resolve the repository root from `__file__` and add it to `sys.path` before importing `core`.
+
+**Hypothesis:** The installer needs the same project-root bootstrap before its `core.perception` imports. This is the only difference between it and working utility CLIs; adding that bootstrap will make direct invocation work without changing its package-import behavior.
+
+**Next action:** apply that one bootstrap, rerun the isolated CLI test, then retry the explicit model installation.
+## [SYNC] 2026-09-04  — Traditional-Chinese RapidOCR model resource
+
+### A. SYNC scope declaration
+
+**Triggering implementation:** Add a named PP-OCRv6 multilingual small model resource, integrity resolver, explicit atomic installer, public exports, and Traditional-Chinese position regression coverage.
+
+**Directly changed source/test files:**
+
+- `core/perception/providers/rapidocr_models.py`
+- `core/perception/providers/__init__.py`
+- `utils/install_perception_ocr_model.py`
+- `tests/test_perception_rapidocr_models.py`
+- `tests/test_perception_rapidocr_provider.py`
+
+**Associated non-source updates:** `.gitignore`, `docs/PERCEPTION_ENGINE_CHECKPOINT.md`, `docs/plans/2026-09-04-rapidocr-multilingual-model-resource-design.md`, and `CODEBASE.md`.
+
+**Impact analysis to confirm:** The resolver must remain a composition-only resource layer; `RapidOcrProvider`, `ProviderBackedOcrDetector`, profile JSON, GUI, coordinate mapping, and workflows must retain their existing boundaries. The new CLI must be executable both directly and as imported test code.
+### C. SYNC result
+
+**Coupled files reread:** `core/perception/providers/rapidocr_models.py`, `core/perception/providers/__init__.py`, `utils/install_perception_ocr_model.py`, `tests/test_perception_rapidocr_models.py`, and `tests/test_perception_rapidocr_provider.py`.
+
+**Boundary verification (verified):**
+
+- The named model catalog performs only metadata lookup, local SHA-256 checking, and defensive engine-option construction. It has no RapidOCR import, model download, OCR inference, target text, screen capture, GUI, coordinate mapping, or input dependency.
+- `RapidOcrProvider` was not changed: it still owns lazy engine construction and emits raw `OcrSpan`; the existing OCR adapter remains the only component that applies a text predicate and converts provider evidence into `TargetDetection`.
+- Provider composition remains runtime-only. Target profiles still need no model object and no raw model path; `rec_model_path` cannot be smuggled through resolver overrides.
+- The downloader is explicit and direct-executable. It verifies a temporary same-directory file before `os.replace()`, and tests show that a corrupt replacement leaves an old final asset untouched.
+
+**Verification:**
+
+- `D:\ACloud\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_perception*.py'` — 76 passed.
+- Real installed-model smoke test — passed: `開始儀式` and `進入異界地圖` were each recognized with original-image bounding boxes.
+- `compileall -q core/perception utils/install_perception_ocr_model.py tests/test_perception_rapidocr_models.py tests/test_perception_rapidocr_provider.py` — passed.
+- Public import smoke test — passed.
+- Re-running the explicit installer against its verified local asset — passed without a re-download.
+- `git diff --check` — passed; existing repository LF/CRLF warnings remain non-errors.
+
+**CODEBASE.md synchronized:** provider public surface, new model-resource module, installer behavior, optional OCR integration flow, regression contracts, and the model-resolution latency risk are updated. `docs/PERCEPTION_ENGINE_CHECKPOINT.md` and the focused design record the handoff point.
+
+**Next task:** wire the named provider/model selection into the P6 perception workbench/application-composition UI, keeping profiles serializable and model resources outside game workflows.
+## [SYNC] 2026-09-04 — staged whitespace correction
+
+### A. SYNC scope declaration
+
+**Triggering change:** Remove one trailing blank line at EOF in `core/perception/providers/rapidocr_models.py` after staged `git diff --check` identified it.
+
+**Impact assessment:** Formatting-only change; no signature, algorithm, runtime dependency, API, profile, provider, or flow behavior changes. Existing model-resource CODEBASE entries remain accurate.
+
+### C. SYNC result
+
+The EOF whitespace was removed, the model-resource source was re-staged, and the staged diff check is rerun before commit. No CODEBASE.md semantic update is needed for this formatting-only correction.
+## [2026-09-04] Desktop OCR-to-action mapping proof
+
+### A. This-round scope declaration (before reading)
+
+**Goal:** Prove the new generic architecture across a real desktop action without adding game rules: capture the current desktop, find the literal target text `梦之形` through the existing OCR provider, map capture coordinates to physical screen coordinates, then drive a deliberately small mouse double-click action adapter. The proof must report every coordinate and mapping decision so accuracy can be checked.
+
+**Planned target files:**
+
+- Existing capture, coordinate, and input modules — inspect their current coordinate contracts and safe action seams before reuse.
+- `core/spatial/` — extend only with a general source-frame-to-screen mapper if the existing calibration primitives cannot represent it.
+- `core/perception/providers/` and OCR adapter — inspect only; recognition remains independent of this desktop proof.
+- A new generic action package/module — no target word or desktop behavior inside it; it receives a mapped point plus an action request.
+- A small desktop demonstration workflow/script and focused tests — compose capture, recognition, mapping, and action with the target `梦之形` only as demonstration configuration.
+- `docs/`, `CODEBASE.md`, and this checkpoint log — record schema, safety behavior, and verification.
+
+**Questions to answer:**
+
+1. Which existing screen capture path exposes physical-pixel dimensions and how does it relate to Windows DPI?
+2. Does the existing spatial model already represent an identity/affine capture-to-screen mapping, or is a minimal independent mapping DTO needed?
+3. Which existing mouse backend can issue a correctly scoped double click without embedding action policy into perception or spatial modules?
+4. How can the proof avoid acting if OCR finds zero, several ambiguous, or out-of-screen candidates?
+### C. Capture/input boundary findings
+
+**Key findings (verified):**
+
+- `SquareScreenCapture.capture(x, y, width, height)` already documents physical-pixel input coordinates and returns BGR NumPy images. It provides a usable capture primitive but does not attach a `FrameContext`, a desktop rectangle, DPI evidence, or source-to-destination transform metadata.
+- `core.spatial.models` currently supplies immutable points, anchor pairs, and a positive `WindowRect`, but no result object that says a detected source point has been mapped to a physical screen coordinate.
+- `InputDriver` already has Win32 `GetSystemMetrics`, absolute `SetCursorPos`, `mouse_down`, `mouse_up`, and safe diagnostic helpers. Its existing `click()` is a device implementation detail, not an action contract; it should be wrapped instead of importing perception data into it.
+- `screen_bounds.clamp_screen_pos()` is legacy tuple clamping. It should not silently correct a test pipeline point, because silently clamping would hide a bad mapping. The new mapper must reject out-of-bounds results explicitly.
+
+**Corrected prior assumption:** The capture backend's comments say physical pixels, but that fact is not yet represented in the shared schema. The proof needs a `ScreenGeometry` provider/DTO that names the physical destination rectangle and DPI observation, rather than assuming `FULL_SCREEN` always means identity mapping.
+
+**Next focused read:** inspect the existing affine calibration implementation and click execution composition, then choose the narrowest extension compatible with them.
+### C. Calibration-model finding
+
+**Key finding (verified):** `core.spatial.calibration.CoordinateMapper` already owns the right generic abstraction: transforms are explicitly keyed by `CoordinateSpace`, identity mapping is explicit when spaces match, and its `AffineTransform` supports source-to-target point conversion. The desktop proof should build on this module rather than introduce a parallel mapping engine.
+
+**Required extension (inferred):** preserve `CoordinateMapper` as an unconcerned transform registry, then add a small desktop-facing mapper/geometry layer that derives a scale/translation transform from one captured frame and a current physical desktop rectangle, validates the mapped point against that rectangle, and returns diagnostic evidence. This avoids changing `CoordinateSpace` enum meanings before multi-display/window support is designed.
+
+**Next focused read:** inspect the current click executor and input controller construction so the new device-agnostic action adapter wraps existing Win32 behavior rather than duplicating it.
+### C. Action-adapter boundary findings
+
+**Key findings (verified):**
+
+- Existing `click_pipeline.execute_click()` is specifically coupled to movement navigation: it applies a bottom guard, optional clamping/focus behavior, and a `MotionController` diagnostics structure. Reusing it would incorrectly add navigation policy to a generic visual action proof.
+- `click_executor.send_click()` is also a single-click implementation with fallback and optional confirm-click semantics. It is useful as backend reference but not the generic double-click action contract required here.
+- `InputDriver` is the narrow reusable platform primitive. A new action adapter can depend on a minimal mouse protocol (`move_to`, `mouse_down`, `mouse_up`, optional `cursor_pos`) and produce a generic result without importing controller, perception, or navigation code.
+
+**Architecture decision:** create a new `core/actions/` package for device-agnostic action DTOs plus a mouse adapter. Keep `core/input/` intact as a legacy/navigation implementation. The desktop proof will use an injected mouse adapter, so tests never touch the real cursor and a later controller/gamepad adapter can implement the same action request boundary.
+
+**Next action:** write the approved TDD implementation plan with exact files and verification commands, then implement only that plan.
+### C. Coordinate-space contract correction
+
+**Key finding (verified):** `FrameContext` does not infer width/height from an image; a frame source must populate both explicitly. `TargetDetection` already carries a two-number center plus `CoordinateSpace`, while the shared enum has `FULL_SCREEN` but no way to distinguish a screenshot's image-pixel plane from the physical desktop input plane.
+
+**Corrected architecture decision:** add `CoordinateSpace.PHYSICAL_SCREEN` as an additive, non-breaking destination space. A `FrameContext` captured from the desktop remains `FULL_SCREEN`; `DesktopCoordinateMapper` emits `PHYSICAL_SCREEN`. This makes it impossible for the generic mouse adapter to accidentally accept an unmapped screenshot point, while leaving all old `FULL_SCREEN` callers unchanged.
+
+**Next action:** start the first TDD tracer bullet for `DesktopCoordinateMapper`: a source-frame center maps through an offset/scale desktop geometry to a physical-screen point with diagnostic evidence.
+### C. Spatial/action tracer-bullet result
+
+**Completed and verified:**
+
+- `CoordinateSpace.PHYSICAL_SCREEN` now separates a captured `FULL_SCREEN` image plane from an input-injection destination without altering legacy coordinate values.
+- `DesktopCoordinateMapper` uses the existing `AffineTransform` to derive an offset/scale mapping and produces immutable `MappedPoint` diagnostics. It rejects unknown spaces, source out-of-bounds points, and destination out-of-bounds results instead of silently clamping.
+- `DesktopFrameSource` accepts injectable geometry and capture providers, produces a dimensioned `FrameContext(FULL_SCREEN)`, and has a Windows default that observes virtual desktop bounds with best-effort process DPI awareness. The test did not invoke the Windows backend.
+- The new `core.actions` boundary accepts only a `MappedPoint(PHYSICAL_SCREEN)` and a generic `ActionRequest`; its fake-device test proves exact move/double-click ordering with no perception imports or real input.
+
+**Verification:** 3 focused tests pass. No real capture, OCR, cursor move, click, or desktop state change has occurred.
+
+**Next focused read:** locate workflow package conventions, then add an injected OCR-provider composition test that proves a unique text result maps to a dry-run report while ambiguous results produce no action request.
+### C. Real desktop proof result
+
+**Live verification (verified):**
+
+- The real desktop capture reported `2560 × 1600`; the Win32 virtual desktop geometry reported the same physical rectangle and a DPI observation of `1.5 × 1.5`.
+- The explicitly composed PP-OCRv6 provider found one exact `梦之形` label with `0.999948779741923` confidence. Its source center was `(633.5483703613281, 532.0513000488281)` and the mapper emitted the same physical-screen point because the capture and destination dimensions matched.
+- The action adapter rounded only at the input boundary to `(634, 532)`, moved once, and sent exactly two left-button down/up pairs with a 100ms inter-click delay. Its report status was `executed`.
+- A separate, read-only Win32 foreground-window query afterward found an `SDL_app` window, consistent with the requested desktop shortcut having opened. That independent diagnostic process was DPI-unaware and read cursor `(423, 355)` / metrics `1707 × 1067`; those are the physical result divided by 1.5, confirming why the capture/input host must establish DPI awareness before it creates its mouse backend.
+
+**Corrected implementation constraint:** Physical coordinate agreement is process-level, not merely a mapper formula. The desktop proof is correct because `DesktopFrameSource()` establishes DPI awareness before `InputDriver()` is created in `build_live_proof()`. Future composition must retain this startup order or centralize the awareness bootstrap; legacy input behavior must not be silently changed in this slice.
+
+**Next task:** run broader automated checks, make the CLI's diagnostic JSON encoding unambiguous on legacy Windows consoles, synchronize architecture documents, and create a narrowly scoped commit without staging unrelated virtual-gamepad/event work.
+## [SYNC] 2026-09-04 — desktop OCR / mapping / mouse proof
+
+### A. SYNC scope declaration
+
+**Triggering implementation:** Add an explicit physical-screen coordinate space, pure desktop coordinate mapper, live desktop frame source, device-neutral mapped-point action DTOs, mouse double-click adapter, and a thin OCR proof workflow/CLI.
+
+**Directly changed source files:**
+
+- `core/perception/models.py`
+- `core/spatial/desktop_mapping.py`, `core/spatial/__init__.py`
+- `core/platform/desktop_frame_source.py`, `core/platform/__init__.py`
+- `core/actions/models.py`, `core/actions/mouse.py`, `core/actions/__init__.py`
+- `workflows/__init__.py`, `workflows/desktop_ocr_action_proof.py`
+- `utils/run_desktop_ocr_action_proof.py`
+
+**Directly changed tests/docs:** desktop mapper/frame/action/workflow tests and the design/implementation-plan documents.
+
+**Impact expansion checked:** OCR provider and adapter remain unchanged; `CoordinateSpace` grows one additive destination value; legacy `core/input` navigation pipeline is not redirected; the new workflow creates the only link between perception, spatial mapping, and mouse action. Windows DPI awareness is process-scoped and therefore documented as composition order, not hidden as a change to legacy input behavior.
+### C. SYNC spatial mapping read
+
+**Verified implementation detail:** `DesktopCoordinateMapper` is a pure scale-plus-translation specialization of the existing `AffineTransform`; it computes independent x/y scales from a captured image extent and physical `ScreenGeometry`, requires the source to be `FULL_SCREEN`, uses half-open bounds in both planes, then emits a mapping-proof `MappedPoint(PHYSICAL_SCREEN)`. `ScreenGeometry` and `MappedPoint` defensively validate numbers/spaces and freeze diagnostics, so later action adapters cannot mutate transform evidence.
+
+**CODEBASE.md update required:** add the new spatial file, model contracts, mapping algorithm, and a capture→OCR→mapping→action flow description.
+### C. SYNC capture/action/workflow read
+
+**Verified implementation detail:**
+
+- `WindowsDesktopGeometryProvider` establishes best-effort per-monitor DPI awareness during construction, reads virtual-screen metrics, and reports a DPI observation; `DesktopFrameSource` passes exactly that rectangle to the existing capture backend, validates the resulting image shape, and writes source dimensions plus physical-geometry metadata into `FrameContext`.
+- `ActionRequest` is restricted to generic action kind, mapped point, and timing. `MouseActionAdapter` accepts only `PHYSICAL_SCREEN`, rounds once at the device boundary, moves exactly once, then produces zero or two click pairs. It has no capture, OCR, selection, clamping, or window-focus policy.
+- `DesktopOcrActionProof` is the single thin composition layer: it builds the existing provider-backed exact OCR detector, requires exactly one qualified candidate, maps the candidate center, and calls its injected adapter only under `execute=True`. Its report exposes all safety outcomes without mutating profiles or core providers.
+
+**CODEBASE.md update required:** add platform/actions/workflow module entries, exact action/mapping/capture algorithms, external Win32/MSS integration constraints, full proof flow, and the DPI startup-order risk.
+### C. SYNC result
+
+**Coupled files reread:** `core/spatial/desktop_mapping.py`, `core/platform/desktop_frame_source.py`, `core/actions/models.py`, `core/actions/mouse.py`, and `workflows/desktop_ocr_action_proof.py`; existing capture, input, affine calibration, and OCR adapter seams were also compared before composition.
+
+**Verification:**
+
+- `D:\ACloud\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_perception*.py'` — 76 passed.
+- New desktop mapper/frame/action/workflow regression suite — 5 passed.
+- `compileall` for action, perception, platform, spatial, workflow and proof CLI modules — passed.
+- Public import smoke check — passed.
+- Real desktop dry-run after all code changes — passed: one exact `梦之形` detection at `(633.55, 532.05)`, `2560×1600` source/physical dimensions, identity physical mapping, and no action.
+- One user-authorized real action run — passed: one move to `(634, 532)` plus exactly one double click; follow-up read-only window diagnostic found the opened SDL application.
+- `git diff --check` — passed; existing repository LF/CRLF warnings are non-errors.
+
+**CODEBASE.md synchronized:** added directory entries, spatial/capture/action/workflow/CLI contracts, complete desktop proof data flow, the external Win32/MSS/DPI integration behavior, and two concrete risks. `docs/PERCEPTION_ENGINE_CHECKPOINT.md` now marks P5 in progress with the completed desktop proof slice.
+
+**Next task:** retain this proof as the P5 baseline, then extend mapping to specific game windows/viewports, runtime anchor calibration, and UI calibration preview; feature/motion recognition adapters remain independent P4 work.
+## [2026-09-04] Cross-process input-work review
+
+### A. This-round scope declaration (before reading)
+
+**Goal:** Read the other active process's uncommitted input/virtual-gamepad work without editing it. Establish which behavior it implements, its public boundaries, and whether it overlaps with or can later become an adapter beneath the newly committed generic `core.actions` contract.
+
+**Read-only target files:**
+
+- `virtual_gamepad/` changed source, configuration, UI, host, tests, and documentation files as identified by Git.
+- `core/events/window_finder.py` and `core/events/tests/` only to distinguish its related work from the perception/spatial/action mainline.
+- Current Git status and diff summaries to identify ownership boundaries before any detailed file read.
+
+**Questions to answer:**
+
+1. Does the other process implement physical/virtual controller routing, mapping profiles, or an independent action abstraction?
+2. Does it change the generic perception/spatial/action pipeline or only its own virtual-gamepad subsystem?
+3. What future integration seam would allow a `GamepadActionAdapter` to consume `core.actions` requests without merging the subsystems prematurely?
+### C. Cross-process first-read findings
+
+**Key findings (verified):**
+
+- The other process's design explicitly treats `virtual_gamepad/host` as a privileged, independent runtime and treats programmatic control as a Python named-pipe client. It proposes a future `core.actions.VirtualGamepadActionAdapter`, but the reviewed `virtual_gamepad_client.py` currently exposes raw controller operations (`button`, `set_axis`, `set_trigger`, `set_state`, `reset`, `pause`, `heartbeat`) rather than importing or implementing the newly committed `core.actions` contract.
+- It supports two independently addressable controller slots (`controller=1|2`), per-call `source`, and optional TTL. That is a strong lower-level transport substrate for a future gamepad action adapter: workflow code should not call it directly once an adapter exists.
+- The scope is not merely UI: it includes two ViGEm targets, shared physical input forwarding, controller-specific F7/F8 pause controls, global F9 reset, multiple named-pipe clients, profile editing, and host lifecycle/elevation safety.
+- The other process currently has no tracked modifications under `core/perception`, `core/spatial`, or `core/actions`; direct code overlap with the generic OCR/mapping/mouse proof is therefore absent.
+
+**Corrected prior description:** Saying the other task was simply “unrelated virtual gamepad work” was too coarse. It is separate in implementation ownership, but it is a future concrete input backend for the main automation architecture. It should remain isolated until its host/client contract and safety tests are stable, then be connected through one `GamepadActionAdapter` in `core.actions`—not through perception, spatial mapping, or workflow-specific named-pipe calls.
+
+**Next focused read:** inspect the C# controller registry and mapping runtime to confirm slot/source/TTL ownership, and inspect host composition for the concurrent-client and lifecycle seam proposed by its design.
+## [Review continuation] 2026-09-04
+
+### A. Scope declaration (before source review)
+
+**Task:** Read-only review of the concurrent `virtual_gamepad` implementation before deciding how it can connect to the reusable action layer.
+
+**Files selected for this pass:**
+- `virtual_gamepad/host/src/VirtualGamepadHost/Protocol/CommandRouter.cs` — establish command routing, validation, and controller targeting.
+- `virtual_gamepad/host/src/VirtualGamepadHost/Protocol/NamedPipeServer.cs` — verify multi-client named-pipe behavior and shutdown/error handling.
+- `virtual_gamepad/host/src/VirtualGamepadHost/State/SafetyController.cs` — establish TTL, reset, and fail-safe semantics.
+- `virtual_gamepad/host/src/VirtualGamepadHost/Runtime/ControllerSlot.cs` — establish per-slot ownership and lifecycle boundaries.
+
+**Questions to resolve:** whether simultaneous UI and automation clients are safely supported; how input sources collide or expire; whether controller-specific and global reset paths are sound; and the correct future adapter boundary under `core/actions`.
+### C. Findings — command-routing pass
+
+**Verified:** `CommandRouter.Handle()` dispatches every command through a selected `ControllerSlot`; omitted `controller` defaults to slot `1`, while `emergency_reset` intentionally reaches `ControllerRegistry.EmergencyResetAll()`.
+
+**Verified:** raw actuator commands (`button`, `set_axis`, `set_trigger`, `set_state`, `heartbeat`) deserialize a `source` plus optional positive `ttl_ms`, pass their values to the selected slot's `StateStore`, and return the resolved controller number. Invalid payloads, values, and unsupported types are converted to protocol failures rather than escaping the pipe handler.
+
+**Verified:** `start` alone checks virtual-device readiness; direct input-setting commands do not check that the slot is running or device-ready. The runtime/state classes remain the required next read to determine whether this is harmless queued state or a safety gap.
+
+**Architecture conclusion:** this routing layer is a device-backend protocol boundary. A later `core.actions.VirtualGamepadActionAdapter` may call it through the Python named-pipe client, but perception, spatial mapping, and workflows must not call it directly.
+
+**Coverage:** `CommandRouter.cs` — deeply reviewed for dispatch, validation, controller selection, and failure mapping; state mutation conflict/expiry behavior remains delegated to `StateStore` and `SafetyController`.
+
+**Next pass:** read named-pipe connection lifetime plus per-slot safety/state classes, then verify concurrent clients, source collision policy, TTL expiry, and shutdown.
+## [Review continuation] 2026-09-04 — transport and safety
+
+### A. Scope declaration (before source review)
+
+**Files selected for this pass:**
+- `virtual_gamepad/host/src/VirtualGamepadHost/Protocol/NamedPipeServer.cs` — pipe connection concurrency, read/write ownership, cancellation, shutdown.
+- `virtual_gamepad/host/src/VirtualGamepadHost/State/SafetyController.cs` — controller lifecycle and reset actions.
+- `virtual_gamepad/host/src/VirtualGamepadHost/Runtime/ControllerSlot.cs` — per-controller state object composition.
+
+**Questions:** can a UI status connection coexist with automation commands, and do lifecycle/reset semantics safely clear device state for each controller?
+### C. Findings — transport and safety pass
+
+**Verified:** `NamedPipeServer.RunAsync()` creates a new `NamedPipeServerStream` with `MaxAllowedServerInstances`, detaches each accepted connection to `ServeClientAsync()`, and resumes accepting immediately. A status/UI client and an automation client can therefore be live at the same time; each connection has its own sequential JSON-lines reader/writer loop.
+
+**Verified:** host cancellation is shared with the listener and every client handler. Listener shutdown waits for the tracked client tasks and each handler disposes its own pipe stream; ordinary client disconnects are swallowed without terminating the host.
+
+**Verified:** each `ControllerSlot` owns a separate `StateStore`, `SafetyController`, and `MappingEngine`. `SafetyController` is per-slot locked: `Pause`, `EmergencyReset`, and `Fail` clear/disable state; ordinary `Reset` preserves a pre-existing paused state; `Start` resumes the store.
+
+**Important remaining uncertainty:** simultaneous messages are routed concurrently once they arrive on different pipe connections. Whether writes to the same controller/source are serialized and how expired values are removed depends on `StateStore`, which has not yet been reviewed. The current code permits mutation commands even before a slot is `Running`; backend submission behavior still needs confirmation.
+
+**Coverage:** `NamedPipeServer.cs` — deeply reviewed for client lifecycle; `SafetyController.cs` — deeply reviewed for lifecycle transitions; `ControllerSlot.cs` — fully reviewed (record composition).
+
+**Next pass:** read `StateStore` and registry/backend tick behavior, then validate source arbitration, expiration, inactive-slot output, and reset propagation.
+## [Review continuation] 2026-09-04 — source state and output fan-out
+
+### A. Scope declaration (before source review)
+
+**Files selected for this pass:**
+- `virtual_gamepad/host/src/VirtualGamepadHost/State/StateStore.cs` — source merge, TTL expiration, thread safety, and snapshot semantics.
+- `virtual_gamepad/host/src/VirtualGamepadHost/Runtime/ControllerRegistry.cs` — two-slot creation, backend update loop, per-slot/global reset.
+- `virtual_gamepad/host/src/VirtualGamepadHost/Runtime/HostComposition.cs` — physical-input broadcast and host-wide lifecycle wiring.
+
+**Questions:** how two clients or mappings combine their input, whether an inactive controller can emit a stale state, and whether reset/pause reaches all concrete virtual devices.
+### C. Findings — source state and output fan-out
+
+**Verified:** `StateStore` serializes all source access behind one lock. It merges buttons by OR, triggers by maximum, and each axis by greatest absolute magnitude (then most-recent sequence on ties). Incremental actuator commands expire after an explicit TTL or the 500 ms default; expired entries are removed on `Snapshot()`.
+
+**Verified risk:** `StateStore.SetState()` differs from incremental commands: an omitted TTL produces a non-expiring source. That is suitable only for an explicitly persistent/manual-state contract; an automation action adapter must always set a finite TTL or explicitly clear its source. Otherwise a client disconnect can leave an input asserted until reset.
+
+**Verified risk:** the initial `SafetyController` state is `Ready`, but its `StateStore` starts unpaused. `CommandRouter` accepts raw state-changing commands without requiring `Running`, and `ControllerRegistry.SubmitAll()` submits every slot snapshot without checking `RunState`. Therefore a raw pipe client can produce virtual-controller output before `start`; `pause` does neutralize it. This is an observable lifecycle-contract gap, not yet a change request against the other process.
+
+**Verified:** default composition constructs exactly two independent slots, maps each physical event into every currently `Running` slot, and globally suppresses a physical event if any running slot maps it. Thus one keyboard/mouse mapping can intentionally control two characters at once; it cannot currently provide per-slot native-pass-through when both slots disagree.
+
+**Verified:** emergency reset clears and pauses both slots; disposal cancels loops, waits for them, resets both slots, disposes raw input, then stops/disposes the backend.
+
+**Coverage:** `StateStore.cs`, `ControllerRegistry.cs`, and `HostComposition.cs` — deeply reviewed for source merge, two-slot output, physical-input broadcast, and shutdown. `ReportLoop` remains unreviewed, so actual output tick timing and output-error failure behavior are still open.
+
+**Next pass:** review the report loop and Python client/UI host-manager integration to establish actual execution cadence, command serialization, reconnection behavior, and current UI exposure of two-controller state.
+## [Review continuation] 2026-09-04 — execution cadence and client contract
+
+### A. Scope declaration (before source review)
+
+**Files selected for this pass:**
+- `virtual_gamepad/host/src/VirtualGamepadHost/Runtime/ReportLoop.cs` — submission frequency and backend failure behavior.
+- `virtual_gamepad/client/python/virtual_gamepad_client.py` — Python-side request lifecycle, serialization, and error behavior.
+- `virtual_gamepad/ui/virtual_gamepad_ui/main_window.py` — whether the UI gives both controller slots clear, independent visibility and control.
+
+**Questions:** actual backend cadence and error handling; whether concurrent callers on one Python client can cross responses; and whether the current UI fulfills the requested two-controller configuration/operation model.
+### C. Findings — execution cadence and client/UI contract
+
+**Verified:** `ReportLoop` submits snapshots every 8 ms (target 125 Hz). In the two-slot runtime it delegates to `ControllerRegistry.SubmitAll()`. The loop has no local exception-to-fail-safe conversion, so a backend exception would end the report task and thereby end `HostComposition.RunAsync()`; disposal will subsequently perform the global emergency reset.
+
+**Verified:** `VirtualGamepadClient` serializes a request/write/read response pair with one Python lock, so concurrent callers sharing one client cannot receive each other's response. It can independently connect to the host pipe, matching the server's multi-client design. A broken connection becomes `VirtualGamepadError`; there is no transparent in-request retry, while the UI detects failure and reconnects on its next 50 ms refresh cycle.
+
+**Verified:** the UI has one visual editor with an explicit Controller 1 / Controller 2 selector, two separate persistent profiles, two live status indicators, and selected-slot Start/Pause. It applies both saved profiles at initial connection and its emergency-reset/close actions reset both controllers. The same key may be bound in both profiles, so the host's broadcast behavior can drive two characters concurrently.
+
+**UI limitation (not a defect):** it is a switchable single editor rather than two simultaneously visible configuration canvases. This matches the later “switch controller 1 / controller 2 on the page” requirement, but if the desired meaning of “two interfaces” is side-by-side editing, that remains a product/UI decision rather than a host limitation.
+
+**Coverage:** `ReportLoop.cs`, `virtual_gamepad_client.py`, and `main_window.py` — deeply reviewed for cadence, request serialization/reconnection behavior, and two-controller UI exposure.
+
+**Review result:** the parallel implementation is a viable independent virtual-input backend. It should remain outside the generic perception/spatial modules and be connected later only via a device-neutral `core.actions.VirtualGamepadActionAdapter`; before that connection, its lifecycle guard and persistent `set_state` TTL contract should be resolved and covered by host integration tests.
+## [Documentation sync] 2026-09-04 — virtual gamepad review boundary
+
+### A. Scope declaration (before documentation review)
+
+**Goal:** inspect the existing action-layer architecture index and record only the verified integration boundary for the concurrently developed `virtual_gamepad` subsystem. No active virtual-gamepad source/configuration file will be edited.
+
+**Files selected:**
+- `CODEBASE.md` — find the existing generic action/spatial architecture section to update with the verified backend boundary.
+
+**Intended result:** preserve the rule that workflows depend on `core.actions` contracts, while the named-pipe host/client remains an optional concrete execution backend.
+### C. Documentation sync result
+
+**Verified documentation update:** `CODEBASE.md` now records the inspected virtual-gamepad host/client/UI files and a clearly marked *reserved, not-yet-wired* action-to-gamepad flow. It preserves the current generic boundary: workflow → future device-neutral action adapter → Python pipe client → host → ViGEm.
+
+**Risk registered:** before an adapter is added, resolve and test the raw-command lifecycle guard and the non-expiring no-TTL `set_state` behavior. The documented future adapter must supply a distinct source identity and a finite TTL for automation input.
+
+**Files changed by this review only:** `CODEBASE.md` and this append-only `ITERATION_LOG.md`; no file belonging to the concurrently running virtual-gamepad implementation was changed, staged, reverted, or committed.
+## [Status review] 2026-09-04 — modular foundation and mapping scope
+
+### A. Scope declaration (before source/document review)
+
+**Question:** which mainline modules remain, and does “map mapping” already exist?
+
+**Files selected:**
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md` — authoritative P0–P9 roadmap/status.
+- `CODEBASE.md` — verified coordinate-mapping and legacy-navigation boundaries.
+- `docs/plans/2026-09-04-desktop-ocr-action-mapping-proof-design.md` — distinguish the shipped full-desktop proof from window/viewport calibration work.
+
+**Decision to make from evidence:** separate complete desktop screenshot → physical mouse mapping from unfinished game-window/viewport mapping and from the legacy minimap/world-navigation problem.
+### C. Status-review findings
+
+**Verified terminology correction:** “mapping is implemented” is true only for the tested whole-desktop path: a `FULL_SCREEN` screenshot target maps through an explicit affine transform to a `PHYSICAL_SCREEN` pointer coordinate and can drive the minimal mouse adapter. It is not yet a complete game-window/viewport calibration system, and it is separate from legacy minimap-to-world navigation.
+
+**Verified remaining P4:** feature/keypoint matching and motion/frame-difference adapters remain absent; ML object detection is only a reserved provider/adapter seam. Color, template, shape, OCR adapter, optional RapidOCR backend, and a Traditional-Chinese model resource are present.
+
+**Verified remaining P5:** game-window discovery/selection, client-area/viewport crop mapping, runtime anchor calibration, multi-display policy, and calibration UI preview are not implemented as the generic mapping path. Existing spatial primitives do not make those runtime composition choices.
+
+**Verified mainline queue:** P6 engine-backed UI workbench; P7 legacy Portal/Loot/minimap bridges with regressions; P8 the configurable PoE event-chain state-machine workflows; P9 full dependency/error/regression audit. The action layer is intentionally still a proof slice (mouse move/double-click); keyboard and gamepad adapters have not joined it.
+
+**Documentation:** no `CODEBASE.md` change is required for this read-only status check because the reviewed status and boundary are already recorded there. This log preserves the mapping distinction and next implementation sequence.
+## [Architecture review] 2026-09-04 — full-screen mapping scope and frame preprocessing
+
+### A. Scope declaration (before source review)
+
+**Questions:** with a full-screen game, which P5 work is genuinely unnecessary versus still valuable; and is screenshot/image preprocessing already a standalone reusable core module?
+
+**Files selected:**
+- `core/spatial/desktop_mapping.py` — current full-screen transform contract.
+- `core/perception/algorithms/color.py` — existing HSV/morphology preprocessing ownership.
+- `core/perception/algorithms/template.py` — existing grayscale/edge/template preprocessing ownership.
+
+**Review criteria:** distinguish generic, reusable operations from detector-private image preparation; identify the smallest independent preprocessing module that does not make all vision algorithms depend on OpenCV-specific policy.
+### C. Findings — full-screen mapping and current preprocessing
+
+**Verified mapping scope:** `DesktopCoordinateMapper` is deliberately restricted to `FULL_SCREEN → PHYSICAL_SCREEN`. It validates the source point and maps using independently observed width/height plus desktop left/top offset; a full-screen game on one display is exactly its intended current scope. Window discovery, client-area mapping, and anchor calibration are not prerequisites for that deployment mode.
+
+**Verified remaining full-screen safeguards:** multi-monitor/virtual-desktop selection and focus validation are optional later policy choices, not a reason to delay the current pipeline. The mapper already carries virtual-desktop origin/scale evidence and rejects invalid/out-of-range results rather than guessing.
+
+**Verified preprocessing gap:** there is no standalone preprocessing core API. `ColorRegionDetector.detect()` privately normalizes to BGR, converts to HSV, builds a hue-wrapping mask, and applies morphology; `TemplateDetector.detect()` privately normalizes to BGR, generates grayscale/Canny edges, and resizes templates. These are useful implementations but cannot currently be configured, cached, previewed, or shared as independent pipeline steps.
+
+**Architecture direction:** add a new generic `core/perception/preprocessing/` layer before detectors, consisting of immutable preprocessing profiles/pipeline specifications, geometry-preserving frame artifacts, and OpenCV-backed operations. It must return source-coordinate metadata so crop/resize results can be mapped back; algorithms should consume either the original `FrameContext` or named preprocessing artifacts, never own global UI/game policy.
+
+**Documentation:** no `CODEBASE.md` update yet; this is a proposed extraction, not an implemented module. The decision and verified existing ownership are recorded here for the next implementation task.
+## [Legacy-chain architecture audit] 2026-09-04 — Torchlight map/navigation/events
+
+### A. Scope declaration (before source review)
+
+**Audit question:** confirm whether the existing small-minimap stitching, localization, routing, Portal, and Loot paths already use the new generic perception/spatial/action architecture.
+
+**Initial discovery scope:**
+- legacy navigation/minimap sources and their composition callers;
+- Portal and Loot recognizer/handler sources and their callers;
+- image-transformation helpers used outside `core/perception`.
+
+**Required output:** a verified old-chain → new-core matrix, specifically identifying hard-coded scene/geometry assumptions, embedded preprocessing, result types, input calls, and absent compatibility bridges. The audit is read-only; virtual-gamepad work remains out of scope.
+### C. Discovery findings — legacy chain inventory
+
+**Verified inventory:** the legacy system is substantial and remains active under `core/vision`, `core/localization`, `core/navigation_tasks`, `core/events/types/portal`, and `core/events/types/loot`, with GUI composition under `gui/modes/navigation`. It is not a thin wrapper around `core/perception`.
+
+**Important correction to the earlier simplification:** legacy HSV preprocessing is partly split already (`core/vision/hsv/preprocessing.py`, `masks.py`, `combined.py`, `params.py`), but it is a vision/minimap-local utility family rather than the new generic perception preprocessing contract. Portal and Loot additionally contain their own masks, ROI extraction, template preparation, scoring, and exclusion preprocessing under their event-type folders.
+
+**Next review order:** first trace legacy minimap capture/localization/path routing; then read Portal and Loot entrypoints/pipelines; finally compare their result/action models to `PerceptionEngine`, `DesktopCoordinateMapper`, and `core.actions`.
+## [Legacy-chain architecture audit] 2026-09-04 — localization algorithm
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/localization/localize_pipeline.py`.
+
+**Reason:** this is the high-complexity bridge between minimap frames, map-package wall masks, template/feature matching, stateful position estimates, and the navigation runtime. It must be read alone to determine whether its image preparation/result contract is reusable or Torchlight/minimap-bound.
+
+**Questions:** input coordinate assumptions, preprocessing ownership, output model, direct dependencies on `NavigationCore`, and whether it invokes the new perception/spatial/action layers.
+### C. Findings — legacy minimap localization
+
+**Verified:** `localize_frame(nav_core, minimap_img, player_pos=None)` is a stateful Torchlight/minimap localization pipeline, not an adapter to the new engine. It accepts a raw minimap array and a mutable `NavigationCore`, calls the legacy HSV recognizer itself, mutates localization/registration fields directly, and returns an untyped `(global_x, global_y, confidence)` tuple.
+
+**Verified preprocessing coupling:** mask extraction (`nav_core.recognizer.extract_combined`), feature thresholds, wall-template scaling/closing, local/global search-area selection, and frame-to-frame displacement are all orchestrated inside the localization route. The source assumes a minimap center/player marker, `draw_scale`, a persisted wall-layer canvas, and navigator-owned confidence/jump policies.
+
+**Verified new-architecture gap:** this path does not construct `FrameContext`, `TargetDetection`, `PerceptionRunResult`, `MappedPoint`, or `ActionRequest`; it imports neither `core.perception` nor `core.spatial` nor `core.actions`. It must be preserved behind a compatibility bridge rather than treated as already migrated.
+
+**Next pass:** inspect the legacy HSV preprocessing package and `NavigationCore` composition boundary to distinguish reusable image primitives from minimap-specific wall/localization policy.
+## [Legacy-chain architecture audit] 2026-09-04 — HSV preprocessing boundary
+
+### A. Scope declaration (before source review)
+
+**Files selected:**
+- `core/vision/hsv/preprocessing.py` — image normalization/HSV preparation primitives.
+- `core/vision/hsv/masks.py` — minimap mask construction and geometry suppression.
+- `core/vision/hsv/combined.py` — public combined-mask composition used by legacy localization.
+
+**Questions:** which operations are generic enough to migrate into the new preprocessing core, and which encode fixed player/minimap geometry or Torchlight-specific wall semantics.
+### C. Findings — HSV preprocessing boundary
+
+**Verified:** the old HSV code is split into helper files, but not into a generic module contract. Each function takes the mutable `recognizer` object and reads its internal flags, kernels, thresholds, color ranges, player geometry, and weights. It returns raw NumPy arrays with no profile schema, artifact identity, provenance, coordinate transform, cache boundary, or reusable pipeline API.
+
+**Reusable primitives found:** gamma LUT, Gaussian/median blur, CLAHE, top-hat morphology, percentile normalization, brightness/contrast, HSV range masks, component-area filtering, Canny, morphology, dilation, and weighted mask composition. These can be re-homed as parameterized generic preprocessing operations.
+
+**Minimap/Torchlight policy that must not be promoted unchanged:** wall/fog/player semantic masks; center-player fallback; erasing fixed circles around the player; saturation filtering only near that center; and the weighted wall+edge match mask. Those belong in a legacy minimap profile/adapter or a future target-specific configuration instance, not in universal preprocessing defaults.
+
+**Confirmed answer so far:** the user is right that legacy preprocessing is only partially modularized within the old recognizer package; it has not been converted to the new configurable perception architecture.
+
+**Next pass:** inspect Portal entrypoint/detector composition to verify whether it returns legacy event records and performs its own pre-processing/action sequence rather than standardized `TargetDetection` plus separate action execution.
+## [Legacy-chain architecture audit] 2026-09-04 — Portal detection composition
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/events/types/portal/minimap_detector.py`.
+
+**Reason:** this is the Portal recognition entrypoint that chooses legacy minimap detection modes and projects hits into navigation/event coordinates. It is the key proof point for whether Portal recognition already uses the generic `PerceptionEngine` result contract.
+
+**Questions:** detector choices, preprocessing/result models, map-coordinate projection, and dependencies on legacy event/navigation state.
+### C. Findings — Portal detection entrypoint
+
+**Verified:** `PortalMinimapDetector` is a legacy `EventDetector`, not a generic perception adapter. It consumes `tick.raw_minimap_frame`, loads Portal-specific asset paths itself, chooses the Portal-specific `feature`, `shape_color`, template, or fallback mode, and returns `list[EventDetection]`.
+
+**Verified coupling:** its constructor owns template resource loading, fixed scale candidates, logging, and Portal configuration. Its `detect()` owns fallback policy and passes raw arrays to dedicated Portal matchers; no `FrameContext`, `TargetProfile`, provider registry, `TargetDetection`, or `PerceptionEngine` is involved.
+
+**Partial good news:** detection modes are already split into functions/packages, so their underlying algorithms can be harvested. But their current contracts are event-specific and their resource/preprocessing/fallback policy is embedded in the Portal feature.
+
+**Next pass:** read Portal detection conversion/projection and runtime handler to confirm the old result reaches navigation and input through legacy event coordination rather than the new spatial/action contracts.
+## [Legacy-chain architecture audit] 2026-09-04 — Portal result and action path
+
+### A. Scope declaration (before source review)
+
+**Files selected:**
+- `core/events/types/portal/minimap_detection/conversion.py` — transform raw minimap hits into event detections.
+- `core/events/types/portal/handler/runtime.py` — Portal event state/action orchestration.
+- `core/events/types/portal/handler/interaction.py` — concrete Portal interaction action construction.
+
+**Questions:** what coordinate/result schema crosses the old detection boundary, whether positions are projected through generic spatial mapping, and whether actions cross `core.actions` or remain legacy event commands.
+### C. Findings — Portal result and action path
+
+**Verified:** Portal conversion emits `EventDetection(event_type, local_minimap_pos, confidence, metadata)`, whose coordinate semantics are implicitly local-minimap pixels. It carries a raw bbox and many Portal scoring fields in metadata, but it is not `TargetDetection` and has no explicit `CoordinateSpace` contract.
+
+**Verified:** Portal handling is already internally modular as a legacy event state machine (`move_near_event → align_on_portal → interact → wait_result`), but it uses `EventAction.move_to`, `EventAction.press_key("d")`, a global navigation task position, and a minimap environment signature. It does not use `MappedPoint`, `ActionRequest`, or a `core.actions` adapter.
+
+**Important nuance:** the old Portal feature should not be discarded as a monolith. Its detector, conversion, movement, interaction, and completion code are useful legacy modules. Migration means wrapping/replacing the perception and coordinate boundaries while preserving its handler state machine and regression behavior.
+
+**Next pass:** inspect the Loot detection entrypoint and its detection pipeline to confirm its own ROI/mask/template/exclusion preprocessing and identify which parts overlap the intended generic preprocessing core.
+## [Legacy-chain architecture audit] 2026-09-04 — Loot detection entrypoint
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/events/types/loot/minimap_detector.py`.
+
+**Reason:** determine whether Loot reuses generic perception or owns a separate minimap-specific recognition stack, and identify the result schema and coupling to event configuration/template assets.
+### C. Findings — Loot detection entrypoint
+
+**Verified:** `LootMinimapDetector` is a second, independent legacy perception stack. It owns Loot/minimap template assets, multi-scale prepared-template caches, player-marker exclusion templates, seed ROI detection, feature/blob mode switching, temporal presence confirmation, cached result reuse, async matching, and debug capture.
+
+**Verified:** it consumes `tick.raw_minimap_frame` and produces `EventDetection` with `local_minimap_pos`; `AsyncLootPerception` is a Loot-specific temporal worker, not the new `PerceptionEngine` confirmation stage. No provider contract, `FrameContext`, `TargetProfile`, standardized `TargetDetection`, or generic action mapper is used.
+
+**Migration implication:** the old Loot implementation is more than one recognizer to replace. Its seed generation, exclusion logic, feature matcher, temporal stabilization, and cluster-to-event projection must be split into reusable/raw layers and then bridged one behavior at a time, with the old path retained for regression comparison.
+
+**Next pass:** read the Loot detection pipeline/ROI implementation and navigation composition boundary, then produce a complete old-chain/new-core coverage matrix and a safe migration order.
+## [Legacy-chain architecture audit] 2026-09-04 — Loot recognition algorithm
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/events/types/loot/detection/pipeline.py`.
+
+**Reason:** this high-complexity recognition pipeline decides how loot-specific preprocessing, seed ROIs, template/shape/color evidence, exclusions, clustering, and debug data compose. It is read separately to avoid mistaking its internal decomposition for generic-module integration.
+### C. Findings — Loot recognition algorithm
+
+**Verified:** the Loot pipeline contains a sophisticated but fully event-local image-processing chain: BGR conversion, small-frame padding/unpadding, candidate seed ROI extraction, grayscale/Canny generation, grayscale/edge/masked template responses, color scoring, NMS/duplicate merging, clustering, and a long list of minimap/game-artifact exclusions.
+
+**Verified preprocessing duplication:** Canny thresholds, color/mask logic, template preparation, ROI origin offsets, and center-player exclusion all live in Loot detection modules. The ROI code correctly adds local crop offsets back to Loot candidate coordinates, but exposes no shared transform/provenance object for other algorithms or the new mapper.
+
+**Verified domain assumptions:** fixed minimap center/player exclusion, named artifact classifiers (diamonds, sword, pile, triangle, red star, map ring), Loot templates, and Loot score weights are target/game policy. They must remain legacy profile/adapter behavior, not become generic preprocessing operations.
+
+**Reusable candidates:** image normalization, padding/crop geometry, grayscale, Canny, template scaling/masks, response peak extraction/NMS, basic color masks, and connected-component ROIs are reusable primitives once separated from Loot scoring and exclusion policy.
+
+**Next pass:** trace legacy localization → navigation task → input execution to establish the full old map-to-movement chain and confirm it bypasses `core.spatial` and `core.actions`.
+## [Legacy-chain architecture audit] 2026-09-04 — navigation to movement action
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/navigation_tasks/movement_executor.py`.
+
+**Reason:** this is the high-complexity navigation-side movement/action decision maker. Reading it alone establishes whether legacy global-map positions become new `ActionRequest` objects or flow through older click/input machinery.
+### C. Findings — navigation movement facade
+
+**Verified:** `MovementExecutor` is a reusable *legacy navigation* facade rather than a device/action adapter. It has substantial map-routing state (A* path, wall/explored maps, anchors, lookahead, click throttling, stuck detection, recovery probes) and delegates execution decisions to `movement_step()`.
+
+**Scope clarification:** this is already a worthwhile generic global-map movement component, but its coordinate system is the persisted stitched-map/world plane, not the new full-screen physical-pointer plane. It needs an explicit bridge between navigation intent/subgoal and screen/action execution; it should not be moved wholesale into `core.spatial`.
+
+**Next pass:** read the movement pipeline and navigation UI intent executor to find the exact old map-point → screen-click/input path and document the separation point needed for a compatibility adapter.
+## [Legacy-chain architecture audit] 2026-09-04 — movement decision algorithm
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/navigation_tasks/movement/pipeline.py`.
+
+**Reason:** this high-complexity pipeline turns global localization/path state into a `MovementStep`. It must be inspected separately to determine whether it already creates a neutral action intent or embeds Torchlight screen-click mapping/input assumptions.
+### C. Findings — movement decision algorithm
+
+**Verified:** `movement_step()` is free of direct device I/O. It computes an A* path lookahead/recovery subgoal in the stitched global-map plane and returns a `MovementStep(path, subgoal, should_click, force_click_target, …)`. This is a useful existing intent boundary, but it predates and does not use `core.actions`.
+
+**Verified coupling below the surface:** its comments and final-goal rules explicitly rely on a later “screen minimum radius” and “mapped anchor point” stage. Therefore the next executor is where legacy global-map coordinates are transformed to screen clicks; that transform must be audited separately and eventually become the navigation compatibility bridge.
+
+**Architecture conclusion:** pathfinding itself should remain an independent navigation capability. The migration target is not “replace A* with perception”; it is to have the legacy `MovementStep` translated by an explicit map-world → screen action adapter, while input execution is moved behind device-neutral actions.
+
+**Next pass:** inspect the navigation intent executor and localization tick/composition to confirm the real coordinate conversion and old input driver calls.
+## [Legacy-chain architecture audit] 2026-09-04 — runtime coordinate and input bridge
+
+### A. Scope declaration (before source review)
+
+**Files selected:**
+- `gui/modes/navigation/input/intent_executor.py` — final navigation-intent to input dispatch.
+- `gui/modes/navigation/runtime/localization_tick.py` — localization results into navigation runtime.
+- `core/navigation_tasks/update_pipeline.py` — navigation controller update composition.
+
+**Questions:** trace the old stitched-map/minimap coordinate flow, confirm where screen clicks and key presses are executed, and compare those seams to `core.spatial` / `core.actions`.
+### C. Findings — runtime coordinate and input bridge
+
+**Verified legacy flow:** `capture_navigation_localization_tick()` obtains a manually configured minimap capture rectangle, captures only that image, resolves a local player coordinate, and calls `NavigationCore.localize()`. `update_controller_context()` uses the resulting stitched-map position plus wall/explored maps to select tasks and create `NavigationIntent` values.
+
+**Verified action boundary gap:** `execute_navigation_intent()` dispatches `MOVE_MAP`, `CLICK_SCREEN`, and `PRESS_KEY` directly to the GUI-owned `MotionController`. For map movement it calls `move_to_map_target(player_global, subgoal_global)` or `click_map_target_once(...)`, which owns the old global-map → screen-click conversion; there is no `core.spatial` mapper or `core.actions.ActionRequest` between the intent and device call.
+
+**Important nuance:** `NavigationIntent` is already an application-level command seam and should become the compatibility bridge input. The safe migration is to introduce a translator/adapter below it, not to make the existing localization or path planner import mouse/gamepad code.
+
+**Confirmed end-to-end result:** legacy map capture, HSV preprocessing, localization, world-map pathfinding, Portal/Loot events, map-to-screen conversion, and actual input remain a separate Torchlight-oriented chain. New perception/spatial/actions currently coexist beside it; they do not yet drive it.
+
+**Next:** compile the audit matrix and a staged migration plan, including exactly what can be reused, what must stay target-specific, and what needs extraction first.
+## [Legacy-chain architecture audit] 2026-09-04 — legacy event contracts
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/events/models.py`.
+
+**Reason:** confirm the legacy `EventDetection` / `EventAction` schemas that Portal, Loot, navigation, and GUI currently exchange, so the migration boundary is based on actual contracts rather than filename inference.
+### C. Findings — legacy event contracts
+
+**Verified:** the old event domain has its own coherent coordinate model: `EventDetection.local_minimap_pos` → `EventObservation.global_pos` → `EventTask.global_pos` → `EventAction.target_global_pos` or `screen_pos`/`key`. This is distinct from the new `TargetDetection` / `MappedPoint` / `ActionRequest` model.
+
+**Verified:** `EventAction` is a high-level legacy command schema with `MOVE_TO`, `CLICK_SCREEN`, `PRESS_KEY`, `WAIT`, `COMPLETE`, and `FAIL`; it is not a device-neutral execution request because it carries ambiguous raw screen tuples and a string key, with actual dispatch owned by the GUI `MotionController` path.
+
+**Migration seam identified:** retain this old event state machine initially, then introduce explicit adapters at both ends: `EventDetection ↔ TargetDetection` for perception compatibility, and `EventAction/NavigationIntent → core.actions` for execution compatibility. The global-map position projection remains a separate navigation/spatial transform.
+
+**Audit conclusion:** the user’s diagnosis is confirmed. Old Torchlight-adapted chains are internally decomposed but have not been migrated to, or driven by, the new architecture. This finding now drives the implementation order rather than treating new perception modules as integration-complete.
+## [Documentation sync] 2026-09-04 — legacy/new architecture integration status
+
+### A. Scope declaration (before documentation update)
+
+**Trigger:** the completed read-only audit established a material correction to the mainline status: legacy Torchlight minimap/localization/navigation/Portal/Loot modules are internally decomposed but not connected to the new generic perception/spatial/action architecture.
+
+**Documentation to update:**
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md` — record the verified integration status and migration boundary.
+- `CODEBASE.md` — register the legacy/new contract separation and bridge order as a current architectural risk.
+
+**No source/config/test file will be changed.**
+### C. Documentation sync result
+
+**Checkpoint updated:** `docs/PERCEPTION_ENGINE_CHECKPOINT.md` now records the verified status of legacy minimap/localization/navigation/Portal/Loot paths, the true P7 bridge boundaries, and the preprocessing extraction prerequisite.
+
+**Codebase updated:** `CODEBASE.md` now makes the old-chain/new-core separation explicit in its risk/seam register, including the GUI `MotionController` dispatch boundary.
+
+**Files changed by this audit:** only `ITERATION_LOG.md`, `docs/PERCEPTION_ENGINE_CHECKPOINT.md`, and `CODEBASE.md`. No legacy source, test, configuration, virtual-gamepad, staging, or Git history was changed.
+## [Legacy-chain architecture audit] 2026-09-04 — map stitching implementation
+
+### A. Scope declaration (before source review)
+
+**Question:** identify and inspect the legacy map-drawing/stitching implementation that feeds the persisted wall/explored map used by localization and routing.
+
+**Discovery scope:** source files/classes containing `stitcher`, `stitch`, `wall_layer`, or map-frame merge logic, excluding generated data and tests until the runtime entrypoint is identified.
+
+**Goal:** confirm whether map construction has an independent reusable core or is coupled to GUI/capture/Torchlight minimap assumptions, and add it to the old/new architecture matrix.
+### C. Discovery findings — map stitching inventory
+
+**Verified:** map construction has a genuine independent subsystem under `core/mapping/` (`MapStitcher`, frame preparation/pipeline, weighted merge, package I/O, rendering, performance). It is not only GUI code, and it persists canvas/wall/fog/explored layers for the later localization/routing chain.
+
+**Current uncertainty:** this module may be more reusable than Portal/Loot because its public API already accepts masks and player position. Its actual state/config/capture assumptions still need inspection before assigning it a generic-core status.
+
+**Next pass:** read `core/mapping/stitcher.py` alone, then identify which map-frame preparation call supplies its masks.
+## [Legacy-chain architecture audit] 2026-09-04 — map stitcher core
+
+### A. Scope declaration (before source review)
+
+**File selected:** `core/mapping/stitcher.py`.
+
+**Reason:** establish whether `MapStitcher` is a reusable map-domain core with injectable visual evidence, or whether its state and public API embed Torchlight/minimap recognition and GUI/capture concerns.
+### C. Findings — map stitcher core
+
+**Verified:** `core/mapping/MapStitcher` is already a meaningful non-GUI mapping core. It owns a canvas, wall/fog/explored/weight layers, keyframe and prior-frame registration, phase-displacement tracking, weighted merge, persisted map packages, and map rendering helpers. It is reusable for any sequence of aligned local masks, not merely a Portal/Loot feature.
+
+**Verified boundary:** `MapStitcher.add_frame()` accepts caller-supplied `match_mask`, `save_mask`, `fog_mask`, and `player_pos`; it does not own screenshot capture or HSV recognition. However all values are untyped arrays/tuples and its public state is explicitly wall/fog/player/minimap-map oriented (`draw_scale`, wall-thickness closing, canvas-center world plane). It has no `FrameContext`, preprocessing artifact geometry, provider, profile, or standardized detection contract.
+
+**Correct classification:** preserve `core/mapping` as the future reusable *map-domain* core. Do not duplicate it in `core/perception`. The required modernization is to introduce typed evidence/coordinate contracts at its input/output and replace the GUI/legacy HSV composition around it gradually.
+
+**Next pass:** inspect the mapping runtime session and frame-preparation boundary to confirm how the old recognizer supplies masks and whether preprocessing is still hard-bound to the Torchlight minimap UI.
+## [Legacy-chain architecture audit] 2026-09-04 — map-frame composition
+
+### A. Scope declaration (before source review)
+
+**Files selected:**
+- `gui/modes/mapping/runtime/session.py` — GUI/runtime source-to-stitcher composition.
+- `core/mapping/frame_preparation.py` — generic versus map-semantic scaling/mask preparation.
+- `core/mapping/frame_pipeline.py` — caller-provided evidence into stitcher state transition.
+
+**Questions:** establish the exact preprocessing/capture ownership on the map-building path, and which pieces can be retained or extracted without altering working map behavior.
+### C. Findings — map-frame composition
+
+**Verified full mapping path:** `MappingSession.tick()` captures a configured square/rectangle, defaults the player to the crop center or uses the old player tracker, invokes `HSVRecognizer.extract_combined()`, then sends raw arrays to `MapStitcher.add_frame()`. It also returns the old recognizer's preprocessed display image directly to the GUI.
+
+**Verified composition coupling:** this capture → recognition → stitch path is currently assembled through GUI `app_context`; it has no `FrameContext`, typed preprocessing artifact, source-coordinate transform, or provider/engine composition. The same old HSV mask generation feeds both map construction and later localization.
+
+**Verified `core/mapping` strength and limitations:** frame preparation and stitching are cleanly separated from the GUI. They implement scale/offset recovery, keyframe/f2f registration, visible-wall/fog weighted merge, duplicate suppression, and persisted world-map layers. But their values are naked masks/tuples and their default center-player/canvas/draw-scale semantics remain minimap-map specific.
+
+**Final map-building classification:** the user’s previous mapping/stitching work is valuable reusable map-domain logic, but it is not yet an implementation of the new generic perception/spatial/action design. It should be retained and wrapped with typed evidence and coordinate adapters, not rewritten or claimed as P4/P5 complete.
+
+**Next:** add this map-stitcher result to the checkpoint and codebase risk record, then deliver the complete old/new coverage matrix and staged bridge plan.
+## [Documentation sync] 2026-09-04 — map-stitcher audit result
+
+### A. Scope declaration (before documentation update)
+
+**Trigger:** the audit confirmed that `core/mapping` is an independently useful legacy map-domain core, while its GUI/HSV composition and untyped mask contracts remain outside the new generic engine.
+
+**Documentation to update:** the legacy audit entries in `docs/PERCEPTION_ENGINE_CHECKPOINT.md` and `CODEBASE.md`, preserving the distinction between retainable map-domain logic and unbridged perception/spatial/action integration.
+### C. Documentation sync result
+
+**Checkpoint and codebase updated:** both now distinguish the retainable `core/mapping/MapStitcher` core from the unbridged GUI capture/HSV composition feeding it.
+
+**Audit status:** reviewed end-to-end legacy paths now cover map-frame capture/preprocessing/stitching, minimap localization, route/event movement intent, Portal detection/handler, Loot detection pipeline, and GUI input dispatch. The final report can state the current architecture with evidence rather than inference.
+
+**Files changed by this final audit sync:** only `ITERATION_LOG.md`, `docs/PERCEPTION_ENGINE_CHECKPOINT.md`, and `CODEBASE.md`.
+## [Architecture decomposition review] 2026-09-04 — bottom capabilities and top-level adapters
+
+### A. Scope declaration (before source review)
+
+**Question:** give a detailed, actionable classification of current modules: keep as a lower-level capability, extract/refactor into a reusable lower-level capability, or retain as a game/scene/workflow adapter.
+
+**Files selected for final boundary verification:**
+- `core/input/motion_mapping.py` — existing stitched-world → screen mapping algorithm.
+- `core/events/coordinator/observation.py` — legacy event detection/stabilization/task composition.
+- `core/routing/obstacles.py` — map-domain wall-layer derivation.
+
+**Output:** a dependency-safe target hierarchy, concrete extraction candidates, explicit non-extraction rules, and a staged wrapper strategy that preserves current behavior.
+
+## [Architecture audit follow-up] 2026-09-04
+
+### A. Scope declared before reading
+
+**Requested outcome:** provide a verified, detailed account of the present modular architecture; distinguish reusable low-level capabilities from Torchlight/minimap-specific policy and top-level orchestration.
+
+**Files to verify in this pass:**
+
+- `core/input/motion_mapping.py` — confirm the existing world-map-to-screen projection seam.
+- `core/events/coordinator/observation.py` — confirm the event coordination boundary.
+- `core/routing/obstacles.py` — confirm reusable map-domain obstacle derivation.
+
+**Decision boundary:** this is an architecture audit and documentation checkpoint only. No legacy runtime, GUI, virtual-gamepad, Portal, or Loot code will be changed.
+
+### C. Findings
+
+- **(verified) World-to-view projection seam:** `calculate_movement_click()` and `calculate_mapped_target_click()` compute a normalized direction from global-map coordinates, project it from a supplied screen centre, and constrain the radial distance. That geometry is reusable below the game policy layer. `apply_bottom_click_guard()`, click-radius tuning, and the supplied game centre are game/UI policy and must remain configurable at the adapter/profile layer.
+- **(verified) Event orchestration seam:** `observe_events()` executes detect → position stabilization → observation memory merge → task selection. It is a reusable event-domain coordinator, but its inputs/outputs still use the legacy event contracts; it should gain bridges on both sides instead of being rewritten into a workflow.
+- **(verified) Map-domain image primitive:** `derive_navigation_wall_layer()` performs thresholding followed by optional cross-kernel erosion to create an A*-friendly obstacle layer without mutating the localization layer. It can remain a mapping/routing primitive; it is not a generic detector and should not move into `core.perception`.
+- **Confirmed scope status:** no source runtime code was changed in this audit. The pre-existing dirty worktree, particularly `virtual_gamepad/`, remains untouched.
+
+**Next design action, when authorised:** define a standalone preprocessing/artifact contract first; then introduce typed map evidence, legacy bridges, and action translation in small compatibility-preserving steps.
+
+## [Generic core extraction plan] 2026-09-04
+
+### A. Scope declared before reading
+
+**Requested outcome:** extract currently reusable capabilities into generic low-level modules and optimise the legacy Torchlight/minimap chain by making it delegate to those modules where behaviour can be preserved. Do not build game-specific PoE workflows in this phase.
+
+**Files to inspect for the first task batch:**
+
+- `core/vision/hsv/preprocessing.py` — identify exact image operations and existing parameter dependencies.
+- `core/vision/hsv/masks.py` — identify mask and connected-component primitives.
+- `core/vision/hsv/combined.py` — identify composition and game-semantic portions that must remain legacy policy.
+
+**Compatibility constraints:**
+
+- Keep existing public legacy imports and call signatures working.
+- Preserve Torchlight-specific wall/fog/player choices as legacy/profile policy.
+- New generic modules must not import GUI, `HSVRecognizer`, Portal, Loot, events, or input controllers.
+- Establish regression tests before redirecting legacy code to a new implementation.
+
+### C. Findings
+
+- **(verified) Direct extraction candidates:** percentile normalization, gamma LUT, Gaussian/median blur, LAB-CLAHE, top-hat, BGR channel scaling, HSV range masks, morphology, Canny, connected-component filtering, saturation masks, circle masking, and weighted mask fusion are implemented as recognizer-coupled helpers but have no inherent Torchlight dependency.
+- **(verified) Legacy policy that must not move:** wall/fog/player HSV ranges, transparency score choice, player-centre fallback, player-clear radius, saturation exclusion region, and wall/edge weights are game/profile semantics. The existing `HSVRecognizer` facade must retain ownership of these choices.
+- **(verified) First compatibility seam:** the legacy wrapper can construct generic operation parameter objects from its existing attributes and call a new preprocessing pipeline; `extract_combined_masks()` can keep its tuple return contract while delegating generic image operations.
+- **Plan refinement:** begin with a small typed image-artifact geometry contract plus independently testable pure operations. Do not move a recognizer or map-stitcher in the first slice.
+
+## [Generic core extraction plan — contracts] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** align the new preprocessing contract with existing perception models, coordinate-space conventions, and test conventions before writing the implementation plan.
+
+**Files to inspect:**
+
+- `core/perception/models.py` — current shared model conventions.
+- `core/perception/coordinates.py` — current coordinate-space and geometry conventions.
+- `tests` / `core/perception/tests` discovery — current test layout and runner conventions.
+
+### C. Findings
+
+- **(verified) Existing contract location:** `CoordinateSpace`, `BoundingBox`, and `FrameContext` are all defined in `core/perception/models.py`; there is no `core/perception/coordinates.py`. The new preprocessing contract should import those existing types rather than create a parallel coordinate enum.
+- **(verified) Test location:** perception tests live under repository-level `tests/` and follow the `test_perception_*.py` naming convention. A preprocessing suite belongs at `tests/test_perception_preprocessing.py`.
+- **Corrected plan:** preprocessing artifacts will use the existing `CoordinateSpace` and expose source-frame geometry explicitly. No duplicate coordinate contract will be added.
+
+## [Generic core extraction plan — test and public API conventions] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** determine the exact public-export and testing conventions needed for a safe first generic preprocessing slice.
+
+**Files to inspect:**
+
+- `core/perception/__init__.py` — package-level public API convention.
+- `tests/test_perception_models.py` — model contract test style.
+- `tests/test_recognizer_optimized.py` — existing HSV-recognizer regression coverage that must remain valid.
+
+### C. Findings
+
+- **(verified) Public API convention:** `core.perception.__init__` explicitly re-exports stable generic types. The new artifact and transform types will be exported there after their tests pass.
+- **(verified) Test convention:** the project uses standard-library `unittest`, with direct exact assertions for geometry and output contracts.
+- **(verified) Existing regression seam:** `HSVRecognizer.extract_combined(...)` is already covered for saturated dynamic-icon removal. That test will remain unchanged and a new equivalence test will protect the delegated generic operation path.
+- **First implementation slice confirmed:** add geometry-aware image-artifact models plus pure generic preprocessing operations first; retain all old HSV facade entrypoints and semantic orchestration in place.
+
+## [Generic core extraction plan — mapping and action seams] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** establish exact existing contracts for typed map evidence and the general action layer so the implementation plan can preserve their public behaviour.
+
+**Files to inspect:**
+
+- `core/mapping/stitcher.py` — current `MapStitcher` input/output boundary.
+- `core/actions/models.py` — current generic action contract.
+- `core/actions/__init__.py` — current generic action public API.
+
+### C. Findings
+
+- **(verified) Map-stitcher compatibility boundary:** `MapStitcher.add_frame(img, match_mask, save_mask, fog_mask, raw_gray=None, player_pos=None)` is the exact legacy ingress. A new `add_evidence(evidence)` method can unpack a typed contract and delegate to it, leaving all existing callers untouched.
+- **(verified) Existing action foundation is broader than the original proof:** package exports already include action contracts plus keyboard and virtual-gamepad adapters. `ActionRequest` itself remains intentionally limited to mapped pointer actions; no action-contract rewrite is required in this extraction phase.
+- **Corrected scope:** this phase will add typed map evidence as a compatibility ingress but will not change action contracts. Legacy `NavigationIntent/EventAction → ActionCommand` translation remains a later integration task.
+
+## [SYNC] 2026-09-04 — image artifact geometry contract
+
+### A. SYNC scope declaration
+
+**Triggering task:** add the first reusable preprocessing contract: `ImageGeometry` and `ImageArtifact`.
+
+**Directly changed files:**
+
+- `core/perception/preprocessing/models.py`
+- `core/perception/preprocessing/__init__.py`
+- `core/perception/__init__.py`
+- `tests/test_perception_preprocessing.py`
+
+**Expected impact:** generic perception callers can import the new types; no existing detector, legacy HSV facade, map stitcher, action adapter, GUI, or workflow has been redirected yet.
+
+### C. SYNC result
+
+**Re-read files:** `core/perception/preprocessing/models.py`, `core/perception/preprocessing/__init__.py`, `core/perception/__init__.py`.
+
+**Verified contract:** `ImageGeometry` validates positive dimensions and an output-to-source 3×3 transform; it maps points and enclosing bounding boxes back to source-frame coordinates. `ImageArtifact` validates its image shape against the geometry and source frame. Package exports expose the types without importing legacy modules.
+
+**No coupling introduced:** the new package imports only shared perception models. No existing call path has changed yet.
+
+**Pending verification:** re-read the new test file and update the codebase index before closing this SYNC checkpoint.
+
+## [SYNC] 2026-09-04 — image artifact geometry test/index closure
+
+### A. SYNC scope declaration
+
+**Goal:** verify the new regression test and update the existing perception architecture index with the new public contract.
+
+**Files to inspect:**
+
+- `tests/test_perception_preprocessing.py`
+- `CODEBASE.md` sections covering `core/perception` and its public exports.
+
+### C. SYNC result
+
+**Verified test:** `ImageGeometryTests` asserts identity point/box backprojection and rejects an artifact whose output height differs from geometry. The initially missing-module test failed as expected; after the contract was added, the suite passed 2/2.
+
+**CODEBASE.md updated:** added the preprocessing public package and models contract to the perception directory/file index; updated the public perception export description.
+
+**Next task:** add crop/resize/pad operations that compose the same output-to-source geometry; only after their direct tests pass will legacy code be considered for delegation.
+
+## [SYNC] 2026-09-04 — artifact geometry transforms
+
+### A. SYNC scope declaration
+
+**Triggering task:** add generic crop, resize, and pad operations with source-frame transform composition.
+
+**Directly changed files:**
+
+- `core/perception/preprocessing/geometry.py`
+- `core/perception/preprocessing/__init__.py`
+- `tests/test_perception_preprocessing.py`
+
+**Expected impact:** generic callers can create transformed artifacts with precise source-coordinate recovery. No legacy caller has been redirected.
+
+### C. SYNC result
+
+**Re-read files:** `core/perception/preprocessing/geometry.py`, preprocessing public exports, and `tests/test_perception_preprocessing.py`.
+
+**Verified behaviour:** crop composes a source translation, resize composes inverse x/y scaling, and pad composes inverse padding translation. The crop → resize → pad regression maps artifact point `(105, 57)` back to source point `(70, 35)`; the whole preprocessing suite passes 3/3.
+
+**CODEBASE.md updated:** added the geometry-operation module, its composition rule, and its validation boundary.
+
+**No legacy change:** `HSVRecognizer`, map stitching, navigation, GUI, Portal, and Loot still execute their former implementations.
+
+## [SYNC] 2026-09-04 — generic image operations
+
+### A. SYNC scope declaration
+
+**Triggering task:** add reusable pixel enhancement and colour-space operations used by the legacy HSV path.
+
+**Directly changed files:**
+
+- `core/perception/preprocessing/image_ops.py`
+- `core/perception/preprocessing/__init__.py`
+- `tests/test_perception_preprocessing.py`
+
+**Expected impact:** generic callers can perform validated image-only operations. No legacy facade is yet redirected.
+
+### C. SYNC result
+
+**Re-read files:** `core/perception/preprocessing/image_ops.py`, preprocessing public exports, and `tests/test_perception_preprocessing.py`.
+
+**Verified operations:** gamma LUT, blur, L-channel CLAHE, top-hat, percentile normalization, intensity/channel scaling, gray/HSV conversion, and Canny are image-only functions with validated shapes/ranges. The direct test suite passes 7/7, including flat-image fallback, uint8/shape preservation, channel scaling, and a real Canny edge response.
+
+**CODEBASE.md updated:** added the generic pixel-operation module and its no-game-semantics boundary.
+
+**Next task:** add generic binary mask, morphology, connected-component, exclusion, and weighted-fusion functions. This remains a lower-level extraction; legacy wall/fog/player policy stays where it is.
+
+## [SYNC] 2026-09-04 — generic mask operations
+
+### A. SYNC scope declaration
+
+**Triggering task:** add reusable HSV range, threshold, morphology, component filtering, saturation, circle, exclusion, and weighted mask-fusion operations.
+
+**Directly changed files:**
+
+- `core/perception/preprocessing/masks.py`
+- `core/perception/preprocessing/__init__.py`
+- `tests/test_perception_preprocessing.py`
+
+**Expected impact:** generic visual algorithms can compose masks without a legacy recognizer. Existing legacy calls have not changed.
+
+### C. SYNC result
+
+**Re-read files:** `core/perception/preprocessing/masks.py`, preprocessing exports, and the preprocessing regression suite.
+
+**Verified behaviour:** the new module provides HSV range selection, thresholding, all existing morphology modes, connected-component filtering, saturation selection, circle construction, exclusion, and weighted fusion with explicit validation. The 9-test suite verifies small-component removal and a colour → morphology → fusion → circle-exclusion chain.
+
+**CODEBASE.md updated:** added the generic mask-operation module and its semantic boundary.
+
+**Next task:** capture representative legacy HSV outputs and redirect its internal OpenCV primitive calls to the new generic functions without moving wall/fog/player policies.
+
+## [Legacy HSV delegation] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** find the exact legacy facade, defaults, and private-wrapper boundaries needed to delegate image primitives without changing public recognizer behaviour.
+
+**Files to inspect:**
+
+- `core/recognizer_optimized.py` — active legacy recognizer facade and wrappers.
+- `core/vision/hsv_recognizer.py` — alternate/public facade relationship.
+- `core/vision/hsv/params.py` — parameter ownership and default compatibility constraints.
+
+**Migration rule:** only replace internal primitive calls after a deterministic fixture locks current output. Keep recognizer parameter names and all public methods intact.
+
+### C. Findings
+
+- **(verified) Canonical facade:** `core/vision/hsv_recognizer.py::HSVRecognizer` is the active implementation. It owns all current defaults and preserves compatibility through private wrappers such as `_preprocess_for_wall()`, `_compute_transparency_score()`, and `_filter_small_components()`.
+- **(verified) Policy boundary:** wall/fog/player ranges, transparency choice, clear radius, saturation settings, edge weights, and old parameter names are owned by the facade and parameter module; they must remain outside generic preprocessing.
+- **Correction:** the `core.recognizer_optimized` import used by legacy tests resolves as a package rather than the assumed single `.py` file. Its package entry must be checked before adding compatibility fixtures.
+
+## [Legacy HSV delegation — package and fixture baseline] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** confirm the compatibility import and capture a deterministic pre-migration output fingerprint for the public recognizer.
+
+**Files/outputs to inspect:**
+
+- `core/recognizer_optimized/` package entry.
+- `core/vision/hsv/__init__.py` package surface.
+- A fixed synthetic-image execution of public `HSVRecognizer` methods, recorded as fixture hashes before delegation.
+
+### C. Findings
+
+- **(verified) Public HSV helper surface:** `core/vision/hsv/__init__.py` exports the current helper functions and is the correct stable helper-import surface. The expected `core/recognizer_optimized` source path is absent from this worktree despite an older test import; compatibility will use the canonical `core.vision.hsv_recognizer.HSVRecognizer` and the old test will be run before migration.
+- **(verified) Deterministic baseline captured:** for the fixed 96×96 synthetic fixture, public recognizer SHA-256/nonzero outputs are wall `b5bf2189…57a9af / 384`, fog `c4889bc7…cd7822 / 576`, combined match `bd013651…3c9e1e / 353`, combined wall `774fd936…e20803 / 235`, combined fog `2d07a41a…c087ae / 0`, and raw gray `cd285e5b…ec87c3 / 6395`.
+- **Migration guard:** add these hashes as a canonical-facade regression before changing any legacy HSV implementation. The missing old test import is an existing repository issue to diagnose separately if its suite fails.
+
+## [Compatibility-import diagnosis] 2026-09-04
+
+### A. Scope declared before reading
+
+**Symptom:** `tests/test_recognizer_optimized.py` fails before executing any test because `core.recognizer_optimized` is absent.
+
+**Investigation targets:**
+
+- all repository references to `recognizer_optimized`;
+- Git history for the missing compatibility path;
+- the canonical `HSVRecognizer` import path and any existing re-export pattern.
+
+**Hypothesis to test only after evidence:** a legacy public compatibility re-export was removed while a still-tracked test/caller retained its import.
+
+### C. Findings
+
+- **(verified root cause) Intentional module removal with stale test:** Git commit `3fd3333` deleted `core/recognizer_optimized.py` during the migration to `core.vision`. Production GUI/localization imports now use `core.vision.HSVRecognizer`; the only executable stale reference found is `tests/test_recognizer_optimized.py`.
+- **(verified working pattern):** `core.vision.hsv_recognizer.HSVRecognizer` is the canonical replacement and exposes the same recognition behaviour targeted by the stale test. Historical architecture notes still mentioning the deleted wrapper are records, not executable dependencies.
+- **Hypothesis:** replacing only the stale test import with the canonical public import will restore the intended regression test without resurrecting a deliberately deleted compatibility module.
+
+### C. Resolution
+
+- **Minimal hypothesis test:** the stale test's exact assertions pass unchanged when executed against `core.vision.HSVRecognizer`.
+- **Single root-cause fix:** `tests/test_recognizer_optimized.py` now imports the canonical public facade instead of the intentionally removed module.
+- **Verification:** preprocessing, legacy-HSV compatibility, and recognizer regression suites pass 11/11. No compatibility module was restored and no production import changed.
+
+## [Typed map evidence ingress] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** introduce a typed `MapFrameEvidence` contract and a compatibility-preserving `MapStitcher.add_evidence(...)` entry that delegates to existing `add_frame(...)`.
+
+**Files to inspect:**
+
+- `core/mapping/__init__.py` — mapping public-export convention.
+- `tests/test_stitcher_core.py` — existing stitcher test conventions and constructor assumptions.
+
+**Compatibility rule:** `MapStitcher.add_frame(img, match_mask, save_mask, fog_mask, raw_gray=None, player_pos=None)` must retain its signature and implementation path.
+
+## [Input package import diagnosis] 2026-09-04
+
+### A. Scope declared before reading
+
+**Symptom:** importing the pure `core.input.motion_mapping` module raises `ModuleNotFoundError: pydirectinput` because Python executes `core.input.__init__` first.
+
+**Investigation targets:**
+
+- `core/input/__init__.py` public imports;
+- `core/input/click_executor.py` optional-dependency boundary;
+- dependency manifests and an existing test importing `core.input`.
+
+**Hypothesis to test only after evidence:** a package-level eager import has accidentally made an optional real-input backend mandatory for pure coordinate math.
+
+### C. Findings
+
+- **(verified root cause):** `core/input/__init__.py` eagerly imports `click_executor`, which unconditionally imports `pydirectinput`; `pydirectinput` is absent from `requirements.txt` and the active environment. Thus importing any `core.input.*` submodule—including pure math—fails before use.
+- **Dependency boundary failure:** `send_click()` uses pydirectinput only for its fallback backend, so it must not prevent import of `motion_mapping` or other Win32-backed paths.
+- **Next evidence needed:** inspect the new action adapters' optional-device import pattern, then make one minimal lazy/guarded dependency change with a failing import regression test.
+
+## [Input package import diagnosis — optional dependency pattern] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** compare the legacy click backend with the project’s current optional-device adapter pattern before selecting a minimal import-boundary fix.
+
+**Files to inspect:**
+
+- `core/actions/keyboard.py`
+- `core/actions/mouse.py`
+- `tests/test_keyboard_action_adapter.py`
+
+### C. Findings
+
+- **(verified working pattern):** `PyDirectInputKeyboardDevice` imports `pydirectinput` only in its production-device constructor; the generic `KeyboardActionAdapter` and `MouseActionAdapter` are import-safe and device-injected.
+- **Confirmed hypothesis:** legacy `click_executor` violates this pattern by importing pydirectinput at module load time even though only its fallback calls need it.
+- **Single fix selected:** replace the eager module import with a private lazy resolver used only by `send_click()` fallback and `fallback_pydirect_click()`. The current failing pure-motion import test is the regression case.
+
+### C. First fix result
+
+- **Verified partial resolution:** `click_executor` no longer imports pydirectinput at package load time.
+- **New boundary revealed:** the same test now reaches `core.input.motion_controller.backend`, which has a separate eager `pydirectinput` import. This is a second occurrence of the same optional-dependency boundary violation, not a failure of the lazy fallback change.
+- **Fix count:** 1. Return to root-cause inventory before making a second change.
+
+## [Input package import diagnosis — full optional-backend inventory] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** inventory every `pydirectinput` import reachable from `core.input` and inspect the newly exposed backend before one bounded follow-up fix.
+
+**Files/queries to inspect:**
+
+- all executable `pydirectinput` imports;
+- `core/input/motion_controller/backend.py`;
+- `core/input/controller.py` composition path.
+
+### C. Findings
+
+- **(verified complete import inventory):** besides the now-lazy click fallback, the only eager pydirectinput imports under `core.input` are `motion_controller/backend.py` and `motion_controller/controls.py`. Both are loaded whenever package `core.input` exposes `MotionController`.
+- **Refined root cause:** the package combines pure mapping exports and concrete motion-controller exports in one eager `__init__`; therefore every concrete backend must use the same lazy resolver.
+- **Single second fix:** centralize the resolver in one internal module and use it at invocation time in click executor, backend, and controls. This removes all eager optional-backend imports in the package without changing controller methods or selected input backend behaviour.
+
+## [Input package import diagnosis — controller call sites] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** inspect every pydirectinput use in controller controls before applying the shared lazy-resolver fix.
+
+**Files to inspect:**
+
+- `core/input/motion_controller/controls.py`
+- `core/input/motion_controller/__init__.py`
+- `core/input/click_pipeline.py`
+
+### C. Findings
+
+- **(verified call sites):** controller backend uses pydirectinput only for non-essential diagnostic size/position calls; controls uses it only when a real key press is requested. Click pipeline already handles click backend failures.
+- **Verification after second fix:** all pydirectinput imports reachable from `core.input` are now lazy. Navigation projection, legacy motion mapping, typed map evidence, stitcher, and keyboard-adapter suites pass 11/11 without pydirectinput installed.
+- **Full-suite audit:** 153 discovered tests ran with 7 errors and 2 skips. Six errors are stale test imports of intentionally deleted top-level core modules; one is a test loading a relative-import GUI module outside its package. These are existing migration-test issues, not image/map/action contract failures.
+
+## [Full-suite migration-test audit] 2026-09-04
+
+### A. Scope declared before reading
+
+**Goal:** map the failing stale core test imports to current public package exports; preserve tests rather than resurrect deleted modules.
+
+## [Legacy convergence — mapping session evidence migration] 2026-09-04
+
+### A. Scope declared before reading
+
+**Migration objective:** move the live mapping composition root from raw mask/tuple arguments to the already-implemented MapFrameEvidence → MapStitcher.add_evidence() ingress. The historical add_frame(...) path remains only as a compatibility method for external callers.
+
+**Files to inspect:**
+
+- gui/modes/mapping/runtime/session.py — current mapping capture and stitcher composition.
+- gui/modes/mapping/runtime/__init__.py — runtime public import/lifecycle surface.
+- tests/test_perception_workbench.py or mapping-session tests — existing test seams for UI-independent composition.
+
+**Parity constraints:**
+
+- keep the capture rectangle, frame rate, player-coordinate selection, masks, stitched layers, and GUI preview output unchanged;
+- do not import Qt/GUI into core.mapping.evidence;
+- first add a regression that proves the session passes exactly the current frame/masks/player position through its new evidence object.
+
+### C. Findings
+
+- **(verified migration seam):** MappingSession.tick() is the sole composition point that captures the minimap, chooses player coordinates, invokes recognizer.extract_combined(), obtains raw_gray, and calls stitcher.add_frame().
+- **(verified parity boundary):** all values required by MapFrameEvidence already exist immediately before the legacy call: image, combined match mask, wall mask, fog mask, raw gray, and player position.
+- **Implementation decision:** replace only the final raw-argument call with construction of MapFrameEvidence and add_evidence(). Capture, recognizer calls, MappingTickResult, player fallback, and GUI presentation remain byte-for-byte behaviourally equivalent.
+
+**Files to inspect first:**
+
+- `core/routing/__init__.py`
+- `core/localization/__init__.py`
+- `core/vision/__init__.py`

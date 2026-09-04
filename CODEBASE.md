@@ -205,6 +205,14 @@ core/input/win32_driver.py - Win32 输入 adapter，封装鼠标移动/点击、
 core/actions/__init__.py - 设备无关动作契约和鼠标 adapter 的公共入口。
 core/actions/models.py - `ActionKind`、`ActionRequest`、`ActionResult` 不可变动作 DTO。
 core/actions/mouse.py - 仅消费物理映射点的鼠标移动/双击 adapter 与最小设备协议。
+virtual_gamepad/host/src/VirtualGamepadHost/Protocol/NamedPipeServer.cs - 当前并行开发中的 Windows 当前用户 JSON-lines 命名管道服务；每个连接独立顺序处理请求，允许 UI 与自动化客户端并存。
+virtual_gamepad/host/src/VirtualGamepadHost/Protocol/CommandRouter.cs - 按 controller 1/2 路由主机协议命令、解析 actuator payload，并把格式/参数错误转换成协议失败响应。
+virtual_gamepad/host/src/VirtualGamepadHost/State/StateStore.cs - 每手柄独立的线程安全输入源仲裁：按钮 OR、扳机取最大、摇杆取最大绝对值/最新值，并在快照时移除超时源。
+virtual_gamepad/host/src/VirtualGamepadHost/State/SafetyController.cs - 每手柄运行/暂停/复位/故障状态机；紧急复位清源并暂停。
+virtual_gamepad/host/src/VirtualGamepadHost/Runtime/ControllerRegistry.cs - 强制持有 1、2 两个合法槽位并向 ViGEm XInput backend 提交各自快照；提供全局紧急复位。
+virtual_gamepad/host/src/VirtualGamepadHost/Runtime/HostComposition.cs - 组装 ViGEm、两槽位、125Hz report loop、物理输入捕获与管道服务；把物理输入广播给所有 Running 槽位。
+virtual_gamepad/client/python/virtual_gamepad_client.py - 命名管道 Python 客户端；以单锁保证一个 client 的请求/响应配对，暴露按 controller 选择的状态、映射和原始手柄命令。
+virtual_gamepad/ui/virtual_gamepad_ui/main_window.py - 两个独立 profile 的切换式 PySide 映射编辑器，展示 C1/C2 状态并将开始/暂停操作作用于选中的槽位。
 core/input/motion_controller/__init__.py - MotionController helper package 入口，聚合 controls、targets 和 backend helper。
 core/input/motion_controller/controls.py - MotionController 参数设置、control enablement、显式屏幕点击和按键 helper。
 core/input/motion_controller/targets.py - MotionController 普通移动点击、事件精确地图点击、目标屏幕坐标计算和 bottom guard wrapper。
@@ -4049,9 +4057,19 @@ PerceptionEngine.detect(frame, profile)
 
 ### Directory and file index
 
-`core/perception/__init__.py` - Public exports for generic models, profiles, registry, built-in registry factory, pipeline, and run result. It must not import GUI, input, navigation, or game-specific modules.
+`core/perception/__init__.py` - Public exports for generic models, profiles, registry, built-in registry factory, pipeline, run result, and geometry-aware preprocessing contracts. It must not import GUI, input, navigation, or game-specific modules.
 
 `core/perception/models.py` - Data-only coordinate spaces, bounding boxes, frame context, evidence, normalized target detections, and whole-run result. `BoundingBox.center` derives a pixel-space center; `BoundingBox.normalized()` validates positive frame dimensions and returns relative rectangle values; `TargetDetection.__post_init__()` rejects empty target types, invalid centers, or confidence outside 0..1. `PerceptionRunResult` carries confirmed detections, per-instance raw detections, isolated errors, optional final selection, boolean confirmation status, and each current track's frame count without action side effects.
+
+`core/perception/preprocessing/__init__.py` - Public game-agnostic preprocessing surface. It exports image-artifact geometry contracts only; importing it does not acquire a resource, execute OpenCV, inspect a game profile, or import legacy recognizers.
+
+`core/perception/preprocessing/models.py` - `ImageGeometry` validates a source/output extent pair, one existing `CoordinateSpace`, and a 3×3 output-to-source transform. `map_point_to_source()` applies the homogeneous transform and rejects a zero homogeneous denominator; `map_box_to_source()` projects all four corners and returns their source enclosing `BoundingBox`. `ImageArtifact` combines processed pixels, `FrameContext`, geometry, and metadata; it rejects missing image dimensions, output-shape disagreement, source-frame dimension disagreement, or coordinate-space disagreement. It imports only existing generic perception models.
+
+`core/perception/preprocessing/geometry.py` - `crop()`, `resize()`, and `pad()` apply the corresponding pixel operation and construct a new `ImageArtifact`. Each composes a local output-to-previous homogeneous transform with the artifact's output-to-source matrix, so any chain of ROI, resize, and padding operations maps pixels back to the original frame. Invalid artifact types, non-positive dimensions, out-of-bounds crops, and negative padding raise explicit errors; the module has no game, detector, input, or GUI dependency.
+
+`core/perception/preprocessing/image_ops.py` - Game-agnostic, validated OpenCV/NumPy operations: gamma LUT, Gaussian/median blur, L-channel CLAHE, top-hat response/addition, percentile normalization, absolute intensity and per-BGR-channel scale, grayscale/HSV conversion, and Canny. Every operation accepts only a non-empty 2D/3D array and returns an independent or OpenCV-produced `uint8` image; it does not attach wall/fog/player meanings or access a recognizer. Invalid kernels, ranges, image channel shapes, and non-finite parameters fail explicitly.
+
+`core/perception/preprocessing/masks.py` - Game-agnostic binary-mask operations: HSV range and binary threshold, explicit open/close/dilate/erode morphology, 8-connected area filtering, saturation and circle masks, mask exclusion, and normalized weighted fusion. Inputs are mask/image arrays plus caller-supplied parameters; the module neither discovers a player centre nor assigns event or game semantics. Shape/range/operation errors fail before OpenCV dispatch.
 
 `core/perception/profiles.py` - Immutable `AlgorithmProfile` and `TargetProfile` configuration objects. `AlgorithmProfile.__post_init__()` validates identifiers and non-negative weight, then copies parameter/metadata dictionaries. `TargetProfile.__post_init__()` validates hierarchy identifiers, confidence range, confirmation frame count, unique instance IDs, and a normalized selection policy in `confidence|first|nearest`; it copies metadata and converts algorithms to a tuple. `to_dict()`/`from_dict()` preserve schema version and nested metadata; `copy()` deep-copies mutable descendants. `SUPPORTED_SELECTION_STRATEGIES` is the profile-level configuration contract.
 
@@ -4128,6 +4146,16 @@ PerceptionEngine.detect(frame, profile)
 7. In dry-run mode the workflow returns `DesktopProofReport(status="dry_run", detection, mapped_point)` and stops. In execute mode it creates `ActionRequest(DOUBLE_CLICK, mapped_point, interval_ms)` and calls `MouseActionAdapter.execute()`.
 8. `MouseActionAdapter` rounds destination physical floats once, invokes `InputDriver.move_to(x, y)`, emits two Win32 mouse down/up pairs, and returns `ActionResult`. The workflow returns `DesktopProofReport(status="executed")`; the CLI serializes the exact input point and action timestamps.
 
+### Reserved flow: device-neutral action to virtual gamepad backend (not wired yet)
+
+1. A future workflow will create a device-neutral `core.actions` request; it must not import `VirtualGamepadClient` or host protocol DTOs.
+2. A future `core.actions.VirtualGamepadActionAdapter` will translate that request into a bounded command, source identity, controller slot, and finite TTL, then call `virtual_gamepad.client.python.VirtualGamepadClient`.
+3. `VirtualGamepadClient.request()` serializes one JSON-lines request/response pair over its own current-user named-pipe connection; the host can serve this connection concurrently with the UI connection.
+4. `NamedPipeServer.ServeClientAsync()` parses the request and `CommandRouter.Handle()` selects `ControllerRegistry.Get(controller)`, then changes that slot's `StateStore` or `SafetyController` only.
+5. `ReportLoop.RunAsync()` ticks every 8 ms and calls `ControllerRegistry.SubmitAll()`, which snapshots each independent source merge and submits it to the corresponding ViGEm virtual XInput controller. `EmergencyResetAll()` clears and pauses both slots.
+
+This is an optional execution backend below `core.actions`, not a perception, coordinate-mapping, navigation, or workflow dependency. At the reviewed revision raw host commands can be accepted before a slot is Running and a `set_state` request without TTL persists; adapter integration is blocked on defining and testing the lifecycle/TTL contract.
+
 `gui/dialogs/perception/dialog.py` - PySide6 profile editor and screenshot test bench. It owns editable profile fields, algorithm instance list, generated parameter editor, screenshot loading, engine/pipeline invocation, profile persistence dialogs, and result status. It must remain a GUI adapter and must not become a workflow or input module.
 
 `gui/dialogs/perception/parameter_form.py` - `ParameterEditor` maps `ParameterSpec.kind` to Qt controls and reads values back with explicit bool/choice/int/float/path/text conversions. It contains no core algorithm policy.
@@ -4137,6 +4165,8 @@ PerceptionEngine.detect(frame, profile)
 ### Current risks and next seams
 
 - P2's engine/Pipeline ownership boundary is complete. P3 provider contracts and P4 template/OCR adapters preserve the rule that resource acquisition and backend execution do not leak into stage APIs.
+- Legacy-integration boundary (verified 2026-09-04): `core/localization` + `core/vision/hsv` still form a stateful cropped-minimap-to-stitched-world pipeline; `core/events/types/portal` and `core/events/types/loot` still own event-local recognition/preprocessing and return `EventDetection`; `gui/modes/navigation/input/intent_executor.py::execute_navigation_intent()` still sends old `NavigationIntent` values directly to `MotionController`. None of those paths uses `PerceptionEngine`, `TargetDetection`, `MappedPoint`, or `ActionRequest`. Preserve them as compatibility paths. P7 must bridge evidence/result schemas and action dispatch one target at a time; never move Portal/Loot/minimap semantic exclusions into generic perception preprocessing.
+- Map-domain reuse boundary (verified 2026-09-04): `core/mapping/MapStitcher` is already a GUI-independent keyframe/frame-registration and weighted-map-merge core, but `gui/modes/mapping/runtime/session.py::MappingSession.tick()` couples capture and `HSVRecognizer.extract_combined()` to it through untyped masks and a local player tuple. Preserve the stitcher and its persisted wall/fog/explored map package; introduce typed visual-evidence and coordinate adapters at this composition edge rather than replacing map stitching with the perception engine.
 
 ### Perception regression contracts
 

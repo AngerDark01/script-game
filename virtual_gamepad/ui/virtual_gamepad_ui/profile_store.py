@@ -17,3 +17,7 @@ def save_profile(path: Path, profile: BindingProfile) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(profile.to_payload(), indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def load_profiles(controller_one_path: Path, controller_two_path: Path) -> dict[int, BindingProfile]:
+    return {1: load_profile(controller_one_path), 2: load_profile(controller_two_path)}

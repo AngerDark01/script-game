@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-BUTTONS = ("A", "B", "X", "Y", "DPadUp", "DPadDown", "DPadLeft", "DPadRight", "Start", "Back", "LeftShoulder", "RightShoulder")
+BUTTONS = ("A", "B", "X", "Y", "DPadUp", "DPadDown", "DPadLeft", "DPadRight", "Start", "Back", "LeftStickClick", "RightStickClick", "LeftShoulder", "RightShoulder")
 CONTROLS = BUTTONS + ("LeftStick", "RightStick", "LeftTrigger", "RightTrigger")
 
 
@@ -31,6 +31,7 @@ class StateSnapshot:
         )
 
     def is_pressed(self, button: str) -> bool:
+        button = {"LeftStickClick": "LeftThumb", "RightStickClick": "RightThumb"}.get(button, button)
         masks = {
             "DPadUp": 0x0001,
             "DPadDown": 0x0002,
@@ -38,6 +39,8 @@ class StateSnapshot:
             "DPadRight": 0x0008,
             "Start": 0x0010,
             "Back": 0x0020,
+            "LeftThumb": 0x0040,
+            "RightThumb": 0x0080,
             "LeftShoulder": 0x0100,
             "RightShoulder": 0x0200,
             "A": 0x1000,
@@ -74,10 +77,48 @@ class UiStatus:
 
 
 @dataclass
+class ControllerUiStatus:
+    controller: int
+    run_state: str = "Disconnected"
+    device_connected: bool = False
+    state: StateSnapshot = field(default_factory=StateSnapshot)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "ControllerUiStatus":
+        return cls(
+            controller=int(payload.get("controller", 1)),
+            run_state=str(payload.get("runState", payload.get("run_state", "Disconnected"))),
+            device_connected=bool(payload.get("deviceConnected", payload.get("device_connected", False))),
+            state=StateSnapshot.from_payload(payload.get("state", {})),
+        )
+
+
+@dataclass
+class DualUiStatus:
+    controllers: dict[int, ControllerUiStatus] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "DualUiStatus":
+        entries = payload.get("controllers", [])
+        parsed = {}
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, dict):
+                    status = ControllerUiStatus.from_payload(item)
+                    parsed[status.controller] = status
+        return cls(parsed)
+
+    def for_controller(self, controller: int) -> ControllerUiStatus:
+        return self.controllers.get(controller, ControllerUiStatus(controller))
+
+
+@dataclass
 class BindingProfile:
     bindings: dict[str, list[str]] = field(default_factory=dict)
-    start_pause: str = "F8"
+    start_pause: str = "F7"
     emergency_reset: str = "F9"
+    mouse_sensitivity: float = 4.0
+    mouse_move_passthrough: bool = True
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "BindingProfile":
@@ -90,8 +131,10 @@ class BindingProfile:
             raw = converted
         return cls(
             bindings={str(key): [str(value) for value in values] for key, values in dict(raw).items()},
-            start_pause=str(payload.get("startPause", payload.get("start_pause", "F8"))),
+            start_pause=str(payload.get("startPause", payload.get("start_pause", "F7"))),
             emergency_reset=str(payload.get("emergencyReset", payload.get("emergency_reset", "F9"))),
+            mouse_sensitivity=float(payload.get("mouseSensitivity", payload.get("mouse_sensitivity", 4.0))),
+            mouse_move_passthrough=bool(payload.get("mouseMovePassthrough", payload.get("mouse_move_passthrough", True))),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -99,6 +142,8 @@ class BindingProfile:
             "bindings": {key: list(values) for key, values in self.bindings.items()},
             "startPause": self.start_pause,
             "emergencyReset": self.emergency_reset,
+            "mouseSensitivity": self.mouse_sensitivity,
+            "mouseMovePassthrough": self.mouse_move_passthrough,
         }
 
     def label_for(self, control: str) -> str:

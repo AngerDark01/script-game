@@ -8,32 +8,56 @@ namespace VirtualGamepadHost.Driver;
 public sealed class ViGEmXInputBackend : IXInputBackend
 {
     private ViGEmClient? _client;
-    private IXbox360Controller? _controller;
-    private IVirtualGamepad? _controllerBase;
+    private readonly IXbox360Controller?[] _controllers = new IXbox360Controller?[2];
+    private readonly IVirtualGamepad?[] _controllerBases = new IVirtualGamepad?[2];
 
-    public bool IsConnected => _controller is not null;
+    public bool IsConnected => _controllers.All(controller => controller is not null);
+
+    public int ControllerCount => _controllers.Length;
 
     public void Start()
     {
-        if (_controller is not null)
+        if (IsConnected)
         {
             return;
         }
 
         _client = new ViGEmClient();
-        var target = _client.CreateXbox360Controller();
-        _controller = target;
-        _controllerBase = target as IVirtualGamepad
-            ?? throw new InvalidOperationException("The ViGEm client returned an unexpected controller type.");
-        _controllerBase.AutoSubmitReport = false;
-        _controllerBase.Connect();
-        Submit(GamepadState.Neutral);
+        try
+        {
+            for (var index = 0; index < _controllers.Length; index++)
+            {
+                var target = _client.CreateXbox360Controller();
+                var controllerBase = target as IVirtualGamepad
+                    ?? throw new InvalidOperationException("The ViGEm client returned an unexpected controller type.");
+                controllerBase.AutoSubmitReport = false;
+                controllerBase.Connect();
+                _controllers[index] = target;
+                _controllerBases[index] = controllerBase;
+            }
+
+            for (var index = 1; index <= ControllerCount; index++)
+            {
+                Submit(index, GamepadState.Neutral);
+            }
+        }
+        catch
+        {
+            Stop();
+            throw;
+        }
     }
 
-    public void Submit(GamepadState state)
+    public void Submit(int controllerNumber, GamepadState state)
     {
-        var controller = _controller ?? throw new InvalidOperationException("The virtual controller is not started.");
-        var controllerBase = _controllerBase ?? throw new InvalidOperationException("The virtual controller is not started.");
+        if (controllerNumber is < 1 or > 2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(controllerNumber), "Controller must be 1 or 2.");
+        }
+
+        var index = controllerNumber - 1;
+        var controller = _controllers[index] ?? throw new InvalidOperationException("The virtual controller is not started.");
+        var controllerBase = _controllerBases[index] ?? throw new InvalidOperationException("The virtual controller is not started.");
         controller.SetButtonsFull(state.Buttons);
         controller.SetSliderValue(Xbox360Slider.LeftTrigger, state.LeftTrigger);
         controller.SetSliderValue(Xbox360Slider.RightTrigger, state.RightTrigger);
@@ -46,23 +70,30 @@ public sealed class ViGEmXInputBackend : IXInputBackend
 
     public void Stop()
     {
-        if (_controller is null)
+        if (_client is null && _controllers.All(controller => controller is null))
         {
             return;
         }
 
         try
         {
-            Submit(GamepadState.Neutral);
+            for (var index = 1; index <= ControllerCount; index++)
+            {
+                Submit(index, GamepadState.Neutral);
+            }
         }
         catch
         {
             // Shutdown must still disconnect even if the bus has disappeared.
         }
 
-        _controllerBase?.Disconnect();
-        _controller = null;
-        _controllerBase = null;
+        foreach (var controllerBase in _controllerBases)
+        {
+            controllerBase?.Disconnect();
+        }
+
+        Array.Clear(_controllers);
+        Array.Clear(_controllerBases);
         _client?.Dispose();
         _client = null;
     }

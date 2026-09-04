@@ -6,6 +6,16 @@ namespace VirtualGamepadHost.Tests;
 public sealed class SafetyControllerTests
 {
     [Fact]
+    public void NewControllerStartsPausedAndNeutral()
+    {
+        var store = new StateStore();
+        var safety = new SafetyController(store);
+
+        Assert.Equal(RunState.Paused, safety.RunState);
+        Assert.Equal(GamepadState.Neutral, store.Snapshot());
+    }
+
+    [Fact]
     public void EmergencyResetClearsInputsAndPauses()
     {
         var store = new StateStore();

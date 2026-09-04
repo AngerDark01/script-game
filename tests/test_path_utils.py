@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from core.path_utils import (
+from core.routing import (
     build_cumulative_lengths,
     interpolate_by_distance,
     is_inside_exit_region,

@@ -23,17 +23,40 @@ public sealed class RawInputCapture : IDisposable
     private const uint RI_MOUSE_BUTTON_4_UP = 0x0080;
     private const uint RI_MOUSE_BUTTON_5_DOWN = 0x0100;
     private const uint RI_MOUSE_BUTTON_5_UP = 0x0200;
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WH_MOUSE_LL = 14;
+    private const int HC_ACTION = 0;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_SYSKEYUP = 0x0105;
+    private const int WM_MOUSEMOVE = 0x0200;
+    private const int WM_LBUTTONDOWN = 0x0201;
+    private const int WM_LBUTTONUP = 0x0202;
+    private const int WM_RBUTTONDOWN = 0x0204;
+    private const int WM_RBUTTONUP = 0x0205;
+    private const int WM_MBUTTONDOWN = 0x0207;
+    private const int WM_MBUTTONUP = 0x0208;
+    private const int WM_XBUTTONDOWN = 0x020B;
+    private const int WM_XBUTTONUP = 0x020C;
 
     private readonly Action<PhysicalInput> _onInput;
+    private readonly Func<PhysicalInput, bool>? _shouldSuppress;
     private Thread? _thread;
     private uint _threadId;
     private RawInputWindow? _window;
     private readonly Action<HotkeyAction>? _onHotkey;
 
-    public RawInputCapture(Action<PhysicalInput> onInput, Action<HotkeyAction>? onHotkey = null)
+    public string CaptureMode => _window?.CaptureMode ?? "starting";
+
+    public RawInputCapture(
+        Action<PhysicalInput> onInput,
+        Action<HotkeyAction>? onHotkey = null,
+        Func<PhysicalInput, bool>? shouldSuppress = null)
     {
         _onInput = onInput;
         _onHotkey = onHotkey;
+        _shouldSuppress = shouldSuppress;
     }
 
     public void Start()
@@ -50,7 +73,7 @@ public sealed class RawInputCapture : IDisposable
             _threadId = GetCurrentThreadId();
             try
             {
-                _window = new RawInputWindow(_onInput, _onHotkey);
+                _window = new RawInputWindow(_onInput, _onHotkey, _shouldSuppress);
                 _window.CreateAndRegister();
                 ready.Set();
                 Application.Run();
@@ -62,6 +85,7 @@ public sealed class RawInputCapture : IDisposable
             }
             finally
             {
+                _window?.DisposeResources();
                 _window?.DestroyHandle();
                 _window = null;
             }
@@ -102,11 +126,27 @@ public sealed class RawInputCapture : IDisposable
     {
         private readonly Action<PhysicalInput> _onInput;
         private readonly Action<HotkeyAction>? _onHotkey;
+        private readonly Func<PhysicalInput, bool>? _shouldSuppress;
+        private readonly LowLevelHookProc _keyboardHookProc;
+        private readonly LowLevelHookProc _mouseHookProc;
+        private IntPtr _keyboardHook;
+        private IntPtr _mouseHook;
+        private bool _hasMousePoint;
+        private int _lastMouseX;
+        private int _lastMouseY;
 
-        public RawInputWindow(Action<PhysicalInput> onInput, Action<HotkeyAction>? onHotkey)
+        public string CaptureMode { get; private set; } = "starting";
+
+        public RawInputWindow(
+            Action<PhysicalInput> onInput,
+            Action<HotkeyAction>? onHotkey,
+            Func<PhysicalInput, bool>? shouldSuppress)
         {
             _onInput = onInput;
             _onHotkey = onHotkey;
+            _shouldSuppress = shouldSuppress;
+            _keyboardHookProc = KeyboardHookProc;
+            _mouseHookProc = MouseHookProc;
         }
 
         public void CreateAndRegister()
@@ -118,6 +158,54 @@ public sealed class RawInputCapture : IDisposable
                 Style = 0,
             });
 
+            if (_onHotkey is not null)
+            {
+                RegisterHotKey(Handle, 1, 0, (uint)Keys.F7);
+                RegisterHotKey(Handle, 2, 0, (uint)Keys.F8);
+                RegisterHotKey(Handle, 3, 0, (uint)Keys.F9);
+            }
+
+            if (!TryInstallLowLevelHooks())
+            {
+                RegisterRawInputFallback();
+                CaptureMode = "Raw Input fallback (physical input cannot be suppressed)";
+            }
+            else
+            {
+                CaptureMode = "Global keyboard/mouse interception enabled";
+            }
+        }
+
+        public void DisposeResources()
+        {
+            if (_keyboardHook != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_keyboardHook);
+                _keyboardHook = IntPtr.Zero;
+            }
+            if (_mouseHook != IntPtr.Zero)
+            {
+                UnhookWindowsHookEx(_mouseHook);
+                _mouseHook = IntPtr.Zero;
+            }
+        }
+
+        private bool TryInstallLowLevelHooks()
+        {
+            var module = GetModuleHandle(null);
+            _keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, _keyboardHookProc, module, 0);
+            _mouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseHookProc, module, 0);
+            if (_keyboardHook != IntPtr.Zero && _mouseHook != IntPtr.Zero)
+            {
+                return true;
+            }
+
+            DisposeResources();
+            return false;
+        }
+
+        private void RegisterRawInputFallback()
+        {
             var devices = new[]
             {
                 new RawInputDevice { UsagePage = 0x01, Usage = 0x06, Flags = RIDEV_INPUTSINK, Target = Handle },
@@ -126,12 +214,6 @@ public sealed class RawInputCapture : IDisposable
             if (!RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<RawInputDevice>()))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            }
-
-            if (_onHotkey is not null)
-            {
-                RegisterHotKey(Handle, 1, 0, (uint)Keys.F8);
-                RegisterHotKey(Handle, 2, 0, (uint)Keys.F9);
             }
         }
 
@@ -143,7 +225,12 @@ public sealed class RawInputCapture : IDisposable
             }
             else if (m.Msg == WM_HOTKEY && _onHotkey is not null)
             {
-                _onHotkey(m.WParam.ToInt32() == 1 ? HotkeyAction.TogglePause : HotkeyAction.EmergencyReset);
+                _onHotkey(m.WParam.ToInt32() switch
+                {
+                    1 => HotkeyAction.ToggleController1,
+                    2 => HotkeyAction.ToggleController2,
+                    _ => HotkeyAction.EmergencyResetAll,
+                });
             }
             base.WndProc(ref m);
         }
@@ -204,6 +291,101 @@ public sealed class RawInputCapture : IDisposable
                 _onInput(new PhysicalInput($"mouse:{name}", down ? PhysicalInputType.MouseButtonDown : PhysicalInputType.MouseButtonUp));
             }
         }
+
+        private IntPtr KeyboardHookProc(int code, IntPtr wParam, IntPtr lParam)
+        {
+            if (code >= HC_ACTION)
+            {
+                var message = wParam.ToInt32();
+                if (message is WM_KEYDOWN or WM_SYSKEYDOWN or WM_KEYUP or WM_SYSKEYUP)
+                {
+                    var data = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
+                    var input = new PhysicalInput(
+                        $"keyboard:{KeyName((ushort)data.VirtualKey, (ushort)data.ScanCode)}",
+                        message is WM_KEYDOWN or WM_SYSKEYDOWN ? PhysicalInputType.KeyDown : PhysicalInputType.KeyUp);
+                    if (HandleHookInput(input))
+                    {
+                        return (IntPtr)1;
+                    }
+                }
+            }
+
+            return CallNextHookEx(_keyboardHook, code, wParam, lParam);
+        }
+
+        private IntPtr MouseHookProc(int code, IntPtr wParam, IntPtr lParam)
+        {
+            if (code >= HC_ACTION)
+            {
+                var message = wParam.ToInt32();
+                var data = Marshal.PtrToStructure<MsLlHookStruct>(lParam);
+                if (message == WM_MOUSEMOVE)
+                {
+                    var deltaX = _hasMousePoint ? data.Point.X - _lastMouseX : 0;
+                    var deltaY = _hasMousePoint ? data.Point.Y - _lastMouseY : 0;
+                    _lastMouseX = data.Point.X;
+                    _lastMouseY = data.Point.Y;
+                    _hasMousePoint = true;
+                    if (deltaX != 0 || deltaY != 0)
+                    {
+                        var input = new PhysicalInput("mouse", PhysicalInputType.MouseMove, deltaX, deltaY);
+                        if (HandleHookInput(input))
+                        {
+                            return (IntPtr)1;
+                        }
+                    }
+                }
+                else if (TryMouseButton(message, data.MouseData, out var input))
+                {
+                    if (HandleHookInput(input))
+                    {
+                        return (IntPtr)1;
+                    }
+                }
+            }
+
+            return CallNextHookEx(_mouseHook, code, wParam, lParam);
+        }
+
+        private bool HandleHookInput(PhysicalInput input)
+        {
+            try
+            {
+                _onInput(input);
+                return _shouldSuppress?.Invoke(input) == true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryMouseButton(int message, uint mouseData, out PhysicalInput input)
+        {
+            var down = message is WM_LBUTTONDOWN or WM_RBUTTONDOWN or WM_MBUTTONDOWN or WM_XBUTTONDOWN;
+            var up = message is WM_LBUTTONUP or WM_RBUTTONUP or WM_MBUTTONUP or WM_XBUTTONUP;
+            var name = message switch
+            {
+                WM_LBUTTONDOWN or WM_LBUTTONUP => "left",
+                WM_RBUTTONDOWN or WM_RBUTTONUP => "right",
+                WM_MBUTTONDOWN or WM_MBUTTONUP => "middle",
+                WM_XBUTTONDOWN or WM_XBUTTONUP => (mouseData >> 16) switch
+                {
+                    1 => "x1",
+                    2 => "x2",
+                    _ => string.Empty,
+                },
+                _ => string.Empty,
+            };
+            if (!down && !up || string.IsNullOrEmpty(name))
+            {
+                input = default!;
+                return false;
+            }
+
+            input = new PhysicalInput($"mouse:{name}", down ? PhysicalInputType.MouseButtonDown : PhysicalInputType.MouseButtonUp);
+            return true;
+        }
     }
 
     private static string KeyName(ushort virtualKey, ushort makeCode) => virtualKey switch
@@ -258,10 +440,52 @@ public sealed class RawInputCapture : IDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+
+    private delegate IntPtr LowLevelHookProc(int code, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KbdLlHookStruct
+    {
+        public uint VirtualKey;
+        public uint ScanCode;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MsLlHookStruct
+    {
+        public Point Point;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookEx(int hookType, LowLevelHookProc callback, IntPtr module, uint threadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string? moduleName);
 }
 
 public enum HotkeyAction
 {
-    TogglePause,
-    EmergencyReset,
+    ToggleController1,
+    ToggleController2,
+    EmergencyResetAll,
 }

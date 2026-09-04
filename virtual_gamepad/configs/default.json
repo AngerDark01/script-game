@@ -6,6 +6,6 @@
     "LeftTrigger": ["mouse:right"],
     "RightStick": ["mouse:move_x", "mouse:move_y"]
   },
-  "startPause": "F8",
+  "startPause": "F7",
   "emergencyReset": "F9"
 }

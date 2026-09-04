@@ -7,8 +7,10 @@ public sealed record Binding(string Source, string Target, double Value = 1.0, d
 
 public sealed record MappingConfig(
     IReadOnlyList<Binding> Bindings,
-    string StartPause = "F8",
-    string EmergencyReset = "F9")
+    string StartPause = "F7",
+    string EmergencyReset = "F9",
+    double MouseSensitivity = 4.0,
+    bool MouseMovePassthrough = true)
 {
     public static MappingConfig Default => new(new[]
     {
@@ -19,14 +21,20 @@ public sealed record MappingConfig(
         new Binding("keyboard:Space", "button:A"),
         new Binding("mouse:left", "trigger:Right"),
         new Binding("mouse:right", "trigger:Left"),
-        new Binding("mouse:move_x", "axis:RightX", 1.0, 0.8),
-        new Binding("mouse:move_y", "axis:RightY", 1.0, 0.8),
+        new Binding("mouse:move_x", "axis:RightX", 1.0, 4.0),
+        new Binding("mouse:move_y", "axis:RightY", 1.0, 4.0),
     });
 
     public static MappingConfig FromJson(JsonElement payload)
     {
-        var startPause = payload.TryGetProperty("startPause", out var start) ? start.GetString() ?? "F8" : "F8";
+        var startPause = payload.TryGetProperty("startPause", out var start) ? start.GetString() ?? "F7" : "F7";
         var emergencyReset = payload.TryGetProperty("emergencyReset", out var reset) ? reset.GetString() ?? "F9" : "F9";
+        var mouseSensitivity = payload.TryGetProperty("mouseSensitivity", out var mouseSensitivityElement)
+            ? mouseSensitivityElement.GetDouble()
+            : 4.0;
+        var mouseMovePassthrough = payload.TryGetProperty("mouseMovePassthrough", out var mouseMovePassthroughElement)
+            ? mouseMovePassthroughElement.GetBoolean()
+            : true;
         var bindings = new List<Binding>();
 
         if (payload.TryGetProperty("bindings", out var rawBindings) && rawBindings.ValueKind == JsonValueKind.Array)
@@ -41,7 +49,7 @@ public sealed record MappingConfig(
                         source,
                         target,
                         item.TryGetProperty("value", out var value) ? value.GetDouble() : 1.0,
-                        item.TryGetProperty("sensitivity", out var sensitivity) ? sensitivity.GetDouble() : 1.0));
+                        item.TryGetProperty("sensitivity", out var sensitivity) ? sensitivity.GetDouble() : mouseSensitivity));
                 }
             }
         }
@@ -54,13 +62,13 @@ public sealed record MappingConfig(
                     var sourceName = source.GetString();
                     if (!string.IsNullOrWhiteSpace(sourceName))
                     {
-                        bindings.AddRange(ExpandAlias(sourceName, target.Name, 1.0, 1.0));
+                        bindings.AddRange(ExpandAlias(sourceName, target.Name, 1.0, mouseSensitivity));
                     }
                 }
             }
         }
 
-        return new MappingConfig(bindings, startPause, emergencyReset);
+        return new MappingConfig(bindings, startPause, emergencyReset, mouseSensitivity, mouseMovePassthrough);
     }
 
     private static IEnumerable<Binding> ExpandAlias(string source, string target, double value, double sensitivity)
@@ -74,6 +82,18 @@ public sealed record MappingConfig(
         if (Enum.TryParse<GamepadButton>(target, true, out _))
         {
             yield return new Binding(source, $"button:{target}", value, sensitivity);
+            yield break;
+        }
+
+        if (target.Equals("LeftStickClick", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return new Binding(source, "button:LeftThumb", value, sensitivity);
+            yield break;
+        }
+
+        if (target.Equals("RightStickClick", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return new Binding(source, "button:RightThumb", value, sensitivity);
             yield break;
         }
 

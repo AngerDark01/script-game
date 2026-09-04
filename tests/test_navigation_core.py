@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from core.navigation_core import NavigationCore
+from core.localization import NavigationCore
 
 
 class _FakeRecognizer:

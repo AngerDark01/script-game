@@ -13,7 +13,7 @@ public sealed class BackendTests
         var expected = GamepadState.Neutral
             .WithButton(GamepadButton.A, true)
             .WithAxis(GamepadAxis.LeftY, 32767);
-        backend.Submit(expected);
+        backend.Submit(1, expected);
         backend.Stop();
 
         Assert.Equal(expected, Assert.Single(backend.Reports));

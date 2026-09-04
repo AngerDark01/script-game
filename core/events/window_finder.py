@@ -65,9 +65,7 @@ def find_game_window(title_substring: str = "Torchlight", class_substring: str =
             return True
         title = _get_window_text(user32, int(hwnd))
         class_name = _get_class_name(user32, int(hwnd))
-        title_ok = not title_need or title_need in title.lower()
-        class_ok = not class_need or class_need in class_name.lower()
-        if title_ok or class_ok:
+        if _matches_window(title, class_name, title_need, class_need):
             rect = _window_rect(user32, int(hwnd))
             if rect:
                 matches.append(WindowInfo(int(hwnd), title, class_name, rect))
@@ -78,6 +76,21 @@ def find_game_window(title_substring: str = "Torchlight", class_substring: str =
         return None
     matches.sort(key=lambda item: item.rect["width"] * item.rect["height"], reverse=True)
     return matches[0]
+
+
+def _matches_window(title: str, class_name: str, title_substring: str, class_substring: str) -> bool:
+    """Match an explicitly requested title and/or window class.
+
+    An omitted criterion must not match every window.  This is important for
+    callers that intentionally search only by title (for example a game whose
+    class name is unknown or changes between renderers).
+    """
+    title_need = title_substring.lower().strip()
+    class_need = class_substring.lower().strip()
+    return (
+        (bool(title_need) and title_need in title.lower())
+        or (bool(class_need) and class_need in class_name.lower())
+    )
 
 
 def primary_screen_rect() -> dict[str, int]:
@@ -127,4 +140,3 @@ def _window_rect(user32, hwnd: int) -> dict[str, int] | None:
     if width <= 0 or height <= 0:
         return None
     return {"left": int(rect.left), "top": int(rect.top), "width": width, "height": height}
-

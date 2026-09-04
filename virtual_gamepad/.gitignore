@@ -2,5 +2,11 @@ host/**/bin/
 host/**/obj/
 ui/**/__pycache__/
 client/**/__pycache__/
+scripts/**/__pycache__/
+**/*.pyc
 ui/**/*.pyc
 client/**/*.pyc
+launcher/**/bin/
+launcher/**/obj/
+launcher/publish/
+/启动 Virtual Gamepad.exe
