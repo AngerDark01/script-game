@@ -1,5 +1,10 @@
 using VirtualGamepadHost.Driver;
 using VirtualGamepadHost.Model;
+using VirtualGamepadHost.Input;
+using VirtualGamepadHost.Integration;
+using VirtualGamepadHost.State;
+using LanInputSync;
+using System.Text.Json;
 
 namespace VirtualGamepadHost.Runtime;
 
@@ -7,6 +12,125 @@ public sealed class ControllerRegistry
 {
     private readonly Dictionary<int, ControllerSlot> _slots;
     private readonly IXInputBackend? _backend;
+    private readonly object _routingGate = new();
+    private readonly Dictionary<int, GamepadState> _lastRemote = new();
+    private ILanSyncService? _sync;
+    private readonly Dictionary<string, long> _syncCommandSequences = new();
+
+    public void AttachSync(ILanSyncService sync)
+    {
+        lock (_routingGate)
+        {
+            if (_sync is not null) throw new InvalidOperationException("Sync service is already attached.");
+            _sync = sync;
+        }
+    }
+
+    public bool IsRemote(int number) => _sync?.OwnsController(number) == true;
+
+    public RunState EffectiveRunState(int number) => IsRemote(number)
+        ? (_sync!.IsRemoteActive(number) ? RunState.Running : RunState.Paused)
+        : Get(number).Safety.RunState;
+
+    public GamepadState EffectiveState(int number)
+    {
+        lock (_routingGate)
+            return IsRemote(number)
+                ? (_sync!.IsRemoteActive(number) ? _lastRemote.GetValueOrDefault(number, GamepadState.Neutral) : GamepadState.Neutral)
+                : Get(number).Store.Snapshot();
+    }
+
+    public void ApplyPhysical(PhysicalInput input)
+    {
+        lock (_routingGate)
+            foreach (var slot in _slots.Values)
+                if (!IsRemote(slot.Number) && slot.Safety.RunState == RunState.Running)
+                    slot.Mapping.Apply(input);
+    }
+
+    public bool ShouldSuppressPhysical(PhysicalInput input)
+    {
+        lock (_routingGate)
+            return _slots.Values.Any(slot => !IsRemote(slot.Number)
+                && slot.Safety.RunState == RunState.Running && slot.Mapping.ShouldSuppress(input));
+    }
+
+    public void ExecuteLocal(int number, Action<ControllerSlot> action)
+    {
+        lock (_routingGate)
+        {
+            if (IsRemote(number)) throw new RemoteOwnershipException(number);
+            action(Get(number));
+        }
+    }
+
+    public void Lifecycle(int number, string action)
+    {
+        lock (_routingGate)
+        {
+            var slot = Get(number);
+            if (IsRemote(number))
+            {
+                slot.Safety.EmergencyReset();
+                _lastRemote[number] = GamepadState.Neutral;
+                _sync!.SetRemoteEnabled(number, action == "start");
+                return;
+            }
+            switch (action)
+            {
+                case "start": slot.Safety.Start(); break;
+                case "pause": slot.Safety.Pause(); break;
+                case "reset": slot.Safety.Reset(); break;
+                default: throw new ArgumentException("Unknown lifecycle action.");
+            }
+        }
+    }
+
+    public void ToggleController(int number)
+    {
+        lock (_routingGate)
+        {
+            var enabled = IsRemote(number) ? _sync!.IsRemoteEnabled(number) : Get(number).Safety.RunState == RunState.Running;
+            Lifecycle(number, enabled ? "pause" : "start");
+        }
+    }
+
+    public object HandleSync(string command, JsonElement payload)
+    {
+        lock (_routingGate)
+        {
+            if (_sync is null)
+            {
+                if (command == "sync.stop") return new { ok = true, unavailable = true };
+                throw new InvalidOperationException("LAN sync is unavailable on this host.");
+            }
+            if (payload.TryGetProperty("_uiSource", out var sourceElement))
+            {
+                var source = sourceElement.GetString() ?? throw new ArgumentException("Missing UI source.");
+                if (string.IsNullOrWhiteSpace(source) || source.Length > 128
+                    || !payload.TryGetProperty("_uiSequence", out var sequenceElement)
+                    || !sequenceElement.TryGetInt64(out var sequence) || sequence < 0)
+                    throw new ArgumentException("UI source requires a non-negative integer sequence and a non-empty source of at most 128 characters.");
+                if (_syncCommandSequences.TryGetValue(source, out var latest) && sequence <= latest)
+                    return new { ok = true, stale = true };
+                if (!_syncCommandSequences.ContainsKey(source) && _syncCommandSequences.Count >= 1024)
+                    throw new InvalidOperationException("Too many UI sessions; restart the host.");
+                _syncCommandSequences[source] = sequence;
+            }
+            else if (payload.TryGetProperty("_uiSequence", out _))
+                throw new ArgumentException("UI source and sequence must be supplied together.");
+            // Management changes cannot race physical writes or the report loop.
+            var previous = _slots.Keys.ToDictionary(number => number, IsRemote);
+            var result = _sync.Handle(command, payload);
+            foreach (var slot in _slots.Values)
+                if (previous[slot.Number] != IsRemote(slot.Number))
+                {
+                    slot.Safety.EmergencyReset();
+                    _lastRemote[slot.Number] = GamepadState.Neutral;
+                }
+            return result;
+        }
+    }
 
     public ControllerRegistry(IEnumerable<ControllerSlot> slots, IXInputBackend? backend = null)
     {
@@ -40,22 +164,26 @@ public sealed class ControllerRegistry
 
     public void SubmitAll()
     {
-        if (_backend is null || !_backend.IsConnected)
+        lock (_routingGate)
         {
-            return;
-        }
-
-        foreach (var slot in Slots)
-        {
-            _backend.Submit(slot.Number, slot.Store.Snapshot());
+            foreach (var slot in _slots.Values)
+            {
+                var remote = IsRemote(slot.Number);
+                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : slot.Store.Snapshot();
+                if (remote) _lastRemote[slot.Number] = state;
+                if (_backend?.IsConnected == true) _backend.Submit(slot.Number, state);
+                if (!remote) _sync?.Publish(slot.Number, LanSyncAdapter.ToNetwork(state), slot.Safety.RunState == RunState.Running);
+            }
         }
     }
 
     public void EmergencyResetAll()
     {
-        foreach (var slot in Slots)
+        lock (_routingGate)
         {
-            slot.Safety.EmergencyReset();
+            _sync?.EmergencyStop();
+            _lastRemote.Clear();
+            foreach (var slot in _slots.Values) slot.Safety.EmergencyReset();
         }
     }
 }

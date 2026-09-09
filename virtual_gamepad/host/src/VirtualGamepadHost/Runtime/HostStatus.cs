@@ -14,4 +14,5 @@ public sealed record ControllerStatus(
     int Controller,
     RunState RunState,
     bool DeviceConnected,
-    VirtualGamepadHost.Model.GamepadState State);
+    VirtualGamepadHost.Model.GamepadState State,
+    string InputOwner = "local");

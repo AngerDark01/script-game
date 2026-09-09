@@ -32,15 +32,23 @@ public sealed class CommandRouter
     {
         try
         {
+            if (message.Type.StartsWith("sync.", StringComparison.Ordinal))
+            {
+                var result = _registry.HandleSync(message.Type, message.Payload);
+                var json = JsonSerializer.SerializeToElement(result, ProtocolSerializer.Options);
+                if (json.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.False)
+                    return ProtocolSerializer.Failure(message.Id, "sync_error", json.GetProperty("error").GetString() ?? "Sync command failed.");
+                return ProtocolSerializer.Success(message.Id, result);
+            }
             return message.Type.Trim().ToLowerInvariant() switch
             {
                 "hello" => ProtocolSerializer.Success(message.Id, new { protocol = 1, device = "xbox360", controllers = _registry.Slots.Count }),
                 "get_status" => ProtocolSerializer.Success(message.Id, _status()),
                 "start" => Start(message),
-                "pause" => Lifecycle(message, slot => slot.Safety.Pause()),
-                "reset" => Lifecycle(message, slot => slot.Safety.Reset()),
+                "pause" => Lifecycle(message, slot => _registry.Lifecycle(slot.Number, "pause")),
+                "reset" => Lifecycle(message, slot => _registry.Lifecycle(slot.Number, "reset")),
                 "emergency_reset" => Run(message.Id, _registry.EmergencyResetAll),
-                "get_state" => ProtocolSerializer.Success(message.Id, Slot(message).Store.Snapshot()),
+                "get_state" => ProtocolSerializer.Success(message.Id, _registry.EffectiveState(Slot(message).Number)),
                 "get_config" => GetConfig(message),
                 "set_config" => SetConfig(message),
                 "button" => HandleButton(message),
@@ -59,6 +67,10 @@ public sealed class CommandRouter
         catch (ArgumentException ex)
         {
             return ProtocolSerializer.Failure(message.Id, "invalid_argument", ex.Message);
+        }
+        catch (RemoteOwnershipException ex)
+        {
+            return ProtocolSerializer.Failure(message.Id, "slot_owned_by_remote", ex.Message);
         }
         catch (InvalidOperationException ex)
         {
@@ -83,7 +95,7 @@ public sealed class CommandRouter
             return ProtocolSerializer.Failure(message.Id, "device_unavailable", "The virtual controller is not connected. Install ViGEmBus and restart the host.");
         }
 
-        return Lifecycle(message, slot => slot.Safety.Start());
+        return Lifecycle(message, slot => _registry.Lifecycle(slot.Number, "start"));
     }
 
     private string Lifecycle(MessageEnvelope message, Action<ControllerSlot> action)
@@ -142,7 +154,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<ButtonCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
-        slot.Store.SetButton(payload.Source, ParseButton(payload.Button), payload.Action.Equals("press", StringComparison.OrdinalIgnoreCase), Ttl(payload.TtlMs));
+        _registry.ExecuteLocal(slot.Number, local => local.Store.SetButton(payload.Source, ParseButton(payload.Button), payload.Action.Equals("press", StringComparison.OrdinalIgnoreCase), Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
     }
 
@@ -150,7 +162,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<AxisCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
-        slot.Store.SetAxis(payload.Source, ParseAxis(payload.Axis), payload.Value, Ttl(payload.TtlMs));
+        _registry.ExecuteLocal(slot.Number, local => local.Store.SetAxis(payload.Source, ParseAxis(payload.Axis), payload.Value, Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
     }
 
@@ -158,7 +170,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<TriggerCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
-        slot.Store.SetTrigger(payload.Source, ParseTrigger(payload.Trigger), payload.Value, Ttl(payload.TtlMs));
+        _registry.ExecuteLocal(slot.Number, local => local.Store.SetTrigger(payload.Source, ParseTrigger(payload.Trigger), payload.Value, Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
     }
 
@@ -166,7 +178,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<StateCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
-        slot.Store.SetState(payload.Source, payload.State, Ttl(payload.TtlMs));
+        _registry.ExecuteLocal(slot.Number, local => local.Store.SetState(payload.Source, payload.State, Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
     }
 
@@ -174,7 +186,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<HeartbeatCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
-        slot.Store.Heartbeat(payload.Source, Ttl(payload.TtlMs));
+        _registry.ExecuteLocal(slot.Number, local => local.Store.Heartbeat(payload.Source, Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
     }
 

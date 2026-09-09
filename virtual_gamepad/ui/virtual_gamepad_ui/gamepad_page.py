@@ -21,11 +21,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QTabWidget,
 )
 
 from .controller_widget import ControllerWidget
 from .models import BindingProfile, CONTROLS, DualUiStatus, StateSnapshot, UiStatus
 from .profile_store import load_profile, save_profile
+from .sync_panel import SyncPanel
 
 if TYPE_CHECKING:
     from virtual_gamepad_client import VirtualGamepadClient
@@ -347,10 +349,12 @@ class GamepadPage(QWidget):
         parent: QWidget | None = None,
         demo: bool = False,
         client_factory: Callable[[], Any] | None = None,
+        sync_client_factory: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__(parent)
         self.client = client
         self._client_factory = client_factory or self._make_client_factory(client)
+        self._sync_client_factory = sync_client_factory or self._make_client_factory(client)
         self.demo = demo
         self.profile_paths = self._profile_paths(Path(profile_root))
         self._profile_load_error = ""
@@ -366,11 +370,14 @@ class GamepadPage(QWidget):
         self._profile_versions = {1: 0, 2: 0}
         self._last_status = UiStatus()
         self._dual_status = DualUiStatus()
+        self._input_owners = {1: "local", 2: "local"}
         self._poll_in_flight = False
         self._command_in_flight = False
         self._shutting_down = False
         self._shutdown_failed = False
         self._shutdown_result_sent = False
+        self._sync_cleanup_done = False
+        self._controller_cleanup_done = False
         self._poll_session_id = 0
         self._lifecycle_source = f"virtual-gamepad-page:{uuid.uuid4().hex}"
         self._lifecycle_sequence = 0
@@ -421,6 +428,7 @@ class GamepadPage(QWidget):
             """
         )
         self._build_ui()
+        self.sync_panel.shutdown_finished.connect(self._on_sync_shutdown)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.refresh)
@@ -630,7 +638,13 @@ class GamepadPage(QWidget):
         shortcut_label.setWordWrap(True)
         side_layout.addWidget(shortcut_label)
         content.addWidget(side)
-        layout.addLayout(content, 1)
+        self.feature_tabs = QTabWidget()
+        mapping_page = QWidget()
+        mapping_page.setLayout(content)
+        self.feature_tabs.addTab(mapping_page, "手柄映射")
+        self.sync_panel = SyncPanel(self._sync_client_factory, demo=self.demo)
+        self.feature_tabs.addTab(self.sync_panel, "设备同步")
+        layout.addWidget(self.feature_tabs, 1)
         self.controller_one_selector.setChecked(True)
         self._select_control(CONTROLS[0])
 
@@ -720,6 +734,9 @@ class GamepadPage(QWidget):
         self._host_error = ""
         self._last_status = UiStatus.from_payload(result.status_payload or {})
         self._dual_status = DualUiStatus.from_payload(result.status_payload or {})
+        for item in (result.status_payload or {}).get("controllers", []):
+            if item.get("controller") in (1, 2):
+                self._input_owners[item["controller"]] = item.get("inputOwner", "local")
         if result.applied_profiles:
             current_applied = {
                 submission.controller
@@ -740,6 +757,9 @@ class GamepadPage(QWidget):
         self.state_label.setText(f"State: {self._last_status.run_state}")
         self.controller_one_status.setText(f"C1: {self._dual_status.for_controller(1).run_state}")
         self.controller_two_status.setText(f"C2: {self._dual_status.for_controller(2).run_state}")
+        for number, label in ((1, self.controller_one_status), (2, self.controller_two_status)):
+            if self._input_owners.get(number) == "remote":
+                label.setText(label.text() + " · 远程")
         self.controller.set_snapshot(state)
         self.controller.set_profile(self.profile)
         self._update_lifecycle_controls()
@@ -797,7 +817,16 @@ class GamepadPage(QWidget):
         if not result.succeeded:
             self._finish_shutdown(False, "; ".join(result.errors))
             return
-        self._finish_shutdown(True, "")
+        self._controller_cleanup_done = True
+        if self._sync_cleanup_done:
+            self._finish_shutdown(True, "")
+
+    def _on_sync_shutdown(self, succeeded: bool, message: str) -> None:
+        self._sync_cleanup_done = succeeded
+        if not succeeded:
+            self._finish_shutdown(False, "设备同步停止失败：" + message)
+        elif self._controller_cleanup_done:
+            self._finish_shutdown(True, "")
 
     def _on_shutdown_timeout(self) -> None:
         self._finish_shutdown(False, "Timed out while waiting for virtual gamepad reset/pause cleanup.")
@@ -1047,6 +1076,9 @@ class GamepadPage(QWidget):
         self._shutdown_result_sent = False
         self._shutdown_failed = False
         self._shutting_down = True
+        self._sync_cleanup_done = False
+        self._controller_cleanup_done = False
+        self.sync_panel.shutdown()
         self._timer.stop()
         self._update_lifecycle_controls()
         self._poll_session_id += 1

@@ -2,6 +2,7 @@ using VirtualGamepadHost.Driver;
 using VirtualGamepadHost.Input;
 using VirtualGamepadHost.Protocol;
 using VirtualGamepadHost.State;
+using LanInputSync;
 
 namespace VirtualGamepadHost.Runtime;
 
@@ -13,11 +14,12 @@ public sealed class HostComposition : IAsyncDisposable
     private readonly NamedPipeServer _pipeServer;
     private readonly RawInputCapture? _rawInput;
     private readonly DriverStatus _driverStatus;
+    private readonly ILanSyncService? _sync;
     private readonly CancellationTokenSource _shutdown = new();
     private Task? _reportTask;
     private Task? _pipeTask;
 
-    private HostComposition(ControllerRegistry registry, IXInputBackend backend, ReportLoop reportLoop, NamedPipeServer pipeServer, DriverStatus driverStatus, RawInputCapture? rawInput)
+    private HostComposition(ControllerRegistry registry, IXInputBackend backend, ReportLoop reportLoop, NamedPipeServer pipeServer, DriverStatus driverStatus, RawInputCapture? rawInput, ILanSyncService? sync)
     {
         _registry = registry;
         _backend = backend;
@@ -25,6 +27,7 @@ public sealed class HostComposition : IAsyncDisposable
         _pipeServer = pipeServer;
         _driverStatus = driverStatus;
         _rawInput = rawInput;
+        _sync = sync;
     }
 
     public static HostComposition Create()
@@ -45,26 +48,33 @@ public sealed class HostComposition : IAsyncDisposable
         }
 
         var registry = ControllerRegistry.CreateDefault(backend);
+        ILanSyncService? sync = null;
+        string syncError = "";
+        try
+        {
+            sync = new LanSyncService();
+            registry.AttachSync(sync);
+        }
+        catch (Exception ex)
+        {
+            sync?.Dispose();
+            sync = null;
+            syncError = $" LAN sync unavailable: {ex.Message}";
+        }
         RawInputCapture? rawInput = null;
         try
         {
             rawInput = new RawInputCapture(
-                input =>
-                {
-                    foreach (var slot in registry.Slots.Where(slot => slot.Safety.RunState == RunState.Running))
-                    {
-                        slot.Mapping.Apply(input);
-                    }
-                },
+                registry.ApplyPhysical,
                 onHotkey: action =>
                 {
                     switch (action)
                     {
                         case HotkeyAction.ToggleController1:
-                            registry[1].Safety.TogglePause();
+                            registry.ToggleController(1);
                             break;
                         case HotkeyAction.ToggleController2:
-                            registry[2].Safety.TogglePause();
+                            registry.ToggleController(2);
                             break;
                         case HotkeyAction.EmergencyResetAll:
                             registry.EmergencyResetAll();
@@ -73,7 +83,7 @@ public sealed class HostComposition : IAsyncDisposable
                 },
                 shouldSuppress: input =>
                     backend.IsConnected
-                    && registry.Slots.Any(slot => slot.Safety.RunState == RunState.Running && IsNotControlHotkey(input) && slot.Mapping.ShouldSuppress(input)));
+                    && IsNotControlHotkey(input) && registry.ShouldSuppressPhysical(input));
             rawInput.Start();
         }
         catch (Exception ex)
@@ -86,13 +96,13 @@ public sealed class HostComposition : IAsyncDisposable
         HostStatus Status()
         {
             var inputStatus = rawInput?.CaptureMode ?? "Input capture unavailable";
-            var controllerStatuses = registry.Slots.Select(slot => new ControllerStatus(slot.Number, slot.Safety.RunState, backend.IsConnected && slot.Number <= backend.ControllerCount, slot.Store.Snapshot())).ToArray();
+            var controllerStatuses = registry.Slots.Select(slot => new ControllerStatus(slot.Number, registry.EffectiveRunState(slot.Number), backend.IsConnected && slot.Number <= backend.ControllerCount, registry.EffectiveState(slot.Number), registry.IsRemote(slot.Number) ? "remote" : "local")).ToArray();
             var firstState = controllerStatuses.FirstOrDefault();
-            return new(firstState?.RunState ?? RunState.Ready, driverStatus.Installed, backend.IsConnected, $"{driverStatus.Message} Input: {inputStatus}.", controllerStatuses);
+            return new(firstState?.RunState ?? RunState.Ready, driverStatus.Installed, backend.IsConnected, $"{driverStatus.Message} Input: {inputStatus}.{syncError}", controllerStatuses);
         }
 
         var router = new CommandRouter(registry, Status, () => backend.IsConnected);
-        return new HostComposition(registry, backend, new ReportLoop(registry, backend), new NamedPipeServer(router), driverStatus, rawInput);
+        return new HostComposition(registry, backend, new ReportLoop(registry, backend), new NamedPipeServer(router), driverStatus, rawInput, sync);
     }
 
     private static bool IsNotControlHotkey(PhysicalInput input)
@@ -102,7 +112,7 @@ public sealed class HostComposition : IAsyncDisposable
     {
         get
         {
-            var statuses = _registry.Slots.Select(slot => new ControllerStatus(slot.Number, slot.Safety.RunState, _backend.IsConnected && slot.Number <= _backend.ControllerCount, slot.Store.Snapshot())).ToArray();
+            var statuses = _registry.Slots.Select(slot => new ControllerStatus(slot.Number, _registry.EffectiveRunState(slot.Number), _backend.IsConnected && slot.Number <= _backend.ControllerCount, _registry.EffectiveState(slot.Number), _registry.IsRemote(slot.Number) ? "remote" : "local")).ToArray();
             return new(statuses[0].RunState, _driverStatus.Installed, _backend.IsConnected, _driverStatus.Message, statuses);
         }
     }
@@ -130,6 +140,7 @@ public sealed class HostComposition : IAsyncDisposable
         }
 
         _registry.EmergencyResetAll();
+        _sync?.Dispose();
         _rawInput?.Dispose();
         _backend.Stop();
         _backend.Dispose();

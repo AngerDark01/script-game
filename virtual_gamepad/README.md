@@ -61,6 +61,42 @@ For normal use, double-click [启动 Virtual Gamepad.exe](D:/ACloud/auto_modules
 
 Use `python -m virtual_gamepad_ui.main --demo` to inspect the UI without a host or driver.
 
+## LAN controller synchronization
+
+The workbench's controller page now contains a **设备同步** tab (also available
+in the standalone mapping UI). The host loads the independent sibling module
+`../lan_input_sync`; the UI does not own network connections. No extra manual
+background process is required. Network mode and input permissions start off
+each time the host starts; saved device names, addresses and pairing trust are
+retained without automatically resuming control.
+
+On each receiving PC, select receive mode and its actual LAN IPv4 address,
+apply settings, generate a temporary device code and allow the desired
+controller slots. On the sending PC, select send mode, apply settings, discover
+or enter the receiver address and its code. Compare the confirmation code on
+both screens and confirm on **both** PCs. Select the paired receiver, choose
+Controller 1 and/or 2 and start synchronization. Repeat for additional receivers.
+Start the sender's local mappings with F7/F8 to produce input.
+
+Only final Xbox reports are sent, including program-generated host actions;
+raw keyboard/mouse events are not injected into another PC. A receiver-owned
+slot does not intercept that PC's local input. Other locally owned slots still
+follow their own mapping settings. F7/F8 toggle permission for the corresponding
+remote slot; F9 stops all sessions and releases output. After loss or F9, enable
+reception and explicitly start sending again. Merely restoring the network does
+not replay queued actions.
+
+Both PCs need this updated software and their own installed ViGEmBus driver.
+Use a trusted private LAN; allow the host on Windows Firewall's private profile
+if prompted. The default is TCP/UDP 45873, limited by configuration to a concrete
+private IPv4 address. Do not expose or forward this port to the Internet. Do not
+copy per-user device identity or trust files to the other PC.
+
+See [LAN module guide](../lan_input_sync/README.md) for protocol boundaries,
+configuration and verification details. A full source checkout for building
+this host must include the sibling `lan_input_sync` directory. Compiled host
+deployment includes `LanInputSync.dll` and its dependencies alongside the host.
+
 ## Python control example
 
 ```python

@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+    <ProjectReference Include="../../../../lan_input_sync/src/LanInputSync/LanInputSync.csproj" />
   </ItemGroup>
 
 </Project>

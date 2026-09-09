@@ -9,4 +9,5 @@ client/**/*.pyc
 launcher/**/bin/
 launcher/**/obj/
 launcher/publish/
+dist/
 /启动 Virtual Gamepad.exe
