@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from core.events.debug import event_log
+from core.runtime_paths import data_root
 
 from .assets import ROOT
 from .config import LootEventConfig
@@ -23,7 +24,7 @@ class LootDiagnosticCapture:
 
     def __init__(self) -> None:
         stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-        self.output_dir = ROOT / "debug" / "loot_runtime_diagnostics" / f"{stamp}_pid{os.getpid()}"
+        self.output_dir = data_root(ROOT) / "debug" / "loot_runtime_diagnostics" / f"{stamp}_pid{os.getpid()}"
         self.last_capture_ms = -1
         self.capture_count = 0
 

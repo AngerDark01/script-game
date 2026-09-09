@@ -4,11 +4,12 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from core.runtime_paths import data_root
 
 from .formatting import _format_fields
 from .topics import _event_topic, _sanitize_topic
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = data_root(Path(__file__).resolve().parents[3])
 _EVENT_LOG_PATH = _PROJECT_ROOT / "logs" / "event_runtime.log"
 _EVENT_RUN_DIR = _PROJECT_ROOT / "logs" / "event_runs"
 _EVENT_SESSION_PID = os.getpid()

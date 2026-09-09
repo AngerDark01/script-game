@@ -7,6 +7,7 @@
 
 import time
 from pathlib import Path
+from core.runtime_paths import data_root
 
 from PySide6.QtWidgets import QMessageBox, QWidget
 
@@ -373,7 +374,7 @@ class NavigationModeWidget(QWidget):
             source = "manual_capture"
 
         result = save_minimap_sample(
-            project_root=Path(__file__).resolve().parents[3],
+            project_root=data_root(Path(__file__).resolve().parents[3]),
             map_name=self.map_combo.currentText() if self.map_combo else "",
             frame=frame,
             capture_rect=capture_rect,

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from ctypes import wintypes
+from core.runtime_paths import data_root
 
 
 DEBUG_CONSOLE_ENV = "MINIMAP_DEBUG_CONSOLE"
@@ -85,7 +86,7 @@ def configure_runtime_output():
             except Exception:
                 pass
 
-    log_dir = Path(__file__).resolve().parent / "logs"
+    log_dir = data_root(Path(__file__).resolve().parent) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "runtime.log"
     _RUNTIME_LOG_HANDLE = log_path.open("w", encoding="utf-8-sig", buffering=1)

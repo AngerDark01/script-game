@@ -1,0 +1,19 @@
+# Complete runtime closure pinned from the tested development environment.
+colorama==0.4.6
+flatbuffers==25.12.19
+mss==10.1.0
+numpy==2.4.1
+onnxruntime==1.29.0
+opencv-python==4.13.0.90
+packaging==26.3
+pillow==12.1.0
+protobuf==7.36.1
+pyclipper==1.4.0
+PyDirectInput==1.0.4
+PySide6_Essentials==6.10.1
+PyYAML==6.0.3
+rapidocr-onnxruntime==1.4.4
+shapely==2.1.2
+shiboken6==6.10.1
+six==1.17.0
+tqdm==4.67.3

@@ -206,6 +206,9 @@ class GamepadHostManager:
 
     @classmethod
     def _default_host_directory(cls) -> Path:
+        installed_host = os.environ.get("AUTO_MODULES_HOST_DIR")
+        if installed_host:
+            return Path(installed_host).resolve()
         return cls._workspace_root() / "virtual_gamepad" / "host" / "src" / "VirtualGamepadHost" / "bin" / "Release" / "net8.0-windows"
 
     @classmethod
@@ -213,6 +216,10 @@ class GamepadHostManager:
         host_directory = cls._default_host_directory()
         host_dll = host_directory / "VirtualGamepadHost.dll"
         host_exe = host_directory / "VirtualGamepadHost.exe"
+        if os.environ.get("AUTO_MODULES_HOST_DIR"):
+            if not host_exe.is_file():
+                raise FileNotFoundError(f"Installed Virtual Gamepad Host was not found: {host_exe}")
+            return [str(host_exe)]
         if host_dll.exists():
             workspace_runtime = cls._workspace_root().parent / "dotnet-sdk2" / "dotnet.exe"
             if workspace_runtime.exists():

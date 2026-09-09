@@ -4,11 +4,12 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from core.runtime_paths import data_root
 
 from .formatting import format_fields
 
 
-_COORD_LOG_PATH = Path(__file__).resolve().parents[3] / "logs" / "coordinate_diagnostics.log"
+_COORD_LOG_PATH = data_root(Path(__file__).resolve().parents[3]) / "logs" / "coordinate_diagnostics.log"
 _COORD_SESSION_STARTED = False
 
 

@@ -10,6 +10,8 @@ from datetime import datetime
 import json
 import cv2
 import numpy as np
+from pathlib import Path
+from core.runtime_paths import data_root
 
 
 def _configure_console_encoding() -> None:
@@ -28,7 +30,7 @@ def setup_detailed_logging():
     """设置详细日志记录"""
     _configure_console_encoding()
     # 创建logs目录
-    log_dir = "logs"
+    log_dir = str(data_root(Path.cwd()) / "logs")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     

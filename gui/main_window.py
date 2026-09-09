@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from core.runtime_paths import data_root
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QStackedWidget, QApplication
@@ -16,7 +17,7 @@ from .gamepad.host_manager import GamepadHostManager
 from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
 
 
-GAMEPAD_CONFIG_ROOT = Path(__file__).resolve().parents[1] / "virtual_gamepad" / "configs"
+GAMEPAD_CONFIG_ROOT = data_root(Path(__file__).resolve().parents[1]) / "virtual_gamepad" / "configs"
 
 class MainWindow(QMainWindow):
     """主应用程序窗口，负责模式切换和UI骨架。"""

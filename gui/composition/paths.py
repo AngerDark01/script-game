@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from core.runtime_paths import data_root
 
 
 def project_root_from_file(file_path: str | Path) -> Path:
@@ -23,11 +24,11 @@ def project_root_from_map_folder(map_folder_path: str | Path) -> Path:
 
 
 def map_data_dir_from_file(file_path: str | Path) -> Path:
-    return project_root_from_file(file_path) / "map_data"
+    return data_root(project_root_from_file(file_path)) / "map_data"
 
 
 def root_config_path_from_file(file_path: str | Path) -> Path:
-    return project_root_from_file(file_path) / "config.json"
+    return data_root(project_root_from_file(file_path)) / "config.json"
 
 
 def root_config_path_from_map_folder(map_folder_path: str | Path) -> Path:
@@ -35,4 +36,4 @@ def root_config_path_from_map_folder(map_folder_path: str | Path) -> Path:
 
 
 def advanced_settings_dir_from_file(file_path: str | Path) -> Path:
-    return project_root_from_file(file_path) / "configs" / "advanced_settings"
+    return data_root(project_root_from_file(file_path)) / "configs" / "advanced_settings"
