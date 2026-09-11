@@ -13,6 +13,17 @@ class LanPage(QWidget):
         QFrame[role="hero"] { background:#102238; border:1px solid #294967; border-radius:14px; }
         QLabel[role="eyebrow"] { color:#6fc7ee; font-size:11px; font-weight:700; }
         QLabel[role="muted"] { color:#9aafc4; }
+        QScrollArea { border:0; background:transparent; }
+        QScrollArea QWidget { background:transparent; }
+        QLineEdit, QComboBox, QSpinBox { min-height:34px; padding:0 10px; border:1px solid #29435f; border-radius:7px; background:#0d1a2b; color:#e7eef8; }
+        QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color:#38bce9; }
+        QCheckBox { spacing:8px; color:#b9c9da; min-height:30px; }
+        QListWidget { background:#0d1929; border:1px solid #213750; border-radius:9px; padding:5px; }
+        QListWidget::item { padding:10px; border-radius:6px; }
+        QListWidget::item:selected { background:#174363; color:#f3fbff; }
+        QPushButton { min-height:36px; padding:0 14px; border-radius:8px; border:1px solid #2e4967; background:#17283d; color:#e7eef8; }
+        QPushButton:hover { background:#203954; border-color:#35b9f2; }
+        QFormLayout QLabel { color:#91a8be; }
         ''')
         root = QVBoxLayout(self); root.setContentsMargins(24,20,24,24); root.setSpacing(14)
         hero = QFrame(); hero.setProperty('role','hero'); hl = QHBoxLayout(hero)
