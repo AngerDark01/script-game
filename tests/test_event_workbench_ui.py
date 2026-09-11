@@ -15,4 +15,8 @@ def test_event_workbench_has_separate_edit_route_and_monitor_tabs(tmp_path):
     assert page.track_table.item(0, 1).text() == 'LB+X'
     page._save()
     assert (tmp_path / 'events.json').is_file()
+    page._add_route()
+    page.routes.item(0, 1).setText('F6')
+    page._save()
+    assert 'F6' in (tmp_path / 'routes.json').read_text(encoding='utf-8')
     page.close()

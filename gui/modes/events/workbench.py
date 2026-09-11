@@ -71,7 +71,8 @@ class EventWorkbenchPage(QWidget):
     def _build_routes(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.addWidget(QLabel('把来源电脑的快捷键或远程操作，路由到目标电脑和目标手柄。'))
         self.routes = QTableWidget(0, 5); self.routes.setHorizontalHeaderLabels(['来源设备', '触发键', '事件', '目标设备', '目标手柄']); layout.addWidget(self.routes, 1)
-        add = QPushButton('新增触发规则'); add.clicked.connect(self._add_route); layout.addWidget(add); self.tabs.addTab(page, '触发与路由')
+        row=QHBoxLayout(); add = QPushButton('新增触发规则'); add.clicked.connect(self._add_route); row.addWidget(add)
+        remove=QPushButton('删除选中规则'); remove.clicked.connect(self._remove_route); remove.setStyleSheet('color:#ff9d9d; border-color:#70414a;'); row.addWidget(remove); row.addStretch(); layout.addLayout(row); self.tabs.addTab(page, '触发与路由')
 
     def _build_runtime(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.addWidget(QLabel('显示远程事件的发送、接收和执行状态，不表示游戏内技能成功。'))
@@ -122,8 +123,18 @@ class EventWorkbenchPage(QWidget):
         for c, value in enumerate(('B端', 'F5', self.events[0]['name'] if self.events else '', 'A端', 'Controller 1')): self.routes.setItem(r, c, QTableWidgetItem(value))
         self.routes_data.append(dict(source='B端',trigger='F5',event=self.events[0]['name'] if self.events else '',target='A端',controller='Controller 1'))
 
+    def _remove_route(self):
+        row=self.routes.currentRow()
+        if row >= 0:
+            self.routes.removeRow(row)
+            if row < len(self.routes_data): self.routes_data.pop(row)
+
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.routes_data=[]
+        for r in range(self.routes.rowCount()):
+            values=[self.routes.item(r,c).text().strip() if self.routes.item(r,c) else '' for c in range(5)]
+            self.routes_data.append(dict(zip(('source','trigger','event','target','controller'),values)))
         self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8')
         self.routes_path.write_text(json.dumps(self.routes_data, ensure_ascii=False, indent=2), encoding='utf-8')
         self.status.setText(f'已保存 {len(self.events)} 个事件和 {len(self.routes_data)} 条路由')
