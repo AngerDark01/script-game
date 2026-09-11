@@ -8,7 +8,7 @@ def test_event_workbench_has_separate_edit_route_and_monitor_tabs(tmp_path):
     app = QApplication.instance() or QApplication([])
     page = EventWorkbenchPage(root=tmp_path)
     assert page.tabs.count() == 3
-    assert [page.tabs.tabText(i) for i in range(3)] == ['事件库 / 编排', '触发与路由', '运行监控']
+    assert [page.tabs.tabText(i) for i in range(3)] == ['事件库', '触发与路由', '运行监控']
     page.events.append({'name': '技能A', 'tracks': [{'mode': 'once', 'buttons': ['LB', 'X'], 'hold_ms': 80}]})
     page._refresh()
     assert page.list.count() == 1

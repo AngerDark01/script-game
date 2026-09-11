@@ -21,12 +21,30 @@ class EventWorkbenchPage(QWidget):
         except (OSError, ValueError): return []
 
     def _build(self):
-        root = QVBoxLayout(self); head = QHBoxLayout(); root.addLayout(head)
-        title = QLabel('事件工作台'); title.setStyleSheet('font-size: 22px; font-weight: 700;'); head.addWidget(title)
-        head.addWidget(QLabel('编辑按键事件、组合轨道和远程触发规则；跟随执行请到导航模式配置。'), 1)
-        self.save = QPushButton('保存事件版本'); self.save.clicked.connect(self._save); head.addWidget(self.save)
-        self.status = QLabel('未运行 · 仅编辑配置'); root.addWidget(self.status)
-        self.tabs = QTabWidget(); root.addWidget(self.tabs, 1)
+        self.setObjectName('eventWorkbench')
+        self.setStyleSheet('''
+        #eventWorkbench { background:#09111f; color:#e7eef8; }
+        QPushButton { min-height:36px; padding:0 16px; border-radius:8px; border:1px solid #2e4967; background:#17283d; color:#e7eef8; }
+        QPushButton:hover { background:#203954; border-color:#35b9f2; }
+        QPushButton[role="primary"] { background:#1aa6dc; border-color:#43c7f3; color:#061321; font-weight:700; }
+        QTabWidget::pane { border:0; }
+        QTabBar::tab { background:#0e1a2b; color:#91a7bd; padding:14px 18px; margin:3px; border-radius:8px; min-width:130px; }
+        QTabBar::tab:selected { background:#163653; color:#53c8f4; border:1px solid #2e9bc7; }
+        QListWidget { background:#0d1929; border:1px solid #213750; padding:8px; border-radius:10px; }
+        QListWidget::item { padding:13px 12px; border-radius:7px; color:#a9bbcf; }
+        QListWidget::item:selected { background:#174363; color:#f3fbff; }
+        QTableWidget { background:#0d1929; border:1px solid #213750; border-radius:8px; gridline-color:#1d3047; }
+        QHeaderView::section { background:#15263b; color:#86a7c6; border:0; padding:9px; }
+        ''')
+        root = QVBoxLayout(self); root.setContentsMargins(24,20,24,24); root.setSpacing(14)
+        head = QHBoxLayout(); root.addLayout(head)
+        title_box=QVBoxLayout(); head.addLayout(title_box)
+        kicker=QLabel('AUTOMATION STUDIO'); kicker.setStyleSheet('color:#6e9fc9; font-size:11px; font-weight:700;'); title_box.addWidget(kicker)
+        title = QLabel('事件工作台'); title.setStyleSheet('font-size:26px; font-weight:800;'); title_box.addWidget(title)
+        subtitle=QLabel('把按键动作编排成可复用事件，再路由到指定电脑和手柄。'); subtitle.setStyleSheet('color:#93a7bd;'); title_box.addWidget(subtitle)
+        head.addStretch(); self.save = QPushButton('保存事件版本'); self.save.setProperty('role','primary'); self.save.clicked.connect(self._save); head.addWidget(self.save)
+        self.status = QLabel('● 仅编辑配置'); self.status.setStyleSheet('color:#93a7bd;'); root.addWidget(self.status)
+        self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.West); root.addWidget(self.tabs, 1)
         self._build_library(); self._build_routes(); self._build_runtime()
 
     def _build_library(self):
@@ -34,11 +52,14 @@ class EventWorkbenchPage(QWidget):
         self.list = QListWidget(); self.list.currentRowChanged.connect(self._select); layout.addWidget(self.list, 1)
         right = QVBoxLayout(); layout.addLayout(right, 3); actions = QHBoxLayout(); right.addLayout(actions)
         for text, cb in [('新建事件', self._new), ('编辑事件', self._edit), ('复制事件', self._copy), ('删除事件', self._remove)]:
-            b = QPushButton(text); b.clicked.connect(cb); actions.addWidget(b)
+            b = QPushButton(text); b.clicked.connect(cb)
+            if text == '新建事件': b.setProperty('role', 'primary')
+            if text == '删除事件': b.setStyleSheet('color:#ff9d9d; border-color:#70414a;')
+            actions.addWidget(b)
         self.summary = QLabel('请选择一个事件'); self.summary.setWordWrap(True); right.addWidget(self.summary)
         self.track_table = QTableWidget(0, 5); self.track_table.setHorizontalHeaderLabels(['模式', '按钮/组合', '保持(ms)', '间隔(ms)', '轨道结束(ms)']); right.addWidget(self.track_table, 2)
         self.timeline = QLabel('时间线预览将在选择事件后显示'); self.timeline.setStyleSheet('padding: 16px; background: rgba(255,255,255,0.04);'); right.addWidget(self.timeline)
-        self.tabs.addTab(page, '事件库 / 编排')
+        self.tabs.addTab(page, '事件库')
 
     def _build_routes(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.addWidget(QLabel('把来源电脑的快捷键或远程操作，路由到目标电脑和目标手柄。'))
