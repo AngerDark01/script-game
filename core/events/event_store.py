@@ -23,7 +23,17 @@ class EventStore:
             return []
 
     def local(self) -> list[dict]:
-        records = migrate_events(self._read(self.local_path), self.device_id)
+        raw = self._read(self.local_path)
+        records = migrate_events(raw, self.device_id)
+        # Legacy event files may not have versioned IDs.  Persist the
+        # migration once so catalog publication and a later event trigger use
+        # the same identity instead of generating a new UUID per read.
+        if records != raw:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.local_path.write_text(
+                json.dumps(records, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         return [item for item in records if not item.get("deleted", False)]
 
     def remote(self) -> list[dict]:

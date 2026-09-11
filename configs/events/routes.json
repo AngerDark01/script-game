@@ -1,0 +1,9 @@
+[
+  {
+    "source": "本机",
+    "trigger": "F5",
+    "event": "翻滚测试",
+    "target": "本机",
+    "controller": "Controller 1"
+  }
+]

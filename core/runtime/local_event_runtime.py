@@ -9,6 +9,15 @@ from core.runtime.event_session import EventSession
 from core.runtime_paths import data_root
 from core.events.event_store import EventStore
 from core.events.event_catalog import catalog_summary
+from core.actions.program_gamepad import host_clock_ms
+
+
+def _data_only_peers(status: dict) -> list[dict]:
+    """Return only live event/position sessions, never controller sessions."""
+    return [
+        peer for peer in status.get('peers', [])
+        if peer.get('connected') and peer.get('syncing') and peer.get('dataOnly')
+    ]
 
 def _event_log(message: str) -> None:
     try:
@@ -66,8 +75,10 @@ class LocalEventRuntime:
             from virtual_gamepad.client.python import VirtualGamepadClient
             client = (self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
             _event_log('host pipe connected')
-            if remote_routes:
-                _event_log(f'remote routes loaded keys={sorted(remote_routes)}')
+            _event_log(
+                f'event routes loaded local={sorted(routes)} '
+                f'remote={sorted(remote_routes)}'
+            )
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             device_status = client.request('sync.status').get('status', {})
             store = EventStore(self.root, str(device_status.get('deviceId', 'local')))
@@ -77,13 +88,12 @@ class LocalEventRuntime:
             while not self.stop_event.is_set():
                 if time.monotonic() - last_catalog >= 2.0:
                     status = client.request('sync.status').get('status', {})
-                    for peer in status.get('peers', []):
-                        if peer.get('connected') and peer.get('syncing') and peer.get('dataOnly'):
-                            try:
-                                client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': self._catalog_payload(store, str(status.get('deviceId', 'local')))})
-                                _event_log(f'event catalog sent device={peer.get("deviceId")} count={len(store.local())}')
-                            except Exception as exc:
-                                _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
+                    for peer in _data_only_peers(status):
+                        try:
+                            client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': self._catalog_payload(store, str(status.get('deviceId', 'local')))})
+                            _event_log(f'event catalog sent device={peer.get("deviceId")} count={len(store.local())}')
+                        except Exception as exc:
+                            _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
                     last_catalog = time.monotonic()
                 for key, (name, _, target) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
@@ -94,20 +104,42 @@ class LocalEventRuntime:
                         if key in remote_routes:
                             try:
                                 status = client.request('sync.status').get('status', {})
-                                peers = [p for p in status.get('peers', []) if p.get('connected') and p.get('syncing')]
+                                peers = _data_only_peers(status)
                                 if not peers:
                                     raise RuntimeError('no connected shared-event peer')
+                                _event_log(
+                                    'remote event route status '
+                                    f"peers={[(p.get('deviceId'), p.get('connected'), p.get('syncing'), p.get('dataOnly')) for p in status.get('peers', [])]}"
+                                )
                                 targets = [str(n) for n in targets_for_route]
                                 record = store.by_name(name)
                                 for peer in peers:
+                                    # Catalog and event share the same ordered
+                                    # data session.  This removes the startup
+                                    # race where the event arrives before the
+                                    # receiver has its read-only definition.
+                                    try:
+                                        client.request('sync.share.catalog', {
+                                            'deviceId': peer.get('deviceId'),
+                                            'catalog': self._catalog_payload(
+                                                store, str(status.get('deviceId', 'local'))
+                                            ),
+                                        })
+                                        _event_log(f'event catalog ensured device={peer.get("deviceId")}')
+                                    except Exception as exc:
+                                        _event_log(f'event catalog ensure error device={peer.get("deviceId")} error={exc!r}')
                                     reply = client.request('sync.share.event', {
                                         'deviceId': peer.get('deviceId'), 'name': name,
                                         'eventId': (record or {}).get('id', ''),
                                         'eventRevision': int((record or {}).get('revision', 0)),
                                         'targets': targets,
-                                        'deadlineMs': int(time.monotonic() * 1000) + 500,
+                                        'deadlineMs': host_clock_ms() + 500,
                                     })
-                                    _event_log(f'remote event sent key={key} event={name} device={peer.get("deviceId")} targets={targets} reply={reply}')
+                                    _event_log(
+                                        f'remote event sent key={key} event={name} '
+                                        f'eventId={(record or {}).get("id", "")} '
+                                        f'device={peer.get("deviceId")} targets={targets} reply={reply}'
+                                    )
                                 self.trigger_count += 1; self.last_event = name
                             except Exception as exc:
                                 _event_log(f'remote event send error key={key} event={name} error={exc!r}')

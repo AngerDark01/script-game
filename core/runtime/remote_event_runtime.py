@@ -52,6 +52,32 @@ class RemoteEventRuntime:
             elif ('1' in text or not result) and 1 not in result: result.append(1)
         return tuple(result or (1,))
 
+    @staticmethod
+    def _resolve_event_name(store, item):
+        """Resolve a shared event without losing compatibility with old IDs."""
+        name = str(item.get('name', ''))
+        event_id = str(item.get('eventId') or '')
+        if not event_id:
+            return name
+        record = store.by_id(event_id)
+        if record is not None:
+            return str(record.get('name') or name)
+
+        # Older senders could generate a fresh UUID for legacy events on each
+        # read.  A paired receiver may still safely use the name when its
+        # catalog has the same-or-newer revision.
+        fallback = store.by_name(name)
+        sent_revision = int(item.get('eventRevision') or 0)
+        if fallback is not None and int(fallback.get('revision', 0)) >= sent_revision:
+            _event_log(
+                f'remote event id fallback id={event_id} name={name} '
+                f'revision={fallback.get("revision", 0)}'
+            )
+            return str(fallback.get('name') or name)
+        reason = 'catalog_pending' if fallback is not None else 'event_not_found'
+        _event_log(f'remote event rejected id={event_id} reason={reason}')
+        return None
+
     def _run(self):
         client=None
         try:
@@ -60,6 +86,11 @@ class RemoteEventRuntime:
             client=(self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
             _event_log('remote listener host pipe connected')
             status = client.request('sync.status').get('status', {})
+            _event_log(
+                'remote listener sync status '
+                f"mode={status.get('mode')} receiveEvents={status.get('receiveEvents')} "
+                f"peers={[(p.get('deviceId'), p.get('connected'), p.get('syncing'), p.get('dataOnly')) for p in status.get('peers', [])]}"
+            )
             store = EventStore(self.root, str(status.get('deviceId', 'local')))
             definitions=self._definitions(store); sessions={1:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)),2:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             last_catalog = 0.0
@@ -76,6 +107,11 @@ class RemoteEventRuntime:
                                 _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
                     last_catalog = time.monotonic()
                 reply=client.request('sync.share.drain')
+                if reply.get('events') or reply.get('catalogs'):
+                    _event_log(
+                        f"remote drain events={len(reply.get('events', []))} "
+                        f"catalogs={len(reply.get('catalogs', []))}"
+                    )
                 for catalog in reply.get('catalogs', []):
                     definitions_list = catalog.get('definitions', []) if isinstance(catalog, dict) else []
                     if definitions_list:
@@ -84,18 +120,22 @@ class RemoteEventRuntime:
                             definitions.clear(); definitions.update(self._definitions(store))
                             _event_log(f'event catalog applied owner={catalog.get("deviceId")} changed={changed}')
                 for item in reply.get('events',[]):
-                    name=str(item.get('name',''))
-                    event_id=str(item.get('eventId') or '')
-                    if event_id:
-                        record=store.by_id(event_id)
-                        if record is None:
-                            _event_log(f'remote event rejected id={event_id} reason=event_not_found')
-                            continue
-                        name=str(record.get('name') or name)
+                    name = self._resolve_event_name(store, item)
+                    if name is None:
+                        continue
                     for controller in self._controllers(item.get('targets',())):
-                        sessions[controller].start(name)
+                        if not sessions[controller].start(name):
+                            _event_log(
+                                f'remote event rejected name={name} '
+                                f'controller={controller} reason=definition_not_found'
+                            )
+                            continue
+                        _event_log(f'remote event session started name={name} controller={controller}')
                     self.receive_count+=1; self.last_event=name
-                    _event_log(f'remote event received name={name} targets={item.get("targets", ())}')
+                    _event_log(
+                        f'remote event received name={name} id={item.get("eventId", "")} '
+                        f'targets={item.get("targets", ())}'
+                    )
                 for controller,session in sessions.items():
                     buttons=0
                     for button in session.tick(): buttons |= BUTTONS.get(button,0)

@@ -1,6 +1,7 @@
 """Direct sender for remote events; does not start localization or follow workers."""
 from __future__ import annotations
-import time
+
+from core.actions.program_gamepad import host_clock_ms
 
 class RemoteEventSender:
     def __init__(self, client_factory=None):
@@ -13,6 +14,22 @@ class RemoteEventSender:
         from virtual_gamepad.client.python import VirtualGamepadClient
         client = (self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
         try:
-            return client.request('sync.share.event', {'deviceId': device_id.strip(), 'name': event_name.strip(), 'targets': targets, 'deadlineMs': int(time.monotonic()*1000)+1000})
+            status = client.request('sync.status').get('status', {})
+            peer = next(
+                (item for item in status.get('peers', [])
+                 if str(item.get('deviceId', '')).strip() == device_id.strip()),
+                None,
+            )
+            if peer is None or not peer.get('connected') or not peer.get('syncing') or not peer.get('dataOnly'):
+                raise RuntimeError('target has no connected shared-event session')
+            # LanSyncService validates deadlines against .NET TickCount64 and
+            # accepts at most 500 ms.  Use the same host clock as program
+            # gamepad output; Python's monotonic clock is not a wire contract.
+            return client.request('sync.share.event', {
+                'deviceId': device_id.strip(),
+                'name': event_name.strip(),
+                'targets': targets,
+                'deadlineMs': host_clock_ms() + 250,
+            })
         finally:
             client.close()
