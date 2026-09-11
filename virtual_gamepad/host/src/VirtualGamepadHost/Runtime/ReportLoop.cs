@@ -38,9 +38,22 @@ public sealed class ReportLoop
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(_interval);
-        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        HostDiagnostics.Write($"report loop started intervalMs={_interval.TotalMilliseconds:0}");
+        try
         {
-            SubmitOnce();
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                SubmitOnce();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            HostDiagnostics.Write("report loop cancelled");
+        }
+        catch (Exception ex)
+        {
+            HostDiagnostics.Write($"report loop failed type={ex.GetType().FullName} message={ex.Message} stack={ex.StackTrace}");
+            throw;
         }
     }
 }
