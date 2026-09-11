@@ -67,7 +67,25 @@ class EventWorkbenchPage(QWidget):
         self.remote_button = QPushButton('启动远程事件监控'); self.remote_button.clicked.connect(self._toggle_remote_runtime); buttons.addWidget(self.remote_button)
         # Horizontal workspace tabs keep Chinese labels readable at normal widths.
         self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.North); root.addWidget(self.tabs, 1)
-        self._build_library(); self._build_routes(); self._build_runtime()
+        self._build_library(); self._build_routes(); self._build_runtime(); self._build_remote_sender()
+
+    def _build_remote_sender(self):
+        page = QWidget(); layout = QVBoxLayout(page)
+        layout.addWidget(QLabel('远程事件发送：不依赖定位监视，只发送事件到已配对设备。'))
+        self.remote_device = QLineEdit(); self.remote_device.setPlaceholderText('目标设备 ID'); layout.addWidget(self.remote_device)
+        self.remote_event = QComboBox(); self.remote_event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); layout.addWidget(self.remote_event)
+        self.remote_controller = QComboBox(); self.remote_controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); layout.addWidget(self.remote_controller)
+        button = QPushButton('发送远程事件'); button.clicked.connect(self._send_remote_event); layout.addWidget(button)
+        self.remote_status = QLabel('未发送'); layout.addWidget(self.remote_status); layout.addStretch()
+        self.tabs.addTab(page, '远程发送')
+
+    def _send_remote_event(self):
+        try:
+            from core.runtime.remote_event_sender import RemoteEventSender
+            reply = RemoteEventSender().send(self.remote_device.text(), self.remote_event.currentText(), self.remote_controller.currentText())
+            self.remote_status.setText(f'发送成功：{reply}')
+        except Exception as exc:
+            self.remote_status.setText(f'发送失败：{exc}')
 
     def _build_library(self):
         page = QWidget(); layout = QHBoxLayout(page)
