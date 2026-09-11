@@ -32,6 +32,7 @@ public sealed class HostComposition : IAsyncDisposable
 
     public static HostComposition Create()
     {
+        HostDiagnostics.Write("host composition create");
         var probe = new ViGEmDriverProbe();
         var driverStatus = probe.Probe();
         IXInputBackend backend = driverStatus.Installed ? new ViGEmXInputBackend() : new NullXInputBackend();
@@ -102,6 +103,7 @@ public sealed class HostComposition : IAsyncDisposable
         }
 
         var router = new CommandRouter(registry, Status, () => backend.IsConnected);
+        HostDiagnostics.Write($"host composition ready backendConnected={backend.IsConnected} driverInstalled={driverStatus.Installed}");
         return new HostComposition(registry, backend, new ReportLoop(registry, backend), new NamedPipeServer(router), driverStatus, rawInput, sync);
     }
 
@@ -119,6 +121,7 @@ public sealed class HostComposition : IAsyncDisposable
 
     public Task RunAsync(CancellationToken cancellationToken = default)
     {
+        HostDiagnostics.Write("host run starting");
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         _reportTask = _reportLoop.RunAsync(linked.Token);
         _pipeTask = _pipeServer.RunAsync(linked.Token);
