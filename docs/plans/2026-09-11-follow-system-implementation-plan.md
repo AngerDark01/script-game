@@ -21,7 +21,7 @@
 
 ## 任务顺序
 
-### Task 1：建立通用几何与时间类型
+### Task 1：建立通用几何与时间类型 ✅
 
 文件：`core/foundation/geometry.py`、`core/foundation/clock.py`、`tests/test_foundation_types.py`
 
@@ -30,6 +30,8 @@
 验证：`python -m pytest tests/test_foundation_types.py -q`；先确认失败，再实现并确认通过。
 
 提交：`feat: add foundation geometry and clock types`
+
+状态：已完成。失败测试先因 `core.foundation` 不存在而失败；实现后 `3 passed`。提交号见 Git 历史。
 
 ### Task 2：建立地图资源与距离场缓存
 
@@ -164,5 +166,5 @@
 ## 当前断点
 
 - 当前状态：计划已建立，尚未开始 Task 1。
-- 回滚点：`63013ce chore: checkpoint before modular follow system development`。
-- 下一步：开始 Task 1，先实现通用几何与时间类型及其失败测试。
+- 回滚点：`6629848 docs: add modular follow system implementation plan`。
+- 下一步：Task 2，建立地图资源与距离场缓存。
