@@ -9,6 +9,11 @@ from gui.widgets.gamepad_button_picker import GamepadButtonPicker
 
 def spin(value, minimum=0, maximum=1000, decimal=False):
     widget=QDoubleSpinBox() if decimal else QSpinBox()
+    # JSON uses null for optional numeric limits (for example end_ms and
+    # max_runs).  Qt spin boxes only accept real numbers, so treat null as
+    # the editor's neutral value instead of failing while opening the dialog.
+    if value is None:
+        value = minimum
     widget.setRange(minimum,maximum); widget.setValue(value)
     if decimal: widget.setDecimals(3)
     return widget
@@ -96,7 +101,7 @@ class ChainEditor(QDialog):
         self.track_table.setCellWidget(r,1,combo)
         self.track_table.setItem(r,2,QTableWidgetItem(str(track.get('hold_ms',100))))
         self.track_table.setItem(r,3,QTableWidgetItem(str(track.get('interval_ms',''))))
-        self.track_table.setItem(r,4,QTableWidgetItem(str(track.get('end_ms',''))))
+        self.track_table.setItem(r,4,QTableWidgetItem(str(track.get('end_ms') or '')))
 
     def value(self):
         steps=[]
