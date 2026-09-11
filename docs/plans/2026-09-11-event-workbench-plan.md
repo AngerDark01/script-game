@@ -20,7 +20,9 @@ Python 3.12、pytest 虚拟时钟测试、PySide6 工作台、现有 Windows mul
 - 本文第一阶段提供可执行小任务；后续阶段是依赖明确的开发清单，须在轮到该阶段时结合前阶段实际接口继续展开，不能当作已详细化或已完成。
 - 本计划不授权发送真实游戏输入；真实验收须先获得用户配置和明确开始指令。
 
-## 第一阶段：组合按键与周期基础（全部待开发）
+## 第一阶段：组合按键与周期基础（已完成，2026-09-11）
+
+以下代码和预期输出保留为原任务定义。实际实现另补充了组合键列表隔离、非法时间戳测试；实际验证结果及提交号见末尾进度记录。
 
 ### Task 1：复用按钮表，规范化单键/组合键（2–5 分钟）
 
@@ -206,9 +208,23 @@ P2–P10 每阶段开发前补充 2–5 分钟任务、可复制测试和实现�
 | 用户设计确认 | 完成 | 同意不做技能视觉确认；按时间执行、与跟随组合 |
 | 已有实现审查 | 完成 | 已读有限序列、注册器、动作适配器、program 输出、双跟随会话、配置和 UI 入口 |
 | 设计和计划落档 | 完成 | 本文及配套设计；仅文档变更 |
-| Task 1–3 | 待开发 | 尚未写入实现或运行测试 |
+| Task 1 单键/组合键规范化 | 完成 | `807d9a4`；先导入失败，再正常输入通过，非法配置由失败转通过；7 passed |
+| Task 2 有限序列支持组合键 | 完成 | `5dbdfc9`；新时序用例先失败于旧单键验证；修复后通过；另补配置列表隔离测试并修复共享引用；相关组合/旧链/配置/会话测试 15 passed |
+| Task 3 周期调度基础 | 完成 | `dd78d0c`；按节拍、忙时跳过、回退时钟、非法参数逐项先红后绿；10 passed |
 | P2–P10 | 待展开/开发 | 尚未修改运行时、协议和界面 |
+
+### 首批验证记录
+
+实际执行（系统 Python 3.12，工作目录 `D:/ACloud/auto_modules`）：
+
+```powershell
+python -m pytest tests/test_event_button_chords.py tests/test_event_periodic_schedule.py tests/test_follow_chain.py tests/test_follow_config.py tests/test_dual_follow_session.py tests/test_follow_workers.py tests/test_follow_service.py tests/test_follow_transport.py tests/test_follow_page.py tests/test_program_gamepad.py tests/test_gamepad_action_adapter.py tests/test_gamepad_motion.py -q
+```
+
+结果：**39 passed in 0.98s**。检查了本批代码差异，`git diff --check` 通过。没有执行完整项目测试、双机验证或游戏输入测试。
+
+本批没有添加依赖、启动采集/驱动或触发真实按键；只扩展原处理器并增加纯时间调度器。周期器还没有接入服务和 UI，普通事件与跟随定位的运行时解耦也尚未完成，不能将这些底层测试解释为完整事件工作台可用。
 
 ## 当前断点
 
-下一步为 Task 1。当前仅设计获批并落档；现有软件仍是上一版本。代码实施可在当前会话按此计划推进，也可以交给新会话使用 executing-plans 分阶段执行；如选择子代理开发方式，需明确采用该执行方式。无论执行方式，均保留每阶段测试与本地提交记录。
+首批 Task 1–3 已完成并提交，按 executing-plans 批次流程到达检查点。下一步展开 P2 的通道归属与完整手柄状态输出任务，再实现 P3 普通事件运行时。当前 UI 未新增入口；不要直接让多个事件各自获取 program lease。原配置/单键执行保持兼容。无论后续执行方式，均保留每阶段测试与本地提交记录。
