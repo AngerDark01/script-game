@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox)
+    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit)
 from core.runtime_paths import data_root
 from core.runtime.local_event_runtime import LocalEventRuntime
 from ..follow.editors import ChainEditor
@@ -88,6 +88,10 @@ class EventWorkbenchPage(QWidget):
     def _build_runtime(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.addWidget(QLabel('显示远程事件的发送、接收和执行状态，不表示游戏内技能成功。'))
         self.runtime_table = QTableWidget(0, 6); self.runtime_table.setHorizontalHeaderLabels(['目标设备', '手柄', '事件', '状态', '当前轨道', '下一步']); layout.addWidget(self.runtime_table); self.tabs.addTab(page, '运行监控')
+        layout.addWidget(QLabel('本机事件链路日志'))
+        self.local_log = QTextEdit(); self.local_log.setReadOnly(True); self.local_log.setMaximumHeight(180)
+        self.local_log.setStyleSheet('QTextEdit { background:#071321; color:#9fd7f5; border:1px solid #213750; border-radius:8px; padding:8px; font-family:Consolas; }')
+        layout.addWidget(self.local_log)
 
     def _refresh(self):
         self.list.clear(); self.list.addItems([e.get('name', '未命名事件') for e in self.events])
@@ -180,6 +184,11 @@ class EventWorkbenchPage(QWidget):
         if runtime.thread and runtime.thread.is_alive():
             detail = f' · 最近：{runtime.last_event}' if runtime.last_event else ''
             self.status.setText(f'本机事件监听中 · 已触发 {runtime.trigger_count} 次{detail}')
+            try:
+                path = Path(__import__('os').environ.get('LOCALAPPDATA', str(Path.home()))) / 'AutoModules' / 'Workbench' / 'logs' / 'event-runtime.log'
+                if path.is_file(): self.local_log.setPlainText('\n'.join(path.read_text(encoding='utf-8', errors='replace').splitlines()[-80:]))
+            except OSError:
+                pass
             return
         self.runtime_timer.stop()
         if runtime.error:

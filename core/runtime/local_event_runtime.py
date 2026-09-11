@@ -58,6 +58,7 @@ class LocalEventRuntime:
             _event_log('host pipe connected')
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             keys = set()
+            previous_buttons = {1: 0, 2: 0}
             while not self.stop_event.is_set():
                 for key, (name, _) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
@@ -76,6 +77,9 @@ class LocalEventRuntime:
                     for button in session.tick(): buttons |= BUTTONS.get(button, 0)
                     state = dict(buttons=buttons, leftTrigger=0, rightTrigger=0, leftStickX=0, leftStickY=0, rightStickX=0, rightStickY=0)
                     reply = client.request('event.state', {'controller': target, 'source': 'event:local', 'state': state, 'ttlMs': 120})
+                    if buttons != previous_buttons[target]:
+                        _event_log(f'轨道状态 controller={target} buttons={buttons} previous={previous_buttons[target]} reply={reply}')
+                        previous_buttons[target] = buttons
                     if buttons:
                         _event_log(f'event.state sent controller={target} buttons={buttons} reply={reply}')
                 self.stop_event.wait(0.02)
