@@ -71,6 +71,7 @@ class FollowConfig:
         if for_start and len(self.actors)>1 and len({json.dumps((a['algorithm'],a['parameters']),sort_keys=True) for a in self.actors})!=len(self.actors):
             raise ValueError('两个角色不能使用完全相同的识别条件')
         from core.events.follow_chain import FollowChainDefinition
+        from core.events.action_tracks import ActionTrack, TrackMode
         names=set()
         for chain in self.chains:
             name=chain['name']
@@ -79,6 +80,12 @@ class FollowConfig:
             names.add(name)
             FollowChainDefinition(name,chain['steps'],timeout_ms=chain.get('timeout_ms',30000),
                 priority=chain.get('priority',0),resume=chain.get('resume',False))
+            tracks=[]
+            for raw in chain.get('tracks',[]):
+                tracks.append(ActionTrack(tuple(raw.get('buttons',())), mode=TrackMode(raw.get('mode','once')),
+                    hold_ms=int(raw.get('hold_ms',100)), interval_ms=raw.get('interval_ms'), end_ms=raw.get('end_ms')))
+            if chain.get('loop') and chain.get('max_runs') is None and chain.get('end_ms') is None:
+                raise ValueError('循环事件必须设置执行次数或结束时间')
         if any(key not in ('F1','F2','F3','F4','F5','F6','F10','F11','F12') for key in self.shortcuts):
             raise ValueError('F7/F8/F9保留给手柄暂停与急停，请为事件选择其他功能键')
         if for_start:

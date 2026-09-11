@@ -27,4 +27,9 @@ def test_actor_and_chain_editors_roundtrip():
     assert result['parameters']['max_area']==100
     chain=ChainEditor(dict(name='return',steps=[dict(op='button',button='A',ms=100)]))
     assert chain.value()['steps'][0]['button']=='A'
+    chain.add_track({'mode':'frequency','buttons':['LB','X'],'hold_ms':80,'interval_ms':500,'end_ms':3000})
+    value=chain.value()
+    assert value['tracks'][0]['buttons']==('LB','X')
+    assert value['tracks'][0]['interval_ms']==500
+    assert value['max_runs'] is None
     dialog.close(); chain.close()
