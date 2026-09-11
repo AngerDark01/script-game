@@ -17,6 +17,7 @@ internal sealed class FakeXInputBackend : IXInputBackend
 
     public bool IsConnected { get; private set; }
     public int ControllerCount { get; }
+    public bool IsControllerConnected(int controller) => IsConnected && controller >= 1 && controller <= ControllerCount;
     public List<GamepadState> Reports { get; } = new();
     public Dictionary<int, List<GamepadState>> ReportsByController { get; } = new();
 
