@@ -54,17 +54,23 @@ def _bresenham_points(start, end):
             y1 += sy
 
 
-def line_is_walkable(wall_map, start, end, obstacle_threshold: int = 1) -> bool:
+def line_is_walkable(wall_map, start, end, obstacle_threshold: int = 1, *, corner_safe: bool = False) -> bool:
     height, width = wall_map.shape[:2]
+    previous = None
     for x, y in _bresenham_points(start, end):
         if x < 0 or y < 0 or x >= width or y >= height:
             return False
         if int(wall_map[y, x]) >= obstacle_threshold:
             return False
+        if corner_safe and previous is not None:
+            px, py = previous
+            if px != x and py != y and (int(wall_map[py, x]) >= obstacle_threshold or int(wall_map[y, px]) >= obstacle_threshold):
+                return False
+        previous = (x, y)
     return True
 
 
-def shortcut_path(wall_map, path):
+def shortcut_path(wall_map, path, *, corner_safe: bool = False):
     if len(path) <= 2:
         return list(path)
 
@@ -76,7 +82,7 @@ def shortcut_path(wall_map, path):
         simplified.append(path[anchor])
         probe = last_index
         while probe > anchor + 1:
-            if line_is_walkable(wall_map, path[anchor], path[probe]):
+            if line_is_walkable(wall_map, path[anchor], path[probe], corner_safe=corner_safe):
                 break
             probe -= 1
         anchor = probe
@@ -85,10 +91,10 @@ def shortcut_path(wall_map, path):
     return simplified
 
 
-def smooth_path(wall_map, path):
+def smooth_path(wall_map, path, *, corner_safe: bool = False):
     if not path:
         return []
-    return shortcut_path(wall_map, remove_collinear_points(path))
+    return shortcut_path(wall_map, remove_collinear_points(path), corner_safe=corner_safe)
 
 
 def build_cumulative_lengths(path):

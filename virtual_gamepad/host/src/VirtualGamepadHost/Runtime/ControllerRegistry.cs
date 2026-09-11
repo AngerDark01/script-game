@@ -70,7 +70,7 @@ public sealed partial class ControllerRegistry
         lock (_routingGate)
         {
             var slot = Get(number);
-            _programLeases.Remove(number);
+            RevokeProgram(number);
             if (IsRemote(number))
             {
                 slot.Safety.EmergencyReset();
@@ -128,7 +128,7 @@ public sealed partial class ControllerRegistry
                 if (previous[slot.Number] != IsRemote(slot.Number))
                 {
                     slot.Safety.EmergencyReset();
-                    _programLeases.Remove(slot.Number);
+                    RevokeProgram(slot.Number);
                     _lastRemote[slot.Number] = GamepadState.Neutral;
                 }
             return result;
@@ -186,7 +186,7 @@ public sealed partial class ControllerRegistry
         {
             _sync?.EmergencyStop();
             _lastRemote.Clear();
-            _programLeases.Clear();
+            foreach (var slot in _slots.Values) RevokeProgram(slot.Number);
             foreach (var slot in _slots.Values) slot.Safety.EmergencyReset();
         }
     }

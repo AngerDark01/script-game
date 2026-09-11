@@ -43,3 +43,13 @@ def test_stuck_requires_fresh_elapsed_progress_and_resets_on_pause():
     progress.reset()
     assert not progress.update((10, 10), now_ms=500, moving=False)
     assert not progress.update((10, 10), now_ms=1000, moving=True)
+
+
+def test_follow_smoothing_does_not_cut_diagonal_wall_corner():
+    from core.routing.geometry import line_is_walkable
+    walls = np.zeros((6, 6), np.uint8)
+    walls[1, 2] = 255
+    planner = FollowerPlanner(walls, downsample_factor=1)
+    path = planner.plan((1, 1), (3, 3))
+    assert path and len(path) > 2
+    assert all(line_is_walkable(walls, a, b, corner_safe=True) for a, b in zip(path, path[1:]))

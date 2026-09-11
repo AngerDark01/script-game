@@ -21,7 +21,7 @@ class VectorPathTracker:
             return (0., 0.)
         # A stale/invalid route must trigger replanning, not incremental motion
         # toward a wall just because the first few pixels remain clear.
-        if any(not line_is_walkable(walls, a, b) for a, b in zip(path, path[1:])):
+        if any(not line_is_walkable(walls, a, b, corner_safe=True) for a, b in zip(path, path[1:])):
             return (0., 0.)
         distance = point_distance(position, path[-1])
         if distance <= self.arrival_radius:
@@ -32,7 +32,7 @@ class VectorPathTracker:
         # Reduce lookahead at a corner until the direct segment is collision-free.
         for advance in (self.lookahead, self.lookahead/2, 1.):
             target = interpolate_by_distance(path, lengths, progress+advance)
-            if not line_is_walkable(walls, position, target):
+            if not line_is_walkable(walls, position, target, corner_safe=True):
                 continue
             dx, dy = target[0]-position[0], target[1]-position[1]
             norm = hypot(dx, dy)

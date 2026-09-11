@@ -5,6 +5,18 @@ host owns the short output timeout so Python/vision stalls cannot hold a stick.
 """
 from math import hypot, isfinite
 from .gamepad_motion import StickSlewLimiter
+import os
+import time
+
+
+def host_clock_ms():
+    """Same-machine Windows uptime, identical to .NET Environment.TickCount64."""
+    if os.name == 'nt':
+        import ctypes
+        get_ticks = ctypes.windll.kernel32.GetTickCount64
+        get_ticks.restype = ctypes.c_ulonglong
+        return get_ticks()
+    return int(time.monotonic()*1000)
 
 
 class ProgramGamepadOutput:
@@ -17,10 +29,11 @@ class ProgramGamepadOutput:
         self.token = None
         self.limiter = StickSlewLimiter()
 
-    def start(self):
+    def start(self, *, requested_at_ms=None):
         if self.token is not None:
             raise RuntimeError('program output is already acquired')
-        self.token = self.client.request('program.acquire', {'controller': self.controller})['token']
+        self.token = self.client.request('program.acquire', {'controller': self.controller,
+            'requestedAtMs': host_clock_ms() if requested_at_ms is None else requested_at_ms})['token']
         self.limiter.reset()
 
     def write(self, vector, *, elapsed_ms=20, valid_for_ms=None, buttons=0):
@@ -38,7 +51,7 @@ class ProgramGamepadOutput:
         ttl = self.ttl_ms if valid_for_ms is None else min(self.ttl_ms, int(valid_for_ms))
         if ttl <= 0:
             axes, buttons, ttl = self.limiter.reset(), 0, self.ttl_ms
-        self.client.request('program.state', dict(controller=self.controller, token=self.token, ttlMs=ttl,
+        self.client.request('program.state', dict(controller=self.controller, token=self.token, ttlMs=ttl, deadlineMs=host_clock_ms()+ttl,
             state=dict(buttons=buttons, leftTrigger=0, rightTrigger=0,
                        leftStickX=axes[0], leftStickY=axes[1], rightStickX=0, rightStickY=0)))
 

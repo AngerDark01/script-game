@@ -29,4 +29,4 @@ def escape_targets(position, direction, walls, *, distance=8.):
     candidates = ((x-dy*distance, y+dx*distance), (x+dy*distance, y-dx*distance),
                   (x-dx*distance, y-dy*distance))
     return tuple(p for p in candidates if point_distance(p, position) > 1
-                 and line_is_walkable(walls, position, p))
+                 and line_is_walkable(walls, position, p, corner_safe=True))

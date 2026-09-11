@@ -35,6 +35,13 @@ public sealed partial class LanSyncService
     {
         RequireMode("share");
         var position = ParsePosition(payload);
+        if (payload.TryGetProperty("deadlineMs", out var expires))
+        {
+            long remaining = expires.GetInt64() - Environment.TickCount64;
+            if (remaining <= 0) return;
+            if (remaining > SharePositionTtlMs) throw new ArgumentException("Position deadline exceeds 500ms");
+            position = position with { ageMs = Math.Max(position.ageMs, SharePositionTtlMs - remaining) };
+        }
         if (_publishedPositions.Count >= 8 && !_publishedPositions.ContainsKey(position.actorId)) throw new InvalidOperationException("Too many position sources");
         if (JsonSerializer.SerializeToUtf8Bytes(position with { ageMs = SharePositionTtlMs, challenge = ulong.MaxValue }).Length > 512) throw new ArgumentException("Position packet too large");
         _publishedPositions[position.actorId] = new(position, Now, position.ageMs);
@@ -67,13 +74,20 @@ public sealed partial class LanSyncService
     private void PublishEventLocked(JsonElement payload)
     {
         RequireMode("share");
+        long remainingMs = 500;
+        if (payload.TryGetProperty("deadlineMs", out var expires))
+        {
+            remainingMs = expires.GetInt64() - Environment.TickCount64;
+            if (remainingMs <= 0) return;
+            if (remainingMs > 500) throw new ArgumentException("Event deadline exceeds 500ms");
+        }
         string peer = RequiredString(payload, "deviceId"), name = RequiredString(payload, "name");
         if (name.Length is < 1 or > 64) throw new ArgumentException("Invalid event name");
         string[] targets = payload.GetProperty("targets").EnumerateArray().Select(v => v.GetString() ?? "").ToArray();
         if (targets.Length is < 1 or > 8 || targets.Any(t => t.Length is < 1 or > 64)) throw new ArgumentException("Invalid targets");
         if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.DataOnly) throw new InvalidOperationException("No shared data session");
         if (s.LastPeerChallenge == 0) throw new InvalidOperationException("共享会话正在校验，请稍后重试。");
-        var message = new { type = "shared-event", id = Guid.NewGuid().ToString("N"), sequence = ++_eventSequence, name, targets, challenge = s.LastPeerChallenge };
+        var message = new { type = "shared-event", id = Guid.NewGuid().ToString("N"), sequence = ++_eventSequence, name, targets, remainingMs, challenge = s.LastPeerChallenge };
         if (!s.Controls.Writer.TryWrite(message)) { CloseLocked(s, "event_queue_overflow"); throw new InvalidOperationException("Event queue overflow"); }
     }
 
@@ -83,6 +97,11 @@ public sealed partial class LanSyncService
         if (RequiredString(message, "type") != "shared-event") throw new InvalidDataException("Unexpected shared control message");
         if (!_receiveEvents) return;
         if (!FreshChallenge(session, message, out var deadline)) return;
+        long remaining = message.TryGetProperty("remainingMs", out var remainingValue) ? remainingValue.GetInt64() : 500;
+        if (remaining is <= 0 or > 500) throw new InvalidDataException("Invalid event lifetime");
+        // Challenge elapsed conservatively includes sender/TLS queue and transit.
+        deadline = Math.Min(deadline, deadline - 500 + remaining);
+        if (Now >= deadline) return;
         long sequence = message.GetProperty("sequence").GetInt64();
         if (sequence <= session.LastSharedEvent) return;
         string id = RequiredString(message, "id"), name = RequiredString(message, "name");

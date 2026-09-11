@@ -107,6 +107,11 @@ public class LoopbackTests
         Assert.False(pair.Receiver.OwnsController(2));
         Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });
         await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        Call(pair.Sender, "sync.share.position", new { actorId = "expired", mapId = "map", mapVersion = "base", x = 99.0, y = 99.0, confidence = .9, ageMs = 0, deadlineMs = Environment.TickCount64 - 1 });
+        Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "expired", targets = new[] { "A1" }, deadlineMs = Environment.TickCount64 - 1 });
+        await Task.Delay(50);
+        Assert.Empty(Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").EnumerateArray());
+        Assert.Equal(0, Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32());
         Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "base", x = 12.5, y = 24.0, confidence = .9, ageMs = 0 });
         await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
         Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "start_follow", targets = new[] { "A1", "A2" } });

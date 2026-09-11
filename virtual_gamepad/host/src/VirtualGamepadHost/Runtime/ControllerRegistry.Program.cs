@@ -17,6 +17,13 @@ public sealed partial class ControllerRegistry
         public long OutputDeadline;
     }
     private readonly Dictionary<int, ProgramOutputLease> _programLeases = new();
+    private readonly Dictionary<int, long> _programRevokedAt = new();
+
+    private void RevokeProgram(int number)
+    {
+        _programLeases.Remove(number);
+        _programRevokedAt[number] = Environment.TickCount64;
+    }
 
     private ProgramOutputLease? ProgramLease(int number)
     {
@@ -48,6 +55,10 @@ public sealed partial class ControllerRegistry
             var lease = ProgramLease(number);
             if (command == "program.acquire")
             {
+                long requested = payload.GetProperty("requestedAtMs").GetInt64();
+                if (requested <= _programRevokedAt.GetValueOrDefault(number, -1) || requested > Environment.TickCount64
+                    || Environment.TickCount64-requested > 250)
+                    throw new InvalidOperationException("Start request is stale or predates a local stop. Click start again.");
                 if (slot.Safety.RunState != RunState.Paused || lease is not null)
                     throw new InvalidOperationException("Pause the controller and release its program session first.");
                 slot.Safety.Pause();
@@ -55,20 +66,29 @@ public sealed partial class ControllerRegistry
                 _programLeases[number] = lease;
                 return new { token = lease.Token, controller = number };
             }
+            if (command == "program.release" && (lease is null || payload.GetProperty("token").GetString() != lease.Token))
+                return new { accepted = false, stale = true }; // old release must not revoke a newer owner
             if (lease is null || payload.GetProperty("token").GetString() != lease.Token)
                 throw new InvalidOperationException("Program session expired or was revoked. Explicit start is required.");
             if (command == "program.release")
             {
-                _programLeases.Remove(number);
+                RevokeProgram(number);
                 return new { accepted = true };
             }
             if (command != "program.state") throw new ArgumentException("Unknown program command.");
             int ttl = payload.GetProperty("ttlMs").GetInt32();
             if (ttl is < 1 or > 300) throw new ArgumentException("Program output TTL must be 1..300ms.");
+            long deadline = payload.GetProperty("deadlineMs").GetInt64();
+            if (deadline <= Environment.TickCount64 || deadline > Environment.TickCount64 + 300)
+            {
+                lease.Store.ClearAll();
+                lease.OutputDeadline = 0;
+                throw new InvalidOperationException("Program command expired before delivery.");
+            }
             var state = payload.GetProperty("state").Deserialize<GamepadState>(ProtocolSerializer.Options)
                 ?? throw new ArgumentException("Program state is required.");
             lease.Store.SetState("program", state, TimeSpan.FromMilliseconds(ttl));
-            lease.OutputDeadline = Environment.TickCount64 + ttl;
+            lease.OutputDeadline = Math.Min(deadline, Environment.TickCount64 + ttl);
             lease.Deadline = Environment.TickCount64 + 1000;
             return new { accepted = true };
         }

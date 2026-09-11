@@ -28,6 +28,7 @@ class SharedEvent:
     name: str
     targets: tuple[str, ...]
     deadline_ms: int
+    session_id: str = ''
 
 
 class FollowTransport:
@@ -36,16 +37,21 @@ class FollowTransport:
         self.clock = clock_ms or (lambda: int(time.monotonic()*1000))
 
     def publish(self, position: SharedPosition):
+        from core.actions.program_gamepad import host_clock_ms
         age = self.clock()-position.captured_at_ms
         if not 0 <= age < 500:
             return False
         self.client.request('sync.share.position', dict(actorId=position.actor_id,
             mapId=position.map_id, mapVersion=position.map_version,
-            x=position.position[0], y=position.position[1], confidence=position.confidence, ageMs=age))
+            x=position.position[0], y=position.position[1], confidence=position.confidence, ageMs=age,
+            deadlineMs=host_clock_ms()+500-age))
         return True
 
-    def send_event(self, device_id, name, targets):
-        return self.client.request('sync.share.event', dict(deviceId=device_id, name=name, targets=list(targets)))
+    def send_event(self, device_id, name, targets, *, host_deadline_ms=None):
+        from core.actions.program_gamepad import host_clock_ms
+        deadline=host_clock_ms()+250 if host_deadline_ms is None else host_deadline_ms
+        if host_clock_ms() >= deadline: return False
+        return self.client.request('sync.share.event', dict(deviceId=device_id, name=name, targets=list(targets),deadlineMs=deadline))
 
     def poll(self):
         started = self.clock()
@@ -72,7 +78,7 @@ class FollowTransport:
                 deadline = started+remaining
                 if not 0 < remaining <= 500 or now >= deadline:
                     continue
-                events.append(SharedEvent(item['deviceId'], item['id'], item['name'], tuple(item['targets']), deadline))
+                events.append(SharedEvent(item['deviceId'], item['id'], item['name'], tuple(item['targets']), deadline, item['sessionId']))
             except (KeyError, TypeError, ValueError):
                 continue
         return tuple(positions), tuple(events)
