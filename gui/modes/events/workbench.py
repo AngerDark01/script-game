@@ -12,12 +12,19 @@ class EventWorkbenchPage(QWidget):
     def __init__(self, parent=None, *, root=None):
         super().__init__(parent)
         self.path = Path(root or data_root(Path(__file__).resolve().parents[3]) / 'configs' / 'events') / 'events.json'
-        self.events = self._load(); self._build(); self._refresh()
+        self.routes_path = self.path.with_name('routes.json')
+        self.events = self._load(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
 
     def _load(self):
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
             return data if isinstance(data, list) else []
+        except (OSError, ValueError): return []
+
+    def _load_routes(self):
+        try:
+            data=json.loads(self.routes_path.read_text(encoding='utf-8'))
+            return data if isinstance(data,list) else []
         except (OSError, ValueError): return []
 
     def _build(self):
@@ -74,6 +81,13 @@ class EventWorkbenchPage(QWidget):
         self.list.clear(); self.list.addItems([e.get('name', '未命名事件') for e in self.events])
         if self.events: self.list.setCurrentRow(0)
 
+    def _refresh_routes(self):
+        self.routes.setRowCount(0)
+        for route in self.routes_data:
+            r=self.routes.rowCount(); self.routes.insertRow(r)
+            for c,key in enumerate(('source','trigger','event','target','controller')):
+                self.routes.setItem(r,c,QTableWidgetItem(str(route.get(key,''))))
+
     def _select(self, row):
         self.track_table.setRowCount(0)
         if row < 0 or row >= len(self.events): self.summary.setText('请选择一个事件'); return
@@ -106,6 +120,10 @@ class EventWorkbenchPage(QWidget):
     def _add_route(self):
         r = self.routes.rowCount(); self.routes.insertRow(r)
         for c, value in enumerate(('B端', 'F5', self.events[0]['name'] if self.events else '', 'A端', 'Controller 1')): self.routes.setItem(r, c, QTableWidgetItem(value))
+        self.routes_data.append(dict(source='B端',trigger='F5',event=self.events[0]['name'] if self.events else '',target='A端',controller='Controller 1'))
 
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True); self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8'); self.status.setText(f'已保存 {len(self.events)} 个事件')
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8')
+        self.routes_path.write_text(json.dumps(self.routes_data, ensure_ascii=False, indent=2), encoding='utf-8')
+        self.status.setText(f'已保存 {len(self.events)} 个事件和 {len(self.routes_data)} 条路由')

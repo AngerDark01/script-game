@@ -95,6 +95,7 @@ class SyncPanel(QWidget):
         self.message.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.identity)
         layout.addWidget(self.message)
+        layout.addWidget(self._section('连接模式', '先选择本机角色，再保存设置；配对完成后仍需单独开启同步通道。'))
         form = QFormLayout()
         self.mode = QComboBox()
         for label, value in (("关闭", "off"), ("发送：用本机控制其他电脑", "send"), ("接收：由主设备控制本机", "receive"), ("位置与事件共享（不接管手柄）", "share")):
@@ -133,6 +134,7 @@ class SyncPanel(QWidget):
         self.receive_button.setEnabled(False)
         self._button("停止全部同步", lambda: self.command("sync.stop"), buttons)
         layout.addLayout(buttons)
+        layout.addWidget(self._section('设备配对', '对端输入框用于发起配对；收到请求时在待确认列表中核对校验码。'))
         pair_row = QHBoxLayout()
         self.code = QLabel("配对码：未开启")
         pair_row.addWidget(self.code)
@@ -165,6 +167,7 @@ class SyncPanel(QWidget):
         self._button("校验一致，确认配对", lambda: self.confirm(True), confirm_row)
         self._button("拒绝", lambda: self.confirm(False), confirm_row)
         layout.addLayout(confirm_row)
+        layout.addWidget(self._section('已配对设备', '选择设备后，再按需启动输入、事件或位置同步。'))
         layout.addWidget(QLabel("已配对设备：选中设备，使用上方控制器范围开始同步"))
         self.peers = QListWidget()
         self.peers.setMinimumHeight(100)
@@ -175,10 +178,21 @@ class SyncPanel(QWidget):
         self._button("停止选中设备", lambda: self.peer_command("sync.stop"), actions)
         self._button("移除选中设备", self.forget_peer, actions)
         layout.addLayout(actions)
+        layout.addWidget(self._section('安全提示', '停止同步会清理远程按键并让虚拟手柄回中，不会删除配对关系。'))
         layout.addStretch()
+
+    @staticmethod
+    def _section(title, subtitle):
+        box = QWidget(); layout = QVBoxLayout(box); layout.setContentsMargins(0, 14, 0, 4); layout.setSpacing(2)
+        label = QLabel(title); label.setStyleSheet('font-size:14px; font-weight:700; color:#e7eef8;')
+        hint = QLabel(subtitle); hint.setWordWrap(True); hint.setStyleSheet('font-size:11px; color:#8fa6bd;')
+        layout.addWidget(label); layout.addWidget(hint)
+        return box
 
     def _button(self, label, callback, layout):
         button = QPushButton(label)
+        if '停止' in label or '拒绝' in label or '移除' in label:
+            button.setStyleSheet('color:#ff9d9d; border-color:#70414a;')
         button.clicked.connect(callback)
         layout.addWidget(button)
         return button
