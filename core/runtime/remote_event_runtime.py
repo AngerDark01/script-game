@@ -1,11 +1,21 @@
 """Standalone LAN event receiver; independent of localization/follow services."""
 from __future__ import annotations
 import json, threading, time
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from core.events.action_tracks import ActionTrack, TrackMode
 from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
+
+def _event_log(message: str) -> None:
+    try:
+        path = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'AutoModules' / 'Workbench' / 'logs' / 'event-runtime.log'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a', encoding='utf-8') as stream:
+            stream.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
+    except Exception:
+        pass
 
 class RemoteEventRuntime:
     def __init__(self, *, root: Path, client_factory=None):
@@ -40,8 +50,10 @@ class RemoteEventRuntime:
     def _run(self):
         client=None
         try:
+            _event_log('remote listener starting')
             from virtual_gamepad.client.python import VirtualGamepadClient
             client=(self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
+            _event_log('remote listener host pipe connected')
             definitions=self._definitions(); sessions={1:EventSession(definitions),2:EventSession(definitions)}
             while not self.stop_event.is_set():
                 reply=client.request('sync.share.drain')
@@ -50,12 +62,16 @@ class RemoteEventRuntime:
                     for controller in self._controllers(item.get('targets',())):
                         sessions[controller].start(name)
                     self.receive_count+=1; self.last_event=name
+                    _event_log(f'remote event received name={name} targets={item.get("targets", ())}')
                 for controller,session in sessions.items():
                     buttons=0
                     for button in session.tick(): buttons |= BUTTONS.get(button,0)
-                    client.request('event.state', {'controller':controller,'source':'event:remote','state':{'buttons':buttons,'leftTrigger':0,'rightTrigger':0,'leftStickX':0,'leftStickY':0,'rightStickX':0,'rightStickY':0},'ttlMs':120})
+                    state_reply = client.request('event.state', {'controller':controller,'source':'event:remote','state':{'buttons':buttons,'leftTrigger':0,'rightTrigger':0,'leftStickX':0,'leftStickY':0,'rightStickX':0,'rightStickY':0},'ttlMs':120})
+                    if buttons:
+                        _event_log(f'remote event.state sent controller={controller} buttons={buttons} reply={state_reply}')
                 self.stop_event.wait(.025)
-        except Exception as exc: self.error=str(exc)
+        except Exception as exc:
+            self.error=str(exc); _event_log(f'remote listener error={exc!r}')
         finally:
             if client:
                 for controller in (1,2):

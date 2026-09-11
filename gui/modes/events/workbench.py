@@ -73,7 +73,9 @@ class EventWorkbenchPage(QWidget):
         page = QWidget(); layout = QVBoxLayout(page)
         layout.addWidget(QLabel('远程事件发送：不依赖定位监视，只发送事件到已配对设备。'))
         self.remote_device = QLineEdit(); self.remote_device.setPlaceholderText('目标设备 ID'); layout.addWidget(self.remote_device)
-        self.remote_event = QComboBox(); self.remote_event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); layout.addWidget(self.remote_event)
+        self.remote_event = QComboBox(); self.remote_event.setEditable(True)
+        self.remote_event.setPlaceholderText('填写 A 端已有的事件名称')
+        self.remote_event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); layout.addWidget(self.remote_event)
         self.remote_controller = QComboBox(); self.remote_controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); layout.addWidget(self.remote_controller)
         button = QPushButton('发送远程事件'); button.clicked.connect(self._send_remote_event); layout.addWidget(button)
         self.remote_status = QLabel('未发送'); layout.addWidget(self.remote_status); layout.addStretch()
@@ -128,7 +130,13 @@ class EventWorkbenchPage(QWidget):
     def _set_route_row(self, row, route):
         source=QComboBox(); source.addItems(['本机','已配对设备']); source.setCurrentText(route.get('source','本机')); self.routes.setCellWidget(row,0,source)
         trigger=QComboBox(); trigger.addItems(KEY_OPTIONS); trigger.setCurrentText(route.get('trigger','F5')); self.routes.setCellWidget(row,1,trigger)
-        event=QComboBox(); event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); event.setCurrentText(route.get('event','')); self.routes.setCellWidget(row,2,event)
+        event=QComboBox(); event.setEditable(True)
+        event.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        event.setPlaceholderText('填写目标设备上的事件名称')
+        names=[str(e.get('name','')) for e in self.events if e.get('name')]
+        existing=str(route.get('event','')).strip()
+        if existing and existing not in names: names.insert(0, existing)
+        event.addItems(names); event.setCurrentText(existing); self.routes.setCellWidget(row,2,event)
         target=QComboBox(); target.addItems(['本机','已配对设备']); target.setCurrentText(route.get('target','本机')); self.routes.setCellWidget(row,3,target)
         controller=QComboBox(); controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); controller.setCurrentText(route.get('controller','Controller 1')); self.routes.setCellWidget(row,4,controller)
 

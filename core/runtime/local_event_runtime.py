@@ -41,32 +41,55 @@ class LocalEventRuntime:
                 tracks.append(ActionTrack(tuple(item.get('buttons', ())), mode=mode, hold_ms=int(item.get('hold_ms', 100)), interval_ms=item.get('interval_ms') if mode is not TrackMode.ONCE else None, end_ms=item.get('end_ms') if mode is not TrackMode.ONCE else None))
             definitions[event.get('name', '')] = SimpleNamespace(tracks=tuple(tracks), max_runs=event.get('max_runs'), loop=bool(event.get('loop', False)), end_ms=event.get('end_ms'))
         local = {}
+        remote = {}
         for route in routes if isinstance(routes, list) else []:
             source = str(route.get('source', '')).strip().lower()
             if source in ('', 'local', '本机', '鏈満', 'b', 'b端', 'b绔?') and route.get('trigger') and route.get('event'):
-                local[str(route['trigger']).upper()] = (route['event'], route.get('controller', 'Controller 1'))
-        return definitions, local
+                value = (route['event'], route.get('controller', 'Controller 1'), route.get('target', '本机'))
+                local[str(route['trigger']).upper()] = value
+                if str(route.get('target', '')).strip() not in ('', '本机', 'local', '鏈満'):
+                    remote[str(route['trigger']).upper()] = value
+        return definitions, local, remote
     def _run(self):
         client = None
         try:
             _event_log('listener starting')
             if os.name != 'nt': raise RuntimeError('Local event listener requires Windows')
-            definitions, routes = self._load()
+            definitions, routes, remote_routes = self._load()
             if not routes: raise RuntimeError('No local event routes are configured')
             from virtual_gamepad.client.python import VirtualGamepadClient
             client = (self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
             _event_log('host pipe connected')
+            if remote_routes:
+                _event_log(f'remote routes loaded keys={sorted(remote_routes)}')
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             keys = set()
             previous_buttons = {1: 0, 2: 0}
             while not self.stop_event.is_set():
-                for key, (name, _) in routes.items():
+                for key, (name, _, target) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
                     pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x70 + int(key[1:]) - 1) & 0x8000)
                     selected = routes[key][1]
                     targets_for_route = (1, 2) if selected == 'Controller 1 + 2' else (2,) if selected == 'Controller 2' else (1,)
                     if pressed and key not in keys:
-                        started = any(sessions[target].start(name) for target in targets_for_route)
+                        if key in remote_routes:
+                            try:
+                                status = client.request('sync.status').get('status', {})
+                                peers = [p for p in status.get('peers', []) if p.get('connected') and p.get('syncing')]
+                                if not peers:
+                                    raise RuntimeError('no connected shared-event peer')
+                                targets = [str(n) for n in targets_for_route]
+                                for peer in peers:
+                                    reply = client.request('sync.share.event', {
+                                        'deviceId': peer.get('deviceId'), 'name': name,
+                                        'targets': targets,
+                                        'deadlineMs': int(time.monotonic() * 1000) + 500,
+                                    })
+                                    _event_log(f'remote event sent key={key} event={name} device={peer.get("deviceId")} targets={targets} reply={reply}')
+                                self.trigger_count += 1; self.last_event = name
+                            except Exception as exc:
+                                _event_log(f'remote event send error key={key} event={name} error={exc!r}')
+                        started = False if key in remote_routes else any(sessions[target].start(name) for target in targets_for_route)
                         if started:
                             self.trigger_count += 1; self.last_event = name
                             _event_log(f'trigger key={key} event={name} targets={targets_for_route}')
