@@ -8,6 +8,15 @@ from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.runtime_paths import data_root
 
+def _event_log(message: str) -> None:
+    try:
+        path = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'AutoModules' / 'Workbench' / 'logs' / 'event-runtime.log'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a', encoding='utf-8') as stream:
+            stream.write(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {message}\n')
+    except Exception:
+        pass
+
 class LocalEventRuntime:
     def __init__(self, *, root: Path | None = None, client_factory=None):
         base = Path(root) if root is not None else data_root(Path(__file__).resolve().parents[2]) / 'configs' / 'events'
@@ -40,11 +49,13 @@ class LocalEventRuntime:
     def _run(self):
         client = None
         try:
+            _event_log('listener starting')
             if os.name != 'nt': raise RuntimeError('Local event listener requires Windows')
             definitions, routes = self._load()
             if not routes: raise RuntimeError('No local event routes are configured')
             from virtual_gamepad.client.python import VirtualGamepadClient
             client = (self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
+            _event_log('host pipe connected')
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             keys = set()
             while not self.stop_event.is_set():
@@ -55,16 +66,21 @@ class LocalEventRuntime:
                     targets_for_route = (1, 2) if selected == 'Controller 1 + 2' else (2,) if selected == 'Controller 2' else (1,)
                     if pressed and key not in keys:
                         started = any(sessions[target].start(name) for target in targets_for_route)
-                        if started: self.trigger_count += 1; self.last_event = name
+                        if started:
+                            self.trigger_count += 1; self.last_event = name
+                            _event_log(f'trigger key={key} event={name} targets={targets_for_route}')
                     if pressed: keys.add(key)
                     else: keys.discard(key)
                 for target, session in sessions.items():
                     buttons = 0
                     for button in session.tick(): buttons |= BUTTONS.get(button, 0)
                     state = dict(buttons=buttons, leftTrigger=0, rightTrigger=0, leftStickX=0, leftStickY=0, rightStickX=0, rightStickY=0)
-                    client.request('event.state', {'controller': target, 'source': 'event:local', 'state': state, 'ttlMs': 120})
+                    reply = client.request('event.state', {'controller': target, 'source': 'event:local', 'state': state, 'ttlMs': 120})
+                    if buttons:
+                        _event_log(f'event.state sent controller={target} buttons={buttons} reply={reply}')
                 self.stop_event.wait(0.02)
-        except Exception as exc: self.error = str(exc)
+        except Exception as exc:
+            self.error = str(exc); _event_log(f'listener error={exc!r}')
         finally:
             if client:
                 for target in (1, 2):

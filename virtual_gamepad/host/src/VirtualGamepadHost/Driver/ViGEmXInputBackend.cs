@@ -2,6 +2,7 @@ using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
 using VirtualGamepadHost.Model;
+using VirtualGamepadHost.Runtime;
 
 namespace VirtualGamepadHost.Driver;
 
@@ -23,6 +24,7 @@ public sealed class ViGEmXInputBackend : IXInputBackend
         }
 
         _client = new ViGEmClient();
+        HostDiagnostics.Write("ViGEm backend starting");
         try
         {
             for (var index = 0; index < _controllers.Length; index++)
@@ -32,6 +34,7 @@ public sealed class ViGEmXInputBackend : IXInputBackend
                     ?? throw new InvalidOperationException("The ViGEm client returned an unexpected controller type.");
                 controllerBase.AutoSubmitReport = false;
                 controllerBase.Connect();
+                HostDiagnostics.Write($"ViGEm controller connected controller={index + 1}");
                 _controllers[index] = target;
                 _controllerBases[index] = controllerBase;
             }
@@ -66,6 +69,8 @@ public sealed class ViGEmXInputBackend : IXInputBackend
         controller.SetAxisValue(Xbox360Axis.RightThumbX, state.RightStickX);
         controller.SetAxisValue(Xbox360Axis.RightThumbY, state.RightStickY);
         controllerBase.SubmitReport();
+        if (state.Buttons != 0 || state.LeftStickX != 0 || state.LeftStickY != 0)
+            HostDiagnostics.Write($"ViGEm SubmitReport controller={controllerNumber} buttons={state.Buttons} axes={state.LeftStickX},{state.LeftStickY}");
     }
 
     public void Stop()

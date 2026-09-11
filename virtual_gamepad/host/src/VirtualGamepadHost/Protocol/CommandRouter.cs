@@ -198,6 +198,7 @@ public sealed class CommandRouter
     {
         var payload = Deserialize<StateCommand>(message.Payload);
         var slot = _registry.Get(payload.Controller ?? 1);
+        HostDiagnostics.Write($"event.state received controller={slot.Number} source={payload.Source} buttons={payload.State.Buttons} axes={payload.State.LeftStickX},{payload.State.LeftStickY}");
         _registry.SetEventState(slot.Number, payload.Source, payload.State, Ttl(payload.TtlMs));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number, mode = "event" });
     }

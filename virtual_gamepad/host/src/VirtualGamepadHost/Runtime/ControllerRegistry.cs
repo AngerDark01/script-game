@@ -52,6 +52,7 @@ public sealed partial class ControllerRegistry
             if (!_eventStores.TryGetValue(number, out var store))
                 _eventStores[number] = store = new StateStore();
             store.SetState(source.StartsWith("event:", StringComparison.Ordinal) ? source : $"event:{source}", state, ttl);
+            HostDiagnostics.Write($"event.state stored controller={number} source={source} buttons={state.Buttons} ttlMs={(ttl?.TotalMilliseconds ?? 0):0}");
         }
     }
 
@@ -207,6 +208,8 @@ public sealed partial class ControllerRegistry
                 var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : LocalState(slot.Number);
                 if (remote) _lastRemote[slot.Number] = state;
                 if (_backend?.IsConnected == true) _backend.Submit(slot.Number, state);
+                if (state.Buttons != 0 || state.LeftStickX != 0 || state.LeftStickY != 0 || state.RightStickX != 0 || state.RightStickY != 0 || state.LeftTrigger != 0 || state.RightTrigger != 0)
+                    HostDiagnostics.Write($"report submitted controller={slot.Number} buttons={state.Buttons} axes={state.LeftStickX},{state.LeftStickY},{state.RightStickX},{state.RightStickY} triggers={state.LeftTrigger},{state.RightTrigger} backendConnected={_backend?.IsConnected == true}");
                 if (!remote) _sync?.Publish(slot.Number, LanSyncAdapter.ToNetwork(state), slot.Safety.RunState == RunState.Running);
             }
         }
