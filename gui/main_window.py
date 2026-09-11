@@ -12,6 +12,7 @@ from .theme import app_stylesheet
 from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
 from .modes.map_editor import MapEditorWidget
+from .modes.follow import FollowPage
 from .dialogs.perception import PerceptionWorkbenchDialog
 from .gamepad.host_manager import GamepadHostManager
 from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
@@ -73,16 +74,23 @@ class MainWindow(QMainWindow):
         self.mode_btn_map_editor.setCheckable(True)
         self.mode_btn_map_editor.clicked.connect(lambda: self.switch_mode(3))
 
+        self.mode_btn_follow = QPushButton("自动跟随")
+        self.mode_btn_follow.setProperty("role", "mode")
+        self.mode_btn_follow.setCheckable(True)
+        self.mode_btn_follow.clicked.connect(lambda: self.switch_mode(4))
+
         self.mode_buttons = [
             self.mode_btn_mapping,
             self.mode_btn_nav,
             self.mode_btn_gamepad,
             self.mode_btn_map_editor,
+            self.mode_btn_follow,
         ]
         mode_layout.addWidget(self.mode_btn_mapping)
         mode_layout.addWidget(self.mode_btn_nav)
         mode_layout.addWidget(self.mode_btn_gamepad)
         mode_layout.addWidget(self.mode_btn_map_editor)
+        mode_layout.addWidget(self.mode_btn_follow)
         mode_layout.addStretch()
         main_layout.addLayout(mode_layout)
 
@@ -113,6 +121,10 @@ class MainWindow(QMainWindow):
 
         self.map_editor_widget = MapEditorWidget(source_file=__file__, parent=self)
         self.stacked_widget.addWidget(self.map_editor_widget)
+
+        self.follow_page = FollowPage(parent=self)
+        self.follow_page.open_lan_requested.connect(lambda: self.switch_mode(2))
+        self.stacked_widget.addWidget(self.follow_page)
 
         self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
@@ -154,6 +166,7 @@ class MainWindow(QMainWindow):
             self._runtimes_stopped = True
             self.mapping_widget.stop_runtime()
             self.nav_widget.stop_runtime()
+            self.follow_page.stop_runtime()
             if self.perception_dialog is not None:
                 self.perception_dialog.close()
         self.gamepad_page.shutdown()

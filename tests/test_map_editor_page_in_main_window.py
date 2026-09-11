@@ -19,7 +19,7 @@ class MapEditorPageInMainWindowTests(unittest.TestCase):
     def test_main_window_exposes_map_editor_as_the_fourth_embedded_mode(self) -> None:
         window = MainWindow(gamepad_host_manager=InertGamepadHostManager())
         try:
-            self.assertEqual(4, window.stacked_widget.count())
+            self.assertEqual(5, window.stacked_widget.count())
             self.assertTrue(window.mode_btn_map_editor.isCheckable())
 
             window.switch_mode(3)
