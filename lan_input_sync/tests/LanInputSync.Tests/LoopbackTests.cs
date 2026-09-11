@@ -103,6 +103,11 @@ public class LoopbackTests
     public async Task SharedPositionsAndEventsDoNotOwnControllers()
     {
         using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        // Event-only channels must remain startable when both controller
+        // scopes are intentionally empty.
+        Call(pair.Sender, "sync.configure", new { mode = "share", name = "sender", bindAddress = "127.0.0.1", port = pair.SenderPort, controllers = Array.Empty<int>(), receivePositions = true, receiveEvents = true });
+        Call(pair.Receiver, "sync.configure", new { mode = "share", name = "receiver", bindAddress = "127.0.0.1", port = pair.ReceiverPort, controllers = Array.Empty<int>(), receivePositions = true, receiveEvents = true });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("networkReady").GetBoolean() && Call(pair.Receiver, "sync.status").GetProperty("networkReady").GetBoolean(), pair.Details);
         Assert.False(pair.Receiver.OwnsController(1));
         Assert.False(pair.Receiver.OwnsController(2));
         Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });

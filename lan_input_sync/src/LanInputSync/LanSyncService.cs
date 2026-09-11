@@ -206,7 +206,10 @@ public sealed partial class LanSyncService : ILanSyncService
                         request.Answer.TrySetResult(request.Confirmed); break;
                     case "sync.start":
                         RequireNetworkReady();
-                        var controllers = Controllers(payload, _preferences.Controllers);
+                        // Data-only event/position channels do not own a virtual
+                        // controller.  Keep the controller scope empty in share
+                        // mode instead of rejecting the start request.
+                        var controllers = Controllers(payload, _preferences.Controllers, allowEmpty: _mode == "share");
                         if (_mode == "receive")
                         {
                             foreach (var c in controllers) SetRemoteEnabled(c, true);
