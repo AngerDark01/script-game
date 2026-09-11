@@ -13,6 +13,7 @@ from .modes.mapping_widget import MappingWidget
 from .modes.navigation import NavigationModeWidget
 from .modes.map_editor import MapEditorWidget
 from .modes.follow import FollowPage
+from .modes.events import EventWorkbenchPage
 from .dialogs.perception import PerceptionWorkbenchDialog
 from .gamepad.host_manager import GamepadHostManager
 from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
@@ -74,10 +75,10 @@ class MainWindow(QMainWindow):
         self.mode_btn_map_editor.setCheckable(True)
         self.mode_btn_map_editor.clicked.connect(lambda: self.switch_mode(3))
 
-        self.mode_btn_follow = QPushButton("自动跟随")
+        self.mode_btn_follow = QPushButton("事件工作台")
         self.mode_btn_follow.setProperty("role", "mode")
         self.mode_btn_follow.setCheckable(True)
-        self.mode_btn_follow.clicked.connect(lambda: self.switch_mode(4))
+        self.mode_btn_follow.clicked.connect(lambda: self.switch_mode(5))
 
         self.mode_buttons = [
             self.mode_btn_mapping,
@@ -125,6 +126,8 @@ class MainWindow(QMainWindow):
         self.follow_page = FollowPage(parent=self)
         self.follow_page.open_lan_requested.connect(lambda: self.switch_mode(2))
         self.stacked_widget.addWidget(self.follow_page)
+        self.event_workbench = EventWorkbenchPage(parent=self)
+        self.stacked_widget.addWidget(self.event_workbench)
 
         self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
