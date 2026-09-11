@@ -185,11 +185,17 @@ class PeriodicSchedule:
 
 提交：`git add core/events/periodic_schedule.py tests/test_event_periodic_schedule.py`，然后 `git commit -m "feat: add non-burst periodic event timing"`。
 
+## P1.5：轨道事件模型（下一批）
+
+在进入输出合并前，先把本次确认的事件模型落成纯逻辑模块：持续轨道、频率轨道（保持时长/间隔/轨道结束时间）、单次轨道与其他轨道并行，以及事件级次数/循环/结束时间。使用虚拟单调时钟测试，不接手柄、不依赖定位、不做画面识别。
+
+预期文件：`core/events/action_tracks.py`、`core/events/event_lifecycle.py`、`tests/test_action_tracks.py`、`tests/test_event_lifecycle.py`。验证同一时间点可同时产生持续组合键和单次组合键；错过节拍不补发；次数或结束时间先到即结束；无结束条件的循环配置被拒绝；事件结束清理全部按钮贡献。
+
 ## 后续阶段清单（待按实际接口展开成小任务）
 
 | 阶段 | 具体落点 | 必须验证的结果 |
 |---|---|---|
-| P2 通道归属 | 新 `core/actions/gamepad_compositor.py`、`tests/test_gamepad_compositor.py`；扩展 `core/actions/program_gamepad.py` | 跟随 LS + 技能按钮合成；同按钮释放不干扰其他持有者；独立点击冲突不丢边沿；RS/LT/RT 输出；每手柄只有一个 lease；过期贡献不得续命 |
+| P2 通道归属 | 新 `core/actions/gamepad_compositor.py`、`tests/test_gamepad_compositor.py`；扩展 `core/actions/program_gamepad.py` | 轨道输出与跟随 LS 合成；同按钮释放不干扰其他持有者；独立点击冲突不丢边沿；RS/LT/RT 输出；每手柄只有一个 lease；过期贡献不得续命 |
 | P3 普通事件运行时 | 新 `core/runtime/event_session.py`、`tests/test_event_session.py`；复用 `core/events/registry.py` | 没有地图或领导者坐标也能执行；周期本地运行；停止释放自己的通道；有界实例及错误隔离 |
 | P4 跟随适配与插入 | 修改 `core/runtime/dual_follow_session.py`、`follower_controller.py`；新 `core/events/follow_behavior.py`；扩展 `tests/test_dual_follow_session.py` | 原跟随逻辑复用；暂停立即回中；插入后新位置恢复；停止/故障代次和嵌套暂停阻止错误恢复 |
 | P5 组调度 | 新 `core/events/event_group.py`、`tests/test_event_group.py` | 顺序/并行/插入；持续事件启动后继续；循环检测；取消仅影响自己拥有的子实例 |
@@ -211,6 +217,7 @@ P2–P10 每阶段开发前补充 2–5 分钟任务、可复制测试和实现�
 | Task 1 单键/组合键规范化 | 完成 | `807d9a4`；先导入失败，再正常输入通过，非法配置由失败转通过；7 passed |
 | Task 2 有限序列支持组合键 | 完成 | `5dbdfc9`；新时序用例先失败于旧单键验证；修复后通过；另补配置列表隔离测试并修复共享引用；相关组合/旧链/配置/会话测试 15 passed |
 | Task 3 周期调度基础 | 完成 | `dd78d0c`；按节拍、忙时跳过、回退时钟、非法参数逐项先红后绿；10 passed |
+| P1.5 轨道事件模型 | 待开发 | 已根据用户确认补充；尚未写入实现或运行测试 |
 | P2–P10 | 待展开/开发 | 尚未修改运行时、协议和界面 |
 
 ### 首批验证记录
