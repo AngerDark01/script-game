@@ -96,7 +96,7 @@ public sealed class HostComposition : IAsyncDisposable
         HostStatus Status()
         {
             var inputStatus = rawInput?.CaptureMode ?? "Input capture unavailable";
-            var controllerStatuses = registry.Slots.Select(slot => new ControllerStatus(slot.Number, registry.EffectiveRunState(slot.Number), backend.IsConnected && slot.Number <= backend.ControllerCount, registry.EffectiveState(slot.Number), registry.IsRemote(slot.Number) ? "remote" : "local")).ToArray();
+            var controllerStatuses = registry.Slots.Select(slot => new ControllerStatus(slot.Number, registry.EffectiveRunState(slot.Number), backend.IsConnected && slot.Number <= backend.ControllerCount, registry.EffectiveState(slot.Number), registry.IsRemote(slot.Number) ? "remote" : registry.IsProgram(slot.Number) ? "program" : "local")).ToArray();
             var firstState = controllerStatuses.FirstOrDefault();
             return new(firstState?.RunState ?? RunState.Ready, driverStatus.Installed, backend.IsConnected, $"{driverStatus.Message} Input: {inputStatus}.{syncError}", controllerStatuses);
         }
@@ -112,7 +112,7 @@ public sealed class HostComposition : IAsyncDisposable
     {
         get
         {
-            var statuses = _registry.Slots.Select(slot => new ControllerStatus(slot.Number, _registry.EffectiveRunState(slot.Number), _backend.IsConnected && slot.Number <= _backend.ControllerCount, _registry.EffectiveState(slot.Number), _registry.IsRemote(slot.Number) ? "remote" : "local")).ToArray();
+            var statuses = _registry.Slots.Select(slot => new ControllerStatus(slot.Number, _registry.EffectiveRunState(slot.Number), _backend.IsConnected && slot.Number <= _backend.ControllerCount, _registry.EffectiveState(slot.Number), _registry.IsRemote(slot.Number) ? "remote" : _registry.IsProgram(slot.Number) ? "program" : "local")).ToArray();
             return new(statuses[0].RunState, _driverStatus.Installed, _backend.IsConnected, _driverStatus.Message, statuses);
         }
     }

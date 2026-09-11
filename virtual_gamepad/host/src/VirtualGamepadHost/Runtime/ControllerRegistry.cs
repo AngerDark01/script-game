@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace VirtualGamepadHost.Runtime;
 
-public sealed class ControllerRegistry
+public sealed partial class ControllerRegistry
 {
     private readonly Dictionary<int, ControllerSlot> _slots;
     private readonly IXInputBackend? _backend;
@@ -30,14 +30,14 @@ public sealed class ControllerRegistry
 
     public RunState EffectiveRunState(int number) => IsRemote(number)
         ? (_sync!.IsRemoteActive(number) ? RunState.Running : RunState.Paused)
-        : Get(number).Safety.RunState;
+        : IsProgram(number) ? RunState.Running : Get(number).Safety.RunState;
 
     public GamepadState EffectiveState(int number)
     {
         lock (_routingGate)
             return IsRemote(number)
                 ? (_sync!.IsRemoteActive(number) ? _lastRemote.GetValueOrDefault(number, GamepadState.Neutral) : GamepadState.Neutral)
-                : Get(number).Store.Snapshot();
+                : LocalState(number);
     }
 
     public void ApplyPhysical(PhysicalInput input)
@@ -60,6 +60,7 @@ public sealed class ControllerRegistry
         lock (_routingGate)
         {
             if (IsRemote(number)) throw new RemoteOwnershipException(number);
+            if (ProgramLease(number) is not null) throw new InvalidOperationException("Controller is owned by a program session.");
             action(Get(number));
         }
     }
@@ -69,6 +70,7 @@ public sealed class ControllerRegistry
         lock (_routingGate)
         {
             var slot = Get(number);
+            _programLeases.Remove(number);
             if (IsRemote(number))
             {
                 slot.Safety.EmergencyReset();
@@ -90,7 +92,7 @@ public sealed class ControllerRegistry
     {
         lock (_routingGate)
         {
-            var enabled = IsRemote(number) ? _sync!.IsRemoteEnabled(number) : Get(number).Safety.RunState == RunState.Running;
+            var enabled = IsRemote(number) ? _sync!.IsRemoteEnabled(number) : Get(number).Safety.RunState == RunState.Running || ProgramLease(number) is not null;
             Lifecycle(number, enabled ? "pause" : "start");
         }
     }
@@ -126,6 +128,7 @@ public sealed class ControllerRegistry
                 if (previous[slot.Number] != IsRemote(slot.Number))
                 {
                     slot.Safety.EmergencyReset();
+                    _programLeases.Remove(slot.Number);
                     _lastRemote[slot.Number] = GamepadState.Neutral;
                 }
             return result;
@@ -169,7 +172,7 @@ public sealed class ControllerRegistry
             foreach (var slot in _slots.Values)
             {
                 var remote = IsRemote(slot.Number);
-                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : slot.Store.Snapshot();
+                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : LocalState(slot.Number);
                 if (remote) _lastRemote[slot.Number] = state;
                 if (_backend?.IsConnected == true) _backend.Submit(slot.Number, state);
                 if (!remote) _sync?.Publish(slot.Number, LanSyncAdapter.ToNetwork(state), slot.Safety.RunState == RunState.Running);
@@ -183,6 +186,7 @@ public sealed class ControllerRegistry
         {
             _sync?.EmergencyStop();
             _lastRemote.Clear();
+            _programLeases.Clear();
             foreach (var slot in _slots.Values) slot.Safety.EmergencyReset();
         }
     }

@@ -32,6 +32,12 @@ public sealed class CommandRouter
     {
         try
         {
+            if (message.Type.StartsWith("program.", StringComparison.Ordinal))
+            {
+                if (message.Type == "program.acquire" && !_deviceReady())
+                    return ProtocolSerializer.Failure(message.Id, "device_unavailable", "Virtual controller is not connected.");
+                return ProtocolSerializer.Success(message.Id, _registry.HandleProgram(message.Type, message.Payload));
+            }
             if (message.Type.StartsWith("sync.", StringComparison.Ordinal))
             {
                 var result = _registry.HandleSync(message.Type, message.Payload);
@@ -61,6 +67,10 @@ public sealed class CommandRouter
             };
         }
         catch (JsonException ex)
+        {
+            return ProtocolSerializer.Failure(message.Id, "invalid_payload", ex.Message);
+        }
+        catch (KeyNotFoundException ex)
         {
             return ProtocolSerializer.Failure(message.Id, "invalid_payload", ex.Message);
         }
