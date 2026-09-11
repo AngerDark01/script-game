@@ -5,6 +5,9 @@ from queue import Queue, Empty, Full
 from dataclasses import replace
 from uuid import uuid4
 import os
+import json
+from pathlib import Path
+from core.runtime_paths import data_root
 from core.runtime.follow_workers import vision_worker,actor_worker,put_latest,latest,clock_ms
 from core.lan_follow.follow_transport import FollowTransport,SharedEvent
 
@@ -25,6 +28,14 @@ class FollowService:
         self.outbound=Queue(maxsize=32)
         self.network_status={}; self.snapshot={}; self.client=None; self.thread=None
         self._keys=set()
+        self._route_shortcuts={}
+        try:
+            route_path=data_root(Path(__file__).resolve().parents[2])/'configs'/'events'/'routes.json'
+            for route in json.loads(route_path.read_text(encoding='utf-8')):
+                if route.get('source') in ('B端','B','') and route.get('trigger') and route.get('event'):
+                    self._route_shortcuts[route['trigger']]=route['event']
+        except (OSError, ValueError, TypeError):
+            pass
 
     def start(self):
         if self.processes: raise RuntimeError('monitor already started')
@@ -71,7 +82,8 @@ class FollowService:
     def _hotkeys(self):
         if os.name!='nt': return
         import ctypes
-        for key,name in self.config.shortcuts.items():
+        shortcuts=dict(self.config.shortcuts); shortcuts.update(self._route_shortcuts)
+        for key,name in shortcuts.items():
             pressed=bool(ctypes.windll.user32.GetAsyncKeyState(0x70+int(key[1:])-1)&0x8000)
             if pressed and key not in self._keys: self.send_event(name)
             if pressed: self._keys.add(key)
