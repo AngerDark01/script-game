@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from core.localization.map_runtime import MapRuntime
 
@@ -18,3 +19,27 @@ def test_tile_is_clipped_and_returns_origin():
     wall, distance, origin = runtime.tile(0, 0)
     assert wall.shape == distance.shape
     assert origin == (0, 0)
+
+
+def test_npz_uses_existing_active_version_catalog(tmp_path):
+    from core.map_editing.version_storage import save_new_wall_version
+    walls = np.zeros((16, 16), np.uint8)
+    np.savez(tmp_path / 'map_data.npz', wall_layer=walls)
+    edited = walls.copy()
+    edited[5, 7] = 255
+    version = save_new_wall_version(tmp_path, edited, parent_version=None)
+    runtime = MapRuntime.from_npz(tmp_path / 'map_data.npz')
+    assert runtime.map_version == version.id
+    assert runtime.wall_layer[5, 7] == 1
+    assert runtime.distance_field[5, 7] == 0
+
+
+def test_bounds_and_immutable_snapshot():
+    runtime = MapRuntime.from_wall_layer(np.zeros((10, 12), np.uint8), tile_size=8)
+    with pytest.raises(ValueError):
+        runtime.tile(-1, 0)
+    with pytest.raises(ValueError):
+        runtime.wall_layer[0, 0] = 1
+    assert np.isinf(runtime.distance_field).all()
+    with pytest.raises(ValueError):
+        MapRuntime.from_wall_layer(np.zeros((10, 12)), tile_size=0)
