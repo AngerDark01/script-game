@@ -207,6 +207,8 @@ public sealed partial class LanSyncService
             if (_generation != generation || _disposed || _mode == "off") throw new OperationCanceledException();
             _pending.Add(request.Id, request);
             _pairVersions[peer.DeviceId] = pairVersion;
+            _pairingState = "waiting-confirmation";
+            _pairingTarget = peer.Name;
         }
         try
         {
@@ -218,6 +220,8 @@ public sealed partial class LanSyncService
             {
                 if (_generation != generation || _disposed || _mode == "off" || _pairVersions.GetValueOrDefault(peer.DeviceId) != pairVersion) throw new OperationCanceledException();
                 _trusted[peer.DeviceId] = peer; SavePreferencesLater(); _error = null;
+                _pairingState = "paired";
+                _pairingTarget = peer.Name;
             }
         }
         finally

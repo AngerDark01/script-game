@@ -335,10 +335,16 @@ class SyncPanel(QWidget):
         self.code_button.setEnabled(ready and applied_mode in ("receive", "share"))
         self.pair_button.setEnabled(ready and applied_mode in ("send", "share"))
         self.send_button.setEnabled(ready and applied_mode in ("send", "share"))
+        pairing_state = status.get("pairingState", "idle")
+        pairing_labels = {"connecting": "正在连接对方设备", "waiting-confirmation": "等待对方确认配对", "paired": "配对已完成", "failed": "配对失败"}
+        if pairing_state in pairing_labels and not status.get("error"):
+            self.message.setText(pairing_labels[pairing_state])
         self.identity.setText(f"本机：{status.get('name', '')}  ·  {status.get('deviceId', '')}")
         labels = {"off": "关闭", "send": "发送", "receive": "接收", "share": "位置与事件共享"}
         self.message.setText(status.get("error") or f"当前模式：{labels.get(status.get('mode'), '等待连接')} · 网络：{'已就绪' if ready else '未就绪'} · 接收许可：{status.get('remoteEnabled', [])}")
         self.code.setText("配对码：" + (status.get("pairingCode") or "未开启"))
+        if pairing_state in pairing_labels and not status.get("error"):
+            self.message.setText(pairing_labels[pairing_state])
         if first:
             self.receive_positions.setChecked(status.get("receivePositions", False))
             self.receive_events.setChecked(status.get("receiveEvents", False))

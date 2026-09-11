@@ -34,6 +34,8 @@ public sealed partial class LanSyncService : ILanSyncService
     private string? _error;
     private string? _pairingCode;
     private DateTimeOffset _pairingExpiry;
+    private string _pairingState = "idle";
+    private string? _pairingTarget;
     private NetManager? _net;
     private TcpListener? _listener;
     private int _incomingConnections;
@@ -194,6 +196,8 @@ public sealed partial class LanSyncService : ILanSyncService
                         var code = RequiredString(payload, "code");
                         if (code.Length != 8 || !code.All(char.IsAsciiDigit)) throw new ArgumentException("设备码应为 8 位数字。");
                         var pairGeneration = _generation; var pairToken = _run.Token;
+                        _pairingState = "connecting";
+                        _pairingTarget = $"{address}:{port}";
                         ScheduleConnection("pair:" + address + ":" + port, () => PairAsync(address, port, code, pairGeneration, pairToken)); break;
                     case "sync.confirm":
                         var id = RequiredString(payload, "requestId");
@@ -250,6 +254,8 @@ public sealed partial class LanSyncService : ILanSyncService
                             _shareBlockedPeers.Remove(resetDevice); _peerErrors.Remove(resetDevice);
                         }
                         _error = null;
+                        _pairingState = "idle";
+                        _pairingTarget = null;
                         break;
                     case "sync.forget":
                         var forgotten = RequiredString(payload, "deviceId");
@@ -312,7 +318,7 @@ public sealed partial class LanSyncService : ILanSyncService
         _ = Task.Run(async () =>
         {
             try { await connect(); }
-            catch (Exception ex) { lock (_gate) { _error = ex.Message; _peerErrors[key] = ex.Message; } }
+            catch (Exception ex) { lock (_gate) { _error = ex.Message; _peerErrors[key] = ex.Message; if (key.StartsWith("pair:", StringComparison.Ordinal)) _pairingState = "failed"; } }
             finally { lock (_gate) if (_connecting.GetValueOrDefault(key) == ticket) _connecting.Remove(key); }
         });
     }
@@ -329,6 +335,8 @@ public sealed partial class LanSyncService : ILanSyncService
             addresses = _addresses,
             pairingCode = DateTimeOffset.UtcNow < _pairingExpiry ? _pairingCode : null,
             pairingExpiresUtc = _pairingCode is null ? (DateTimeOffset?)null : _pairingExpiry,
+            pairingState = _pairingState,
+            pairingTarget = _pairingTarget,
             controllers = _preferences.Controllers, remoteEnabled = Enumerable.Range(1, 2).Where(c => _remoteEnabled[c - 1]).ToArray(),
             peers = _trusted.Values.Select(p =>
             {
