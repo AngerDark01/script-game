@@ -16,3 +16,21 @@ def test_event_stops_at_first_limit_and_clears_tracks():
 def test_loop_requires_an_explicit_stop_limit():
     with pytest.raises(ValueError):
         EventLifecycle([], loop=True)
+
+
+def test_ordered_steps_emit_one_button_at_a_time():
+    event = EventLifecycle([], steps=(
+        {'op': 'button', 'button': 'X', 'ms': 100},
+        {'op': 'wait', 'ms': 500},
+        {'op': 'button', 'button': 'Y', 'ms': 100},
+        {'op': 'wait', 'ms': 500},
+        {'op': 'button', 'button': 'RB', 'ms': 100},
+    ))
+    assert event.poll(0) == {'X'}
+    assert event.poll(100) == set()
+    assert event.poll(599) == set()
+    assert event.poll(600) == {'Y'}
+    assert event.poll(700) == set()
+    assert event.poll(1200) == {'RB'}
+    assert event.poll(1300) == set()
+    assert event.finished

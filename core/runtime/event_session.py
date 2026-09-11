@@ -20,6 +20,7 @@ class EventSession:
             max_runs=definition.max_runs,
             loop=definition.loop,
             end_ms=definition.end_ms,
+            steps=getattr(definition, 'steps', ()),
         ))
         return True
 

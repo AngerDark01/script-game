@@ -50,7 +50,11 @@ class LocalEventRuntime:
             for item in event.get('tracks', ()):
                 mode = TrackMode(item.get('mode', 'once'))
                 tracks.append(ActionTrack(tuple(item.get('buttons', ())), mode=mode, hold_ms=int(item.get('hold_ms', 100)), interval_ms=item.get('interval_ms') if mode is not TrackMode.ONCE else None, end_ms=item.get('end_ms') if mode is not TrackMode.ONCE else None))
-            definitions[event.get('name', '')] = SimpleNamespace(tracks=tuple(tracks), max_runs=event.get('max_runs'), loop=bool(event.get('loop', False)), end_ms=event.get('end_ms'))
+            definitions[event.get('name', '')] = SimpleNamespace(
+                tracks=tuple(tracks), steps=tuple(event.get('steps', ())),
+                max_runs=event.get('max_runs'), loop=bool(event.get('loop', False)),
+                end_ms=event.get('end_ms')
+            )
         local = {}
         remote = {}
         for route in routes if isinstance(routes, list) else []:

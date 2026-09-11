@@ -32,7 +32,11 @@ class RemoteEventRuntime:
         out={}
         for event in data if isinstance(data,list) else []:
             tracks=[ActionTrack(tuple(t.get('buttons',())), mode=TrackMode(t.get('mode','once')), hold_ms=int(t.get('hold_ms',100)), interval_ms=t.get('interval_ms') if t.get('mode','once') != 'once' else None, end_ms=t.get('end_ms') if t.get('mode','once') != 'once' else None) for t in event.get('tracks',())]
-            out[event.get('name','')]=SimpleNamespace(tracks=tuple(tracks), max_runs=event.get('max_runs'), loop=bool(event.get('loop',False)), end_ms=event.get('end_ms'))
+            out[event.get('name','')]=SimpleNamespace(
+                tracks=tuple(tracks), steps=tuple(event.get('steps', ())),
+                max_runs=event.get('max_runs'), loop=bool(event.get('loop',False)),
+                end_ms=event.get('end_ms')
+            )
         return out
 
     def start(self):
