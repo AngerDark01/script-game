@@ -79,7 +79,7 @@ class DualFollowSession:
         except Exception: pass  # host TTL remains the independent last line of defence
         self.mode[actor] = 'error'
 
-    def tick(self, local_positions, remote_positions):
+    def tick(self, local_positions, remote_positions, *, button_overrides=None):
         now = self.clock()
         elapsed = 20 if self.last_tick is None else max(0, now-self.last_tick)
         self.last_tick = now
@@ -109,7 +109,7 @@ class DualFollowSession:
                         self.mode[actor] = 'following' if definition.resume and result.type == EventActionType.COMPLETE else 'paused'
                     else:
                         remaining=min(local_positions[actor].captured_at_ms, leader.captured_at_ms)+controller.ttl_ms-self.clock()
-                        self.outputs[actor].write((0.,0.), buttons=result.metadata.get('buttons',0),
+                        self.outputs[actor].write((0.,0.), buttons=result.metadata.get('buttons',0) | int((button_overrides or {}).get(actor, 0)),
                             valid_for_ms=min(120, result.wait_ms or 1, remaining, definition.timeout_ms-(self.clock()-handler.started)))
                 elif self.mode[actor] == 'following':
                     decision = controller.tick(local_positions.get(actor), leader, now_ms=now)
@@ -117,8 +117,9 @@ class DualFollowSession:
                     # Planning may have blocked. Subtract its time before sending.
                     remaining = decision.valid_for_ms-(self.clock()-now)
                     self.outputs[actor].write(decision.vector if remaining > 0 else (0.,0.),
-                        elapsed_ms=elapsed, valid_for_ms=remaining)
+                        elapsed_ms=elapsed, valid_for_ms=remaining,
+                        buttons=int((button_overrides or {}).get(actor, 0)))
                 else:
-                    self.outputs[actor].write((0.,0.))
+                    self.outputs[actor].write((0.,0.), buttons=int((button_overrides or {}).get(actor, 0)))
             except Exception as exc:
                 self._fault(actor, exc)

@@ -93,6 +93,9 @@ def actor_worker(config, actor, stop, observations, commands, status, recording_
         from core.events.registry import EventRegistry
         from core.events.follow_chain import FollowChainDefinition
         from core.events.hooks.registry import EventHookRegistry
+        from core.runtime.event_session import EventSession
+        from core.events.action_tracks import ActionTrack, TrackMode
+        from core.events.follow_chain import BUTTONS
         from virtual_gamepad.client.python import VirtualGamepadClient
         reference,nav=load_follow_maps(config)
         controller=FollowerController(nav,actor_id=identity,map_id=config.map_id,map_version=reference.map_version,
@@ -106,6 +109,18 @@ def actor_worker(config, actor, stop, observations, commands, status, recording_
                 priority=chain.get('priority',0),timeout_ms=chain.get('timeout_ms',30000),resume=chain.get('resume',False)))
         session=DualFollowSession({identity:controller},{identity:output},event_registry=registry,
             leader_device=config.leader_device,leader_actor=config.leader_actor,clock_ms=clock_ms)
+        # New timed track definitions are optional and coexist with legacy chains.
+        track_definitions={}
+        for item in config.chains:
+            tracks=[]
+            for raw in item.get('tracks', []):
+                tracks.append(ActionTrack(tuple(raw['buttons']), mode=TrackMode(raw.get('mode','once')),
+                    hold_ms=int(raw.get('hold_ms',100)), interval_ms=raw.get('interval_ms'), end_ms=raw.get('end_ms')))
+            if tracks:
+                from types import SimpleNamespace
+                track_definitions[item['name']]=SimpleNamespace(tracks=tuple(tracks),
+                    max_runs=item.get('max_runs'), loop=bool(item.get('loop',False)), end_ms=item.get('end_ms'))
+        event_session=EventSession(track_definitions,clock_ms=clock_ms)
         from core.diagnostics.follow_replay import FollowRecorder
         recorder=FollowRecorder(recording_dir) if recording_dir else None
         observed=({},()); last_status=0
@@ -121,10 +136,18 @@ def actor_worker(config, actor, stop, observations, commands, status, recording_
                 elif command['kind']=='stop':
                     try: session.stop(identity)
                     except Exception as exc: session.errors[identity]=str(exc)
-                elif command['kind']=='event': session.receive(command['event'])
+                elif command['kind']=='event':
+                    event = command['event']
+                    if event.name in track_definitions:
+                        event_session.receive_remote(event)
+                    else:
+                        session.receive(event)
                 if recorder: recorder.record('control_event',dict(actor=identity,kind=command['kind'],at_ms=clock_ms(),event=str(command.get('event',''))))
             observed=latest(observations,observed)
-            session.tick(*observed)
+            event_buttons = 0
+            for name in event_session.tick():
+                event_buttons |= BUTTONS.get(name, 0)
+            session.tick(*observed, button_overrides={identity: event_buttons})
             if clock_ms()-last_status>=100:
                 decision=session.decisions.get(identity)
                 put_latest(status,dict(worker=identity,mode=session.mode[identity],armed=session.armed[identity],
