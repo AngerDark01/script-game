@@ -51,7 +51,8 @@ class EventWorkbenchPage(QWidget):
         subtitle=QLabel('把按键动作编排成可复用事件，再路由到指定电脑和手柄。'); subtitle.setStyleSheet('color:#93a7bd;'); title_box.addWidget(subtitle)
         head.addStretch(); self.save = QPushButton('保存事件版本'); self.save.setProperty('role','primary'); self.save.clicked.connect(self._save); head.addWidget(self.save)
         self.status = QLabel('● 仅编辑配置'); self.status.setStyleSheet('color:#93a7bd;'); root.addWidget(self.status)
-        self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.West); root.addWidget(self.tabs, 1)
+        # Horizontal workspace tabs keep Chinese labels readable at normal widths.
+        self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.North); root.addWidget(self.tabs, 1)
         self._build_library(); self._build_routes(); self._build_runtime()
 
     def _build_library(self):
