@@ -83,6 +83,27 @@ public sealed class MappingEngineTests
     }
 
     [Fact]
+    public async Task ReleasingDiagonalKeyKeepsOtherHeldAxisActivePastInputTtl()
+    {
+        var store = new StateStore(TimeSpan.FromMilliseconds(15));
+        var engine = new MappingEngine(store, new MappingConfig(new[]
+        {
+            new Binding("keyboard:W", "axis:LeftY", 1),
+            new Binding("keyboard:D", "axis:LeftX", 1),
+        }));
+
+        engine.Apply(new PhysicalInput("keyboard:W", PhysicalInputType.KeyDown));
+        engine.Apply(new PhysicalInput("keyboard:D", PhysicalInputType.KeyDown));
+        engine.Apply(new PhysicalInput("keyboard:D", PhysicalInputType.KeyUp));
+
+        await Task.Delay(40);
+
+        var state = store.Snapshot();
+        Assert.Equal((short)0, state.LeftStickX);
+        Assert.Equal(short.MaxValue, state.LeftStickY);
+    }
+
+    [Fact]
     public void SuppressionMatchesConfiguredKeyboardAndMouseSources()
     {
         var engine = new MappingEngine(new StateStore(), new MappingConfig(new[]

@@ -5433,3 +5433,66 @@ The EOF whitespace was removed, the model-resource source was re-staged, and the
 **Verification:** the focused source/mapping/OCR-workflow suite passes 7/7; `compileall -q core/platform core/spatial workflows utils`, public platform imports, and `git diff --check` pass. A read-only live `DesktopFrameSource().capture()` produced a `2560 × 1600` image with matching primary physical geometry `(0, 0, 2560, 1600)` at 150% DPI; it did not invoke OCR, mouse movement, or clicking.
 
 **Full-suite audit:** `python -m unittest discover -s tests` ran 210 tests: 203 passed, 2 skipped, 3 pre-existing `PathFinder` policy assertion failures, and 2 unrelated test-loader errors. One loader error is the existing advanced-settings loose-module import; the other is `test_wall_version_storage`, which imports a map-editor version-storage module not present in this worktree. Neither failure imports the changed platform/frame-source files.
+
+## [POE-MAP-DEVICE-PROBE] 2026-09-05
+
+### A. Scope
+
+Temporary, repository-external probe for the approved PoE flow: primary-screen
+capture → RapidOCR target selection → fixed player anchor `(1335, 850)` →
+short Xbox left-stick pulse → recapture/feedback → interaction gate → A.
+
+### C. Result
+
+- The probe now uses adaptive pulse timing, progress estimation, explicit stick
+  neutralization, Y-axis inversion matching the host (`LeftY=+` is up), and a
+  no-progress stop condition. Its target text matching handles both simplified
+  and traditional `地图装置` output and removes OCR whitespace.
+- Offline probe tests pass **4/4**: main-label selection over minimap duplicate,
+  axis sign, progress/speed update, and dry-run action isolation.
+- Live dry-run succeeded on the primary monitor (`2560×1600`): detected
+  `地圖裝置` at approximately `(1721.94, 214.10)`, anchor delta
+  `(386.94, -635.90)`, distance `744.37 px`, confidence `0.998978`; no input
+  was sent.
+- Live execution was intentionally not started because the named pipe rejected
+  the non-elevated Python process (`Errno 5 Access Denied`). No joystick or A
+  command was delivered. The probe now reports this as `input_unavailable` JSON.
+- A later elevated run without `--start-controller` reached the action loop while
+  Controller 1 was still paused; its commands were therefore neutralized by the
+  host and must not be used as evidence that the game rejected joystick input.
+  The first elevated run with temporary controller startup found no OCR target
+  before the pulse, so it also sent no movement.
+- The probe now holds maximum-strength stick values with periodic refreshes for
+  the full pulse and explicitly neutralizes afterward; this behavior is covered
+  by the offline tests.
+
+The next checkpoint is to rerun the external probe from a terminal with the
+same administrator level as the VirtualGamepad host, first with one short pulse
+and then with the bounded full loop. The formal core and GUI remain unchanged.
+
+## [POE-MAP-DEVICE-SMOOTH-MOTION] 2026-09-05
+
+### A. Root-cause investigation
+
+- Live trace completed six movement corrections in about 22 seconds. Each
+  correction published a 150 ms full-strength pulse, then waited for the next
+  full-screen capture/OCR cycle.
+- Primary-screen capture took about 60-190 ms, while RapidOCR on the full
+  2560x1600 frame took about 1.6-2.8 seconds. The previous 450 ms route TTL
+  therefore expired during recognition and the host returned the stick to
+  neutral between corrections. This explains the visible stop/start motion.
+
+### C. Implementation and verification
+
+- Added the device-neutral `core.actions.StickSlewLimiter`, which transitions
+  two-axis stick values at a bounded rate and supports immediate neutral reset.
+- The external PoE probe now uses the limiter for direction changes and runs a
+  short stick lease refresher during capture/OCR. It leaves the current command
+  active between frames, stops the lease before A or any exit path, and then
+  neutralizes/resets the controller.
+- Focused verification: gamepad motion tests 3/3, existing gamepad/action tests
+  13/13, and external PoE probe tests 6/6. Python compilation and diff checks
+  pass.
+- Full discovery still reports the existing baseline issues: three Pathfinder
+  policy assertion failures and one advanced-settings loose-import error; no
+  failure imports the new motion module.

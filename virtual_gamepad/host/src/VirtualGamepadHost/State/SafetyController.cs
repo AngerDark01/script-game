@@ -40,6 +40,7 @@ public sealed class SafetyController
     {
         lock (_gate)
         {
+            _store.ClearAll();
             _runState = RunState.Paused;
             _store.SetPaused(true);
         }
@@ -51,6 +52,7 @@ public sealed class SafetyController
         {
             if (_runState == RunState.Running)
             {
+                _store.ClearAll();
                 _runState = RunState.Paused;
                 _store.SetPaused(true);
             }

@@ -15,6 +15,7 @@ from .contracts import (
     VirtualControllerRoute,
 )
 from .gamepad import VirtualGamepadActionAdapter, VirtualGamepadDevice
+from .gamepad_motion import StickSlewLimiter
 from .keyboard import KeyboardActionAdapter, KeyboardDevice, PyDirectInputKeyboardDevice
 from .models import ActionRequest
 from .mouse import ActionExecutionError, MouseActionAdapter, MouseDevice
@@ -31,6 +32,7 @@ __all__ = [
     "GamepadResetTarget",
     "GamepadStickTarget",
     "GamepadTriggerTarget",
+    "StickSlewLimiter",
     "KeyboardActionAdapter",
     "KeyboardDevice",
     "KeyboardTarget",

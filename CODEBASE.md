@@ -206,6 +206,7 @@ core/input/win32_driver.py - Win32 输入 adapter，封装鼠标移动/点击、
 core/actions/__init__.py - 设备无关动作契约和鼠标 adapter 的公共入口。
 core/actions/models.py - `ActionKind`、`ActionRequest`、`ActionResult` 不可变动作 DTO。
 core/actions/mouse.py - 仅消费物理映射点的鼠标移动/双击 adapter 与最小设备协议。
+core/actions/gamepad_motion.py - 与设备和游戏无关的 `StickSlewLimiter`，按最大变化率平滑两轴摇杆目标并支持立即回中；供手柄动作策略组合使用。
 virtual_gamepad/host/src/VirtualGamepadHost/Protocol/NamedPipeServer.cs - 当前并行开发中的 Windows 当前用户 JSON-lines 命名管道服务；每个连接独立顺序处理请求，允许 UI 与自动化客户端并存。
 virtual_gamepad/host/src/VirtualGamepadHost/Protocol/CommandRouter.cs - 按 controller 1/2 路由主机协议命令、解析 actuator payload，并把格式/参数错误转换成协议失败响应。
 virtual_gamepad/host/src/VirtualGamepadHost/State/StateStore.cs - 每手柄独立的线程安全输入源仲裁：按钮 OR、扳机取最大、摇杆取最大绝对值/最新值，并在快照时移除超时源。

@@ -72,6 +72,13 @@ public sealed class MappingEngine
 
     private void ApplyBinding(Binding binding, bool active)
     {
+        var source = SourceId(binding);
+        if (!active)
+        {
+            _store.ClearSource(source);
+            return;
+        }
+
         var target = binding.Target.Split(':', 2);
         if (target.Length != 2)
         {
@@ -81,13 +88,13 @@ public sealed class MappingEngine
         switch (target[0].ToLowerInvariant())
         {
             case "button" when Enum.TryParse<GamepadButton>(target[1], true, out var button):
-                _store.SetButton(SourceId(binding), button, active);
+                _store.SetState(source, GamepadState.Neutral.WithButton(button, true));
                 break;
             case "axis" when TryParseAxis(target[1], out var axis):
-                _store.SetAxis(SourceId(binding), axis, active ? (int)(FullAxis * Math.Clamp(binding.Value, -1.0, 1.0)) : 0);
+                _store.SetState(source, GamepadState.Neutral.WithAxis(axis, (int)(FullAxis * Math.Clamp(binding.Value, -1.0, 1.0))));
                 break;
             case "trigger" when TryParseTrigger(target[1], out var trigger):
-                _store.SetTrigger(SourceId(binding), trigger, active ? (int)(byte.MaxValue * Math.Clamp(binding.Value, 0.0, 1.0)) : 0);
+                _store.SetState(source, GamepadState.Neutral.WithTrigger(trigger, (int)(byte.MaxValue * Math.Clamp(binding.Value, 0.0, 1.0))));
                 break;
         }
     }

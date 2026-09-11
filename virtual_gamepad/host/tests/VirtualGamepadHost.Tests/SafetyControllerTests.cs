@@ -39,4 +39,18 @@ public sealed class SafetyControllerTests
         safety.TogglePause();
         Assert.Equal(RunState.Paused, safety.RunState);
     }
+
+    [Fact]
+    public void PauseDoesNotRestoreHeldInputsWhenRestarted()
+    {
+        var store = new StateStore();
+        var safety = new SafetyController(store);
+        safety.Start();
+        store.SetAxis("held", GamepadAxis.LeftY, short.MaxValue);
+
+        safety.Pause();
+        safety.Start();
+
+        Assert.Equal(GamepadState.Neutral, store.Snapshot());
+    }
 }
