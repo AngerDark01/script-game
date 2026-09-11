@@ -36,6 +36,9 @@ class EventLifecycle:
         if self.max_runs is not None and self._cycle_ms and now_ms >= self.max_runs * self._cycle_ms:
             self.finished = True
             return set()
+        if not self.loop and self.max_runs is None and self.end_ms is None and self._cycle_ms and now_ms >= self._cycle_ms:
+            self.finished = True
+            return set()
         buttons = set()
         for track in self.tracks:
             if track.active_at(now_ms):
