@@ -42,8 +42,10 @@ class FollowChainDefinition(EventDefinition):
                 raise ValueError(f'unknown chain operation: {op}')
             if op in ('wait', 'button') and not 0 <= int(step.get('ms', 100)) <= 5000:
                 raise ValueError('step duration must be 0..5000ms')
-            if op == 'button' and step.get('button') not in BUTTONS:
-                raise ValueError('unknown Xbox button')
+            if op == 'button':
+                button_mask(step)
+                if 'buttons' in step:
+                    step['buttons'] = tuple(step['buttons'])
             if op == 'retry' and not 1 <= int(step.get('count', 1)) <= 10:
                 raise ValueError('retry count must be 1..10')
             for key in ('then', 'else', 'target'):
@@ -90,7 +92,7 @@ class FollowChainHandler(EventHandler):
             duration = int(step.get('ms', 100))
             if op in ('wait', 'button') and now-self.step_started < duration:
                 return EventAction.wait(duration-(now-self.step_started), metadata={
-                    'buttons': BUTTONS[step['button']] if op == 'button' else 0})
+                    'buttons': button_mask(step) if op == 'button' else 0})
             next_index = self.index+1
             if op == 'condition':
                 condition = bool(task.metadata.get('conditions', {}).get(step['name'], False))
