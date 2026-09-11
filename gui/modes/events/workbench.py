@@ -60,7 +60,7 @@ class EventWorkbenchPage(QWidget):
         subtitle=QLabel('把按键动作编排成可复用事件，再路由到指定电脑和手柄。'); subtitle.setStyleSheet('color:#93a7bd;'); title_box.addWidget(subtitle)
         head.addStretch(); self.save = QPushButton('保存事件版本'); self.save.setProperty('role','primary'); self.save.clicked.connect(self._save); head.addWidget(self.save)
         self.status = QLabel('● 仅编辑配置'); self.status.setStyleSheet('color:#93a7bd;'); root.addWidget(self.status)
-        self.runtime_button = QPushButton('启动本机事件测试'); self.runtime_button.clicked.connect(self._toggle_runtime); root.addWidget(self.runtime_button)
+        self.runtime_button = QPushButton('启动本机监控服务'); self.runtime_button.clicked.connect(self._toggle_runtime); root.addWidget(self.runtime_button)
         # Horizontal workspace tabs keep Chinese labels readable at normal widths.
         self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.North); root.addWidget(self.tabs, 1)
         self._build_library(); self._build_routes(); self._build_runtime()
@@ -169,14 +169,14 @@ class EventWorkbenchPage(QWidget):
         if self.runtime.thread and self.runtime.thread.is_alive():
             self.runtime.stop()
             self.runtime_timer.stop()
-            self.runtime_button.setText('启动本机事件测试')
-            self.status.setText('本机事件测试已停止')
+            self.runtime_button.setText('启动本机监控服务')
+            self.status.setText('本机监控服务已停止')
             return
         self._save()
         self.runtime = LocalEventRuntime(root=self.path.parent)
         self.runtime.start()
-        self.runtime_button.setText('停止本机事件测试')
-        self.status.setText('本机事件测试已启动；事件触发键不会被 Xbox 映射层吞掉')
+        self.runtime_button.setText('停止本机监控服务')
+        self.status.setText('本机监控服务已启动；事件触发键不会被 Xbox 映射层吞掉')
         self.runtime_timer.start()
 
     def _poll_runtime(self):
@@ -192,5 +192,5 @@ class EventWorkbenchPage(QWidget):
             return
         self.runtime_timer.stop()
         if runtime.error:
-            self.runtime_button.setText('启动本机事件测试')
+            self.runtime_button.setText('启动本机监控服务')
             self.status.setText(f'本机事件监听失败：{runtime.error}')
