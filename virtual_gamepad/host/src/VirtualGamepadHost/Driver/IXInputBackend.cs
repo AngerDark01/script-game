@@ -8,6 +8,8 @@ public interface IXInputBackend : IDisposable
 
     int ControllerCount { get; }
 
+    bool IsControllerConnected(int controller);
+
     void Start();
 
     void Submit(int controller, GamepadState state);

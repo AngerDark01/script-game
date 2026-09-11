@@ -12,7 +12,10 @@ public sealed class ViGEmXInputBackend : IXInputBackend
     private readonly IXbox360Controller?[] _controllers = new IXbox360Controller?[2];
     private readonly IVirtualGamepad?[] _controllerBases = new IVirtualGamepad?[2];
 
-    public bool IsConnected => _controllers.All(controller => controller is not null);
+    public bool IsConnected => _controllers.Any(controller => controller is not null);
+
+    public bool IsControllerConnected(int controller)
+        => controller is >= 1 and <= 2 && _controllers[controller - 1] is not null;
 
     public int ControllerCount => _controllers.Length;
 

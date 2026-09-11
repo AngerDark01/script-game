@@ -209,7 +209,10 @@ public sealed partial class ControllerRegistry
                 // keyboard mapping + event source + any other local source.
                 var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : EffectiveState(slot.Number);
                 if (remote) _lastRemote[slot.Number] = state;
-                if (_backend?.IsConnected == true) _backend.Submit(slot.Number, state);
+                // A disconnected slot must not prevent the other virtual
+                // controller from receiving reports.  IsConnected is an
+                // aggregate status; route each slot independently.
+                if (_backend?.IsControllerConnected(slot.Number) == true) _backend.Submit(slot.Number, state);
                 if (state.Buttons != 0 || state.LeftStickX != 0 || state.LeftStickY != 0 || state.RightStickX != 0 || state.RightStickY != 0 || state.LeftTrigger != 0 || state.RightTrigger != 0)
                     HostDiagnostics.Write($"report submitted controller={slot.Number} buttons={state.Buttons} axes={state.LeftStickX},{state.LeftStickY},{state.RightStickX},{state.RightStickY} triggers={state.LeftTrigger},{state.RightTrigger} backendConnected={_backend?.IsConnected == true}");
                 if (!remote) _sync?.Publish(slot.Number, LanSyncAdapter.ToNetwork(state), slot.Safety.RunState == RunState.Running);
