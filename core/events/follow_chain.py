@@ -14,6 +14,21 @@ BUTTONS = {'A': 0x1000, 'B': 0x2000, 'X': 0x4000, 'Y': 0x8000,
     'LS': 0x40, 'RS': 0x80, 'UP': 1, 'DOWN': 2, 'LEFT': 4, 'RIGHT': 8}
 
 
+def button_mask(step):
+    """Translate legacy single buttons or chords using the shared Xbox table."""
+    if 'button' in step and 'buttons' in step:
+        raise ValueError('choose button or buttons, not both')
+    names = step.get('buttons') if 'buttons' in step else [step.get('button')]
+    if not isinstance(names, (list, tuple)) or not 1 <= len(names) <= 16:
+        raise ValueError('one to sixteen Xbox buttons required')
+    mask = 0
+    for name in names:
+        if not isinstance(name, str) or name not in BUTTONS:
+            raise ValueError('unknown Xbox button')
+        mask |= BUTTONS[name]
+    return mask
+
+
 class FollowChainDefinition(EventDefinition):
     def __init__(self, name, steps, *, hooks=None, timeout_ms=30000, priority=0, resume=False):
         self.event_type, self.display_name = name, name
