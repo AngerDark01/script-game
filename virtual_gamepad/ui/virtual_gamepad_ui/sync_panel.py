@@ -221,7 +221,18 @@ class SyncPanel(QWidget):
         self.command("sync.configure", payload)
 
     def pair(self):
-        self.command("sync.pair", {"address": self.peer_address.text().strip(), "port": self.peer_port.value(), "code": self.peer_code.text().strip()})
+        address = self.peer_address.text().strip()
+        code = self.peer_code.text().strip()
+        if not address:
+            self.message.setText("请先填写对方设备的局域网 IP 地址。")
+            self.peer_address.setFocus()
+            return
+        if len(code) != 8 or not code.isascii() or not code.isdigit():
+            self.message.setText("配对码必须是对方设备显示的 8 位数字。")
+            self.peer_code.setFocus()
+            return
+        self.message.setText("正在发起配对，请等待对方的待确认请求。")
+        self.command("sync.pair", {"address": address, "port": self.peer_port.value(), "code": code})
 
     def confirm(self, allow):
         item = self.pending.currentItem()
@@ -260,6 +271,12 @@ class SyncPanel(QWidget):
                 return
             self._stop_inflight = True
         elif self.busy:
+            # The periodic status poll must never start a second pipe request
+            # while a user action (especially pairing) is in flight.  Starting
+            # it here races the action response and makes the button appear to
+            # do nothing because the older response is discarded by sequence.
+            if command == "sync.status":
+                return
             if command != "sync.status":
                 if self._pending_command is None:
                     self._pending_command = (command, payload)
