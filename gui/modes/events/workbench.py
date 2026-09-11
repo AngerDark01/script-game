@@ -2,9 +2,10 @@
 from copy import deepcopy
 from pathlib import Path
 import json
-from PySide6.QtCore import QTimer
+from uuid import uuid4
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit, QLineEdit)
+    QListWidget, QListWidgetItem, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit, QLineEdit)
 from core.runtime_paths import data_root
 from core.runtime.local_event_runtime import LocalEventRuntime
 from core.runtime.remote_event_runtime import RemoteEventRuntime
@@ -18,13 +19,18 @@ class EventWorkbenchPage(QWidget):
     def __init__(self, parent=None, *, root=None):
         super().__init__(parent)
         self.path = Path(root or data_root(Path(__file__).resolve().parents[3]) / 'configs' / 'events') / 'events.json'
+        self.remote_path = self.path.with_name('remote_events.json')
         self.routes_path = self.path.with_name('routes.json')
-        self.events = self._load(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
+        self.events = self._load(); self.remote_events = self._load_remote(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
         self.runtime = LocalEventRuntime(root=self.path.parent)
         self.remote_runtime = RemoteEventRuntime(root=self.path.parent)
         self.runtime_timer = QTimer(self)
         self.runtime_timer.setInterval(150)
         self.runtime_timer.timeout.connect(self._poll_runtime)
+        self.catalog_timer = QTimer(self)
+        self.catalog_timer.setInterval(1000)
+        self.catalog_timer.timeout.connect(self._refresh_remote_catalog)
+        self.catalog_timer.start()
 
     def _load(self):
         try:
@@ -37,6 +43,18 @@ class EventWorkbenchPage(QWidget):
             data=json.loads(self.routes_path.read_text(encoding='utf-8'))
             return data if isinstance(data,list) else []
         except (OSError, ValueError): return []
+
+    def _load_remote(self):
+        try:
+            data = json.loads(self.remote_path.read_text(encoding='utf-8'))
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError): return []
+
+    def _visible_events(self):
+        return [(event, False) for event in self.events if not event.get('deleted')] + [(event, True) for event in self.remote_events if not event.get('deleted')]
+
+    def _event_names(self):
+        return [str(event.get('name', '')) for event, _ in self._visible_events() if event.get('name')]
 
     def _build(self):
         self.setObjectName('eventWorkbench')
@@ -75,7 +93,7 @@ class EventWorkbenchPage(QWidget):
         self.remote_device = QLineEdit(); self.remote_device.setPlaceholderText('目标设备 ID'); layout.addWidget(self.remote_device)
         self.remote_event = QComboBox(); self.remote_event.setEditable(True)
         self.remote_event.setPlaceholderText('填写 A 端已有的事件名称')
-        self.remote_event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); layout.addWidget(self.remote_event)
+        self.remote_event.addItems(self._event_names()); layout.addWidget(self.remote_event)
         self.remote_controller = QComboBox(); self.remote_controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); layout.addWidget(self.remote_controller)
         button = QPushButton('发送远程事件'); button.clicked.connect(self._send_remote_event); layout.addWidget(button)
         self.remote_status = QLabel('未发送'); layout.addWidget(self.remote_status); layout.addStretch()
@@ -118,8 +136,13 @@ class EventWorkbenchPage(QWidget):
         layout.addWidget(self.local_log)
 
     def _refresh(self):
-        self.list.clear(); self.list.addItems([e.get('name', '未命名事件') for e in self.events])
-        if self.events: self.list.setCurrentRow(0)
+        self.list.clear()
+        for event, remote in self._visible_events():
+            label = f"{event.get('name', '未命名事件')}  ·  {'远程只读' if remote else '本机可编辑'}  ·  v{event.get('revision', 1)}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, {'remote': remote, 'event': event})
+            self.list.addItem(item)
+        if self.list.count(): self.list.setCurrentRow(0)
 
     def _refresh_routes(self):
         self.routes.setRowCount(0)
@@ -133,7 +156,7 @@ class EventWorkbenchPage(QWidget):
         event=QComboBox(); event.setEditable(True)
         event.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         event.setPlaceholderText('填写目标设备上的事件名称')
-        names=[str(e.get('name','')) for e in self.events if e.get('name')]
+        names=self._event_names()
         existing=str(route.get('event','')).strip()
         if existing and existing not in names: names.insert(0, existing)
         event.addItems(names); event.setCurrentText(existing); self.routes.setCellWidget(row,2,event)
@@ -142,8 +165,12 @@ class EventWorkbenchPage(QWidget):
 
     def _select(self, row):
         self.track_table.setRowCount(0)
+        if row < 0 or row >= self.list.count():
+            self.summary.setText('请选择一个事件')
+            return
         if row < 0 or row >= len(self.events): self.summary.setText('请选择一个事件'); return
-        event = self.events[row]; tracks = event.get('tracks', [])
+        data = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
+        event = data.get('event', {}); tracks = event.get('tracks', [])
         self.summary.setText(f"{event.get('name')}\n执行次数：{event.get('max_runs') or '不限'} · 循环：{'是' if event.get('loop') else '否'} · 结束：{event.get('end_ms') or '手动停止'}")
         for track in tracks:
             r = self.track_table.rowCount(); self.track_table.insertRow(r)
@@ -157,9 +184,18 @@ class EventWorkbenchPage(QWidget):
     def _edit(self):
         row = self.list.currentRow()
         if row < 0: return
+        data = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
+        if data.get('remote'):
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, '远程事件只读', '该事件由配对设备管理，请在事件所属设备上修改。')
+            return
+        local_row = self.events.index(data.get('event')) if data.get('event') in self.events else -1
+        if local_row < 0: return
         try:
-            dialog = ChainEditor(self.events[row], self)
-            if dialog.exec(): self.events[row] = dialog.value(); self._refresh(); self.list.setCurrentRow(row)
+            dialog = ChainEditor(self.events[local_row], self)
+            if dialog.exec():
+                updated = dialog.value(); updated['id'] = self.events[local_row].get('id', str(uuid4())); updated['owner_device_id'] = self.events[local_row].get('owner_device_id', 'local'); updated['revision'] = int(self.events[local_row].get('revision', 1)) + 1
+                self.events[local_row] = updated; self._refresh(); self.list.setCurrentRow(row)
         except Exception as exc:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, '打开事件失败', f'事件编辑器无法打开：{exc}')
@@ -167,11 +203,20 @@ class EventWorkbenchPage(QWidget):
     def _copy(self):
         row = self.list.currentRow()
         if row < 0: return
+        current = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
+        if current.get('remote'): return
         item = deepcopy(self.events[row]); item['name'] = item.get('name', '事件') + ' 副本'; self.events.append(item); self._refresh(); self.list.setCurrentRow(len(self.events)-1)
 
     def _remove(self):
         row = self.list.currentRow()
-        if row >= 0: self.events.pop(row); self._refresh()
+        if row >= 0 and row < self.list.count():
+            current = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
+            if current.get('remote'): return
+        if row >= 0:
+            current = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
+            if current.get('event') in self.events:
+                self.events.remove(current['event'])
+                self._refresh()
 
     def _add_route(self):
         r = self.routes.rowCount(); self.routes.insertRow(r)
@@ -186,6 +231,10 @@ class EventWorkbenchPage(QWidget):
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        for event in self.events:
+            event.setdefault('id', str(uuid4()))
+            event.setdefault('owner_device_id', 'local')
+            event.setdefault('revision', 1)
         self.routes_data=[]
         for r in range(self.routes.rowCount()):
             source=self.routes.cellWidget(r,0).currentText() if self.routes.cellWidget(r,0) else ''
@@ -214,6 +263,26 @@ class EventWorkbenchPage(QWidget):
             self.remote_runtime.stop(); self.remote_button.setText('启动远程事件监控'); self.status.setText('远程事件监控已停止'); return
         self._save(); self.remote_runtime=RemoteEventRuntime(root=self.path.parent); self.remote_runtime.start()
         self.remote_button.setText('停止远程事件监控'); self.status.setText('远程事件监控已启动；无需启动定位监视')
+
+    def _refresh_remote_catalog(self):
+        latest = self._load_remote()
+        if latest != self.remote_events:
+            selected = self.list.currentRow()
+            self.remote_events = latest
+            self._refresh()
+            if hasattr(self, 'remote_event'):
+                current = self.remote_event.currentText()
+                self.remote_event.blockSignals(True)
+                self.remote_event.clear(); self.remote_event.addItems(self._event_names()); self.remote_event.setCurrentText(current)
+                self.remote_event.blockSignals(False)
+            names = self._event_names()
+            if hasattr(self, 'routes'):
+                for row in range(self.routes.rowCount()):
+                    combo = self.routes.cellWidget(row, 2)
+                    if combo is not None:
+                        value = combo.currentText(); combo.blockSignals(True); combo.clear(); combo.addItems(names); combo.setCurrentText(value); combo.blockSignals(False)
+            if 0 <= selected < self.list.count():
+                self.list.setCurrentRow(selected)
 
     def _poll_runtime(self):
         runtime = self.runtime

@@ -134,6 +134,30 @@ public class LoopbackTests
     }
 
     [Fact]
+    public async Task SharedEventCatalogIsDeliveredWithoutControllerOwnership()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        await Until(() =>
+        {
+            try
+            {
+                Call(pair.Sender, "sync.share.catalog", new { deviceId = pair.ReceiverId, catalog = new {
+                    deviceId = "sender", catalogRevision = 1, catalogHash = "hash", events = Array.Empty<object>(),
+                    definitions = new[] { new { id = "event-a", name = "A event", owner_device_id = "sender", revision = 1, tracks = Array.Empty<object>() } }
+                }});
+                return true;
+            }
+            catch { return false; }
+        }, pair.Details);
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("pendingSharedCatalogs").GetInt32() == 1, pair.Details);
+        var received = JsonSerializer.SerializeToElement(pair.Receiver.Handle("sync.share.drain", JsonSerializer.SerializeToElement(new { })));
+        Assert.Equal("sender", received.GetProperty("catalogs")[0].GetProperty("deviceId").GetString());
+        Assert.False(pair.Receiver.OwnsController(1));
+    }
+
+    [Fact]
     public async Task RealTlsUdpTwoSlotsShortTapAndIndependentReceiverPause()
     {
         using var pair = new Pair(); await pair.ConfigureAndPair(); await pair.Start();

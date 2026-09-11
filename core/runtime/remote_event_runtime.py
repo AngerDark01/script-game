@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from core.events.action_tracks import ActionTrack, TrackMode
 from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
+from core.events.event_store import EventStore
+from core.events.event_catalog import catalog_summary
 
 def _event_log(message: str) -> None:
     try:
@@ -22,8 +24,11 @@ class RemoteEventRuntime:
         self.root=Path(root); self.client_factory=client_factory
         self.stop_event=threading.Event(); self.thread=None; self.error=''; self.last_event=''; self.receive_count=0
 
-    def _definitions(self):
-        data=json.loads((self.root/'events.json').read_text(encoding='utf-8'))
+    def _definitions(self, store=None):
+        if store is not None:
+            data = store.all_visible()
+        else:
+            data=json.loads((self.root/'events.json').read_text(encoding='utf-8'))
         out={}
         for event in data if isinstance(data,list) else []:
             tracks=[ActionTrack(tuple(t.get('buttons',())), mode=TrackMode(t.get('mode','once')), hold_ms=int(t.get('hold_ms',100)), interval_ms=t.get('interval_ms') if t.get('mode','once') != 'once' else None, end_ms=t.get('end_ms') if t.get('mode','once') != 'once' else None) for t in event.get('tracks',())]
@@ -54,11 +59,39 @@ class RemoteEventRuntime:
             from virtual_gamepad.client.python import VirtualGamepadClient
             client=(self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
             _event_log('remote listener host pipe connected')
-            definitions=self._definitions(); sessions={1:EventSession(definitions),2:EventSession(definitions)}
+            status = client.request('sync.status').get('status', {})
+            store = EventStore(self.root, str(status.get('deviceId', 'local')))
+            definitions=self._definitions(store); sessions={1:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)),2:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
+            last_catalog = 0.0
             while not self.stop_event.is_set():
+                if time.monotonic() - last_catalog >= 2.0:
+                    status = client.request('sync.status').get('status', {})
+                    summary = catalog_summary(store.local(), str(status.get('deviceId', 'local')))
+                    catalog = {**summary, 'definitions': store.local()}
+                    for peer in status.get('peers', []):
+                        if peer.get('connected') and peer.get('syncing') and peer.get('dataOnly'):
+                            try:
+                                client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': catalog})
+                            except Exception as exc:
+                                _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
+                    last_catalog = time.monotonic()
                 reply=client.request('sync.share.drain')
+                for catalog in reply.get('catalogs', []):
+                    definitions_list = catalog.get('definitions', []) if isinstance(catalog, dict) else []
+                    if definitions_list:
+                        changed = store.apply_remote(definitions_list)
+                        if changed:
+                            definitions.clear(); definitions.update(self._definitions(store))
+                            _event_log(f'event catalog applied owner={catalog.get("deviceId")} changed={changed}')
                 for item in reply.get('events',[]):
                     name=str(item.get('name',''))
+                    event_id=str(item.get('eventId') or '')
+                    if event_id:
+                        record=store.by_id(event_id)
+                        if record is None:
+                            _event_log(f'remote event rejected id={event_id} reason=event_not_found')
+                            continue
+                        name=str(record.get('name') or name)
                     for controller in self._controllers(item.get('targets',())):
                         sessions[controller].start(name)
                     self.receive_count+=1; self.last_event=name

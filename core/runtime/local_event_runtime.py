@@ -7,6 +7,8 @@ from core.events.action_tracks import ActionTrack, TrackMode
 from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.runtime_paths import data_root
+from core.events.event_store import EventStore
+from core.events.event_catalog import catalog_summary
 
 def _event_log(message: str) -> None:
     try:
@@ -50,6 +52,10 @@ class LocalEventRuntime:
                 if str(route.get('target', '')).strip() not in ('', '本机', 'local', '鏈満'):
                     remote[str(route['trigger']).upper()] = value
         return definitions, local, remote
+
+    @staticmethod
+    def _catalog_payload(store: EventStore, device_id: str) -> dict:
+        return {"deviceId": device_id, "events": catalog_summary(store.local(), device_id).get("events", []), "definitions": store.local(), "catalogRevision": catalog_summary(store.local(), device_id).get("catalogRevision", 0), "catalogHash": catalog_summary(store.local(), device_id).get("catalogHash", "")}
     def _run(self):
         client = None
         try:
@@ -63,9 +69,22 @@ class LocalEventRuntime:
             if remote_routes:
                 _event_log(f'remote routes loaded keys={sorted(remote_routes)}')
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
+            device_status = client.request('sync.status').get('status', {})
+            store = EventStore(self.root, str(device_status.get('deviceId', 'local')))
+            last_catalog = 0.0
             keys = set()
             previous_buttons = {1: 0, 2: 0}
             while not self.stop_event.is_set():
+                if time.monotonic() - last_catalog >= 2.0:
+                    status = client.request('sync.status').get('status', {})
+                    for peer in status.get('peers', []):
+                        if peer.get('connected') and peer.get('syncing') and peer.get('dataOnly'):
+                            try:
+                                client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': self._catalog_payload(store, str(status.get('deviceId', 'local')))})
+                                _event_log(f'event catalog sent device={peer.get("deviceId")} count={len(store.local())}')
+                            except Exception as exc:
+                                _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
+                    last_catalog = time.monotonic()
                 for key, (name, _, target) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
                     pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x70 + int(key[1:]) - 1) & 0x8000)
@@ -79,9 +98,12 @@ class LocalEventRuntime:
                                 if not peers:
                                     raise RuntimeError('no connected shared-event peer')
                                 targets = [str(n) for n in targets_for_route]
+                                record = store.by_name(name)
                                 for peer in peers:
                                     reply = client.request('sync.share.event', {
                                         'deviceId': peer.get('deviceId'), 'name': name,
+                                        'eventId': (record or {}).get('id', ''),
+                                        'eventRevision': int((record or {}).get('revision', 0)),
                                         'targets': targets,
                                         'deadlineMs': int(time.monotonic() * 1000) + 500,
                                     })

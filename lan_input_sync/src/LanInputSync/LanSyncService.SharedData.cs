@@ -14,10 +14,12 @@ public sealed partial class LanSyncService
     private sealed record PositionEntry(PositionMessage Message, long StoredAt, long AgeMs);
     private sealed record ReceivedPosition(PositionMessage Message, long ReceivedAt, Guid SessionId);
     private sealed record ReceivedEvent(string deviceId, Guid sessionId, string id, string name,
-        string[] targets, long receivedAt, long deadline);
+        string eventId, int eventRevision, string[] targets, long receivedAt, long deadline);
     private readonly Dictionary<string, PositionEntry> _publishedPositions = new();
     private readonly Dictionary<(string Peer, string Actor), ReceivedPosition> _sharePositions = new();
     private readonly Queue<ReceivedEvent> _sharedEvents = new();
+    private readonly Queue<JsonElement> _sharedCatalogs = new();
+    private sealed record DrainedSharedData(object[] Events, JsonElement[] Catalogs);
 
     private static PositionMessage ParsePosition(JsonElement p)
     {
@@ -81,20 +83,49 @@ public sealed partial class LanSyncService
             if (remainingMs <= 0) return;
             if (remainingMs > 500) throw new ArgumentException("Event deadline exceeds 500ms");
         }
-        string peer = RequiredString(payload, "deviceId"), name = RequiredString(payload, "name");
+        string peer = RequiredString(payload, "deviceId");
+        string name = String(payload, "name") ?? String(payload, "eventName") ?? "";
+        string eventId = String(payload, "eventId") ?? "";
+        int eventRevision = payload.TryGetProperty("eventRevision", out var revision) && revision.TryGetInt32(out var parsedRevision) ? parsedRevision : 0;
+        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(eventId)) throw new ArgumentException("Missing eventId or name");
         if (name.Length is < 1 or > 64) throw new ArgumentException("Invalid event name");
         string[] targets = payload.GetProperty("targets").EnumerateArray().Select(v => v.GetString() ?? "").ToArray();
         if (targets.Length is < 1 or > 8 || targets.Any(t => t.Length is < 1 or > 64)) throw new ArgumentException("Invalid targets");
         if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.DataOnly) throw new InvalidOperationException("No shared data session");
         if (s.LastPeerChallenge == 0) throw new InvalidOperationException("共享会话正在校验，请稍后重试。");
-        var message = new { type = "shared-event", id = Guid.NewGuid().ToString("N"), sequence = ++_eventSequence, name, targets, remainingMs, challenge = s.LastPeerChallenge };
+        var message = new { type = "shared-event", id = Guid.NewGuid().ToString("N"), sequence = ++_eventSequence, name, eventId, eventRevision, targets, remainingMs, challenge = s.LastPeerChallenge };
         if (!s.Controls.Writer.TryWrite(message)) { CloseLocked(s, "event_queue_overflow"); throw new InvalidOperationException("Event queue overflow"); }
+    }
+
+    private void PublishCatalogLocked(JsonElement payload)
+    {
+        RequireMode("share");
+        string peer = RequiredString(payload, "deviceId");
+        if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.DataOnly)
+            throw new InvalidOperationException("No shared data session");
+        if (s.LastPeerChallenge == 0) throw new InvalidOperationException("Shared session is still validating");
+        if (!payload.TryGetProperty("catalog", out var catalog) || catalog.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("Missing catalog");
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(catalog);
+        if (bytes.Length > 6000) throw new ArgumentException("Event catalog is too large");
+        var message = new { type = "shared-catalog", catalog, challenge = s.LastPeerChallenge };
+        if (!s.Controls.Writer.TryWrite(message)) { CloseLocked(s, "catalog_queue_overflow"); throw new InvalidOperationException("Catalog queue overflow"); }
     }
 
     private void ReceiveSharedEventLocked(Session session, JsonElement message)
     {
         if (!session.Active) return;
-        if (RequiredString(message, "type") != "shared-event") throw new InvalidDataException("Unexpected shared control message");
+        string type = RequiredString(message, "type");
+        if (type == "shared-catalog")
+        {
+            if (!_receiveEvents) return;
+            if (!FreshChallenge(session, message, out _)) return;
+            if (!message.TryGetProperty("catalog", out var catalog) || catalog.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid catalog");
+            if (_sharedCatalogs.Count >= 8) { _sharedCatalogs.Dequeue(); }
+            _sharedCatalogs.Enqueue(catalog.Clone());
+            return;
+        }
+        if (type != "shared-event") throw new InvalidDataException("Unexpected shared control message");
         if (!_receiveEvents) return;
         if (!FreshChallenge(session, message, out var deadline)) return;
         long remaining = message.TryGetProperty("remainingMs", out var remainingValue) ? remainingValue.GetInt64() : 500;
@@ -110,16 +141,20 @@ public sealed partial class LanSyncService
             throw new InvalidDataException("Invalid event");
         if (_sharedEvents.Count >= 64) { CloseLocked(session, "event_inbox_overflow"); return; }
         session.LastSharedEvent = sequence;
-        _sharedEvents.Enqueue(new(session.DeviceId, session.Id, id, name, targets, Now, deadline));
+        string eventId = message.TryGetProperty("eventId", out var eventIdValue) ? eventIdValue.GetString() ?? "" : "";
+        int eventRevision = message.TryGetProperty("eventRevision", out var revisionValue) && revisionValue.TryGetInt32(out var revision) ? revision : 0;
+        _sharedEvents.Enqueue(new(session.DeviceId, session.Id, id, name, eventId, eventRevision, targets, Now, deadline));
     }
 
-    private object[] DrainSharedEventsLocked()
+    private DrainedSharedData DrainSharedEventsLocked()
     {
         var items = new List<object>();
+        var catalogs = new List<JsonElement>();
+        while (_sharedCatalogs.TryDequeue(out var catalog)) catalogs.Add(catalog);
         while (_sharedEvents.TryDequeue(out var e))
             if (Now <= e.deadline && _sessions.TryGetValue(e.deviceId, out var s) && s.Active && s.Id == e.sessionId)
-                items.Add(new { e.deviceId, e.sessionId, e.id, e.name, e.targets, ageMs = Now-e.receivedAt, remainingMs = Math.Max(0, e.deadline-Now) });
-        return items.ToArray();
+                items.Add(new { e.deviceId, e.sessionId, e.id, e.name, e.eventId, e.eventRevision, e.targets, ageMs = Now-e.receivedAt, remainingMs = Math.Max(0, e.deadline-Now) });
+        return new DrainedSharedData(items.ToArray(), catalogs.ToArray());
     }
 
     private static bool FreshChallenge(Session session, JsonElement message, out long deadline)

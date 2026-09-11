@@ -177,9 +177,10 @@ public sealed partial class LanSyncService : ILanSyncService
                 {
                     case "sync.share.position": PublishPositionLocked(payload); break;
                     case "sync.share.event": PublishEventLocked(payload); break;
+                    case "sync.share.catalog": PublishCatalogLocked(payload); break;
                     case "sync.share.drain":
-                        var events = DrainSharedEventsLocked();
-                        return new { ok = true, events, status = StatusLocked() };
+                        var drained = DrainSharedEventsLocked();
+                        return new { ok = true, events = drained.Events, catalogs = drained.Catalogs, status = StatusLocked() };
                     case "sync.status": break;
                     case "sync.configure": ConfigureLocked(payload); break;
                     case "sync.pairing":
@@ -332,7 +333,7 @@ public sealed partial class LanSyncService : ILanSyncService
         {
             mode = _mode, deviceId = _identity.DeviceId, name = _preferences.Name,
             receivePositions = _receivePositions, receiveEvents = _receiveEvents,
-            sharedPositions = SharedPositionsLocked(), pendingSharedEvents = _sharedEvents.Count,
+            sharedPositions = SharedPositionsLocked(), pendingSharedEvents = _sharedEvents.Count, pendingSharedCatalogs = _sharedCatalogs.Count,
             bindAddress = _preferences.BindAddress, port = _preferences.Port, rateHz = _preferences.RateHz,
             networkReady = _networkReady,
             addresses = _addresses,
