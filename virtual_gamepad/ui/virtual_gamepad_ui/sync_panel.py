@@ -85,7 +85,7 @@ class SyncPanel(QWidget):
         title = QLabel("局域网设备同步")
         title.setProperty("role", "section-title")
         layout.addWidget(title)
-        hint = QLabel("主设备发送 Xbox 动作，接收设备输出本机虚拟手柄。配对后仍需开启同步；F9 可紧急停止。")
+        hint = QLabel("输入同步会接管手柄；位置与事件共享只传数据，不接管手柄。配对后仍需建立连接；F9 可紧急停止。")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.identity = QLabel("本机设备：等待宿主连接")
@@ -97,7 +97,7 @@ class SyncPanel(QWidget):
         layout.addWidget(self.message)
         form = QFormLayout()
         self.mode = QComboBox()
-        for label, value in (("关闭", "off"), ("发送：用本机控制其他电脑", "send"), ("接收：由主设备控制本机", "receive")):
+        for label, value in (("关闭", "off"), ("发送：用本机控制其他电脑", "send"), ("接收：由主设备控制本机", "receive"), ("位置与事件共享（不接管手柄）", "share")):
             self.mode.addItem(label, value)
         self.name = QLineEdit()
         self.name.setPlaceholderText("本机名称")
@@ -122,6 +122,10 @@ class SyncPanel(QWidget):
         form.addRow("端口", self.port)
         form.addRow("同步频率", self.rate)
         form.addRow("控制器范围", routes)
+        self.receive_positions = QCheckBox("允许已配对设备共享位置")
+        self.receive_events = QCheckBox("允许已配对设备发送行为事件")
+        form.addRow("数据共享许可", self.receive_positions)
+        form.addRow("", self.receive_events)
         layout.addLayout(form)
         buttons = QHBoxLayout()
         self.apply_button = self._button("保存并应用设置", self.apply_settings, buttons)
@@ -184,6 +188,7 @@ class SyncPanel(QWidget):
 
     def apply_settings(self):
         payload = {"mode": self.mode.currentData(), "port": self.port.value(), "controllers": self.controllers(), "rateHz": self.rate.currentData()}
+        payload.update(receivePositions=self.receive_positions.isChecked(), receiveEvents=self.receive_events.isChecked())
         if self.name.text().strip(): payload["name"] = self.name.text().strip()
         if self.address.currentText().strip(): payload["bindAddress"] = self.address.currentText().strip()
         self.command("sync.configure", payload)
@@ -283,14 +288,16 @@ class SyncPanel(QWidget):
         applied_mode = status.get("mode", "off")
         ready = status.get("networkReady", False)
         self.receive_button.setEnabled(ready and applied_mode == "receive")
-        self.code_button.setEnabled(ready and applied_mode == "receive")
-        self.pair_button.setEnabled(ready and applied_mode == "send")
-        self.send_button.setEnabled(ready and applied_mode == "send")
+        self.code_button.setEnabled(ready and applied_mode in ("receive", "share"))
+        self.pair_button.setEnabled(ready and applied_mode in ("send", "share"))
+        self.send_button.setEnabled(ready and applied_mode in ("send", "share"))
         self.identity.setText(f"本机：{status.get('name', '')}  ·  {status.get('deviceId', '')}")
-        labels = {"off": "关闭", "send": "发送", "receive": "接收"}
+        labels = {"off": "关闭", "send": "发送", "receive": "接收", "share": "位置与事件共享"}
         self.message.setText(status.get("error") or f"当前模式：{labels.get(status.get('mode'), '等待连接')} · 网络：{'已就绪' if ready else '未就绪'} · 接收许可：{status.get('remoteEnabled', [])}")
         self.code.setText("配对码：" + (status.get("pairingCode") or "未开启"))
         if first:
+            self.receive_positions.setChecked(status.get("receivePositions", False))
+            self.receive_events.setChecked(status.get("receiveEvents", False))
             self.mode.setCurrentIndex(max(0, self.mode.findData(status.get("mode", "off"))))
             self.name.setText(status.get("name", ""))
             self.address.clear()

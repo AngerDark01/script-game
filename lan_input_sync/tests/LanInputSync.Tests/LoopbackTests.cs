@@ -56,10 +56,10 @@ public class LoopbackTests
         }
         public void StopReports() => _reports.Change(Timeout.Infinite, Timeout.Infinite);
         public string Details() => "S=" + Call(Sender, "sync.status") + " R=" + Call(Receiver, "sync.status");
-        public async Task ConfigureAndPair()
+        public async Task ConfigureAndPair(bool dataOnly = false)
         {
-            Call(Sender, "sync.configure", new { mode = "send", name = "sender", bindAddress = "127.0.0.1", port = SenderPort });
-            Call(Receiver, "sync.configure", new { mode = "receive", name = "receiver", bindAddress = "127.0.0.1", port = ReceiverPort });
+            Call(Sender, "sync.configure", new { mode = dataOnly ? "share" : "send", name = "sender", bindAddress = "127.0.0.1", port = SenderPort, receivePositions = dataOnly, receiveEvents = dataOnly });
+            Call(Receiver, "sync.configure", new { mode = dataOnly ? "share" : "receive", name = "receiver", bindAddress = "127.0.0.1", port = ReceiverPort, receivePositions = dataOnly, receiveEvents = dataOnly });
             await Until(() => Call(Sender, "sync.status").GetProperty("networkReady").GetBoolean() && Call(Receiver, "sync.status").GetProperty("networkReady").GetBoolean(), Details);
             string code = Call(Receiver, "sync.pairing").GetProperty("pairingCode").GetString()!;
             Call(Sender, "sync.pair", new { address = "127.0.0.1", port = ReceiverPort, code });
@@ -97,6 +97,30 @@ public class LoopbackTests
             // This test owns its randomly generated private directory only.
             if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
         }
+    }
+
+    [Fact]
+    public async Task SharedPositionsAndEventsDoNotOwnControllers()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Assert.False(pair.Receiver.OwnsController(1));
+        Assert.False(pair.Receiver.OwnsController(2));
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "base", x = 12.5, y = 24.0, confidence = .9, ageMs = 0 });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
+        Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "start_follow", targets = new[] { "A1", "A2" } });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32() == 1, pair.Details);
+        var received = JsonSerializer.SerializeToElement(pair.Receiver.Handle("sync.share.drain", JsonSerializer.SerializeToElement(new { })));
+        Assert.Equal("start_follow", received.GetProperty("events")[0].GetProperty("name").GetString());
+        Assert.False(pair.Receiver.OwnsController(1));
+        Assert.Equal(PadState.Neutral, pair.Receiver.Consume(1));
+        await Task.Delay(700);
+        Assert.Empty(Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").EnumerateArray());
+        pair.Receiver.EmergencyStop();
+        Assert.False(Call(pair.Receiver, "sync.status").GetProperty("receiveEvents").GetBoolean());
+        Assert.False(Call(pair.Receiver, "sync.status").GetProperty("receivePositions").GetBoolean());
+        Assert.False(pair.Receiver.OwnsController(1));
     }
 
     [Fact]

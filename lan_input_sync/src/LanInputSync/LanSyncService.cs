@@ -153,6 +153,8 @@ public sealed partial class LanSyncService : ILanSyncService
         lock (_gate)
         {
             Array.Fill(_remoteEnabled, false);
+            _sharePositions.Clear(); _sharedEvents.Clear(); _publishedPositions.Clear();
+            _receivePositions = false; _receiveEvents = false;
             foreach (var slot in _remote) slot.Reset();
             foreach (var session in _sessions.Values.ToArray()) CloseLocked(session, "emergency_stop");
             foreach (var slot in _local) { slot.Changes.Clear(); slot.State = PadState.Neutral; slot.Enabled = false; slot.Epoch++; }
@@ -171,6 +173,11 @@ public sealed partial class LanSyncService : ILanSyncService
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 switch (command)
                 {
+                    case "sync.share.position": PublishPositionLocked(payload); break;
+                    case "sync.share.event": PublishEventLocked(payload); break;
+                    case "sync.share.drain":
+                        var events = DrainSharedEventsLocked();
+                        return new { ok = true, events, status = StatusLocked() };
                     case "sync.status": break;
                     case "sync.configure": ConfigureLocked(payload); break;
                     case "sync.pairing":
@@ -179,7 +186,7 @@ public sealed partial class LanSyncService : ILanSyncService
                         _pairingCode = RandomNumberGenerator.GetInt32(0, 100000000).ToString("D8");
                         _pairingExpiry = DateTimeOffset.UtcNow.AddMinutes(5); break;
                     case "sync.pair":
-                        RequireMode("send");
+                        RequireSenderOrShare();
                         RequireNetworkReady();
                         var address = RequiredString(payload, "address");
                         ValidateAddress(address, false);
@@ -202,19 +209,26 @@ public sealed partial class LanSyncService : ILanSyncService
                         }
                         else
                         {
-                            RequireMode("send");
+                            RequireSenderOrShare();
                             var peerId = RequiredString(payload, "deviceId");
                             if (!_trusted.TryGetValue(peerId, out var peer)) throw new InvalidOperationException("设备尚未配对。");
                             if (_sessions.TryGetValue(peerId, out var existing)) CloseLocked(existing, "restart");
                             peer = peer with { Controllers = controllers }; _trusted[peerId] = peer; SavePreferencesLater();
                             var capturedPeer = peer; var generation = _generation; var token = _run.Token;
                             var startVersion = Guid.NewGuid();
-                            ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token));
+                            bool dataOnly = _mode == "share";
+                            _shareBlockedPeers.Remove(peerId);
+                            ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
                             _startVersions[peerId] = startVersion;
                         }
                         break;
                     case "sync.stop":
                         string? selected = String(payload, "deviceId");
+                        if (_mode == "share")
+                        {
+                            if (selected is null) { _receivePositions = false; _receiveEvents = false; }
+                            else _shareBlockedPeers.Add(selected);
+                        }
                         foreach (var s in _sessions.Values.Where(s => selected is null || s.DeviceId == selected).ToArray()) CloseLocked(s, "stopped");
                         if (_mode == "receive") { Array.Fill(_remoteEnabled, false); foreach (var slot in _remote) slot.Reset(); }
                         if (selected is null) { _generation++; _startVersions.Clear(); foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId); }
@@ -231,7 +245,7 @@ public sealed partial class LanSyncService : ILanSyncService
                 return new { ok = true, status = StatusLocked() };
             }
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or FormatException or SocketException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or FormatException or SocketException or KeyNotFoundException or JsonException)
         {
             lock (_gate) return new { ok = false, error = ex.Message, status = StatusLocked() };
         }
@@ -240,7 +254,7 @@ public sealed partial class LanSyncService : ILanSyncService
     private void ConfigureLocked(JsonElement value)
     {
         string mode = String(value, "mode") ?? _mode;
-        if (mode is not ("off" or "send" or "receive")) throw new ArgumentException("mode must be off, send or receive");
+        if (mode is not ("off" or "send" or "receive" or "share")) throw new ArgumentException("mode must be off, send, receive or share");
         string name = String(value, "name") ?? _preferences.Name;
         if (name.Length is < 1 or > 64) throw new ArgumentException("设备名称应为 1–64 个字符。");
         string address = String(value, "bindAddress") ?? _preferences.BindAddress;
@@ -250,6 +264,9 @@ public sealed partial class LanSyncService : ILanSyncService
         if (rate is not (60 or 125)) throw new ArgumentException("rateHz must be 60 or 125");
         int[] controllers = Controllers(value, _preferences.Controllers);
         EmergencyStop();
+        _shareBlockedPeers.Clear();
+        _receivePositions = mode == "share" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
+        _receiveEvents = mode == "share" && value.TryGetProperty("receiveEvents", out var re) && re.GetBoolean();
         _mode = mode; _preferences = new(name, address, port, controllers, rate); _error = null;
         _pairingCode = null;
         foreach (var p in _pending.Values) p.Answer.TrySetResult(false);
@@ -283,6 +300,8 @@ public sealed partial class LanSyncService : ILanSyncService
         return new
         {
             mode = _mode, deviceId = _identity.DeviceId, name = _preferences.Name,
+            receivePositions = _receivePositions, receiveEvents = _receiveEvents,
+            sharedPositions = SharedPositionsLocked(), pendingSharedEvents = _sharedEvents.Count,
             bindAddress = _preferences.BindAddress, port = _preferences.Port, rateHz = _preferences.RateHz,
             networkReady = _networkReady,
             addresses = _addresses,
@@ -325,11 +344,13 @@ public sealed partial class LanSyncService : ILanSyncService
         s.Active = false;
         if (_sessions.GetValueOrDefault(s.DeviceId) == s) _sessions.Remove(s.DeviceId);
         _peerErrors[s.DeviceId] = reason;
+        foreach (var key in _sharePositions.Keys.Where(k => k.Peer == s.DeviceId).ToArray()) _sharePositions.Remove(key);
         if (s.Incoming)
             foreach (int c in s.Controllers) { _remote[c - 1].Reset(); _remoteEnabled[c - 1] = false; }
         _work.Enqueue(() => { s.Tcp.Dispose(); s.Peer?.Disconnect(); s.Crypto.Dispose(); });
     }
     private void RequireMode(string mode) { if (_mode != mode) throw new InvalidOperationException("请先切换到" + (mode == "send" ? "发送" : "接收") + "模式。"); }
+    private void RequireSenderOrShare() { if (_mode is not ("send" or "share")) throw new InvalidOperationException("请先选择发送或位置与事件共享模式。"); }
     private void RequireNetworkReady() { if (!_networkReady) throw new InvalidOperationException("局域网服务正在启动或启动失败，请查看连接状态后重试。"); }
     private static string? String(JsonElement e, string key) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var value) ? value.GetString() : null;
     private static string RequiredString(JsonElement e, string key) => String(e, key) ?? throw new ArgumentException("Missing " + key);

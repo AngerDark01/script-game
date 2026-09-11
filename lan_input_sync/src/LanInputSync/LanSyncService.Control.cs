@@ -24,6 +24,10 @@ public sealed partial class LanSyncService
         public required TcpClient Tcp;
         public required SslStream Tls;
         public bool Incoming;
+        public bool DataOnly;
+        public long LastSharedEvent;
+        public ulong LastPeerChallenge;
+        public readonly Dictionary<ulong, long> IssuedChallenges = new();
         public bool Active = true;
         public NetPeer? Peer;
         public long Created = Now, LastReceive, LastSend, LastProbe;
@@ -103,7 +107,8 @@ public sealed partial class LanSyncService
             await ConfirmPairAsync(tls, new(remoteId, name, address.ToString(), peerPort, [1, 2]), clientNonce, serverNonce, true, generation, pairing.Token);
             return;
         }
-        if (type != "start") throw new AuthenticationException("Unsupported control message");
+        bool dataOnly = type == "start-data";
+        if (type != "start" && !dataOnly) throw new AuthenticationException("Unsupported control message");
         TrustedPeer trusted;
         Session session;
         byte[] senderKey = RandomNumberGenerator.GetBytes(32), receiverKey = RandomNumberGenerator.GetBytes(32);
@@ -113,15 +118,17 @@ public sealed partial class LanSyncService
         lock (_gate)
         {
             if (!_trusted.TryGetValue(remoteId, out trusted!)) throw new AuthenticationException("Device is not paired");
-            RequireMode("receive");
+            RequireMode(dataOnly ? "share" : "receive");
+            if (dataOnly && !_receivePositions && !_receiveEvents) throw new InvalidOperationException("尚未允许位置或事件接收。");
+            if (dataOnly && _shareBlockedPeers.Contains(remoteId)) throw new InvalidOperationException("本机已停止该设备的数据连接。");
             if (_sessions.ContainsKey(remoteId)) throw new InvalidOperationException("该设备已有活动会话，请先停止同步。");
-            int[] requested = Controllers(hello, [1, 2]);
+            int[] requested = dataOnly ? [] : Controllers(hello, [1, 2]);
             if (requested.Any(c => !_preferences.Controllers.Contains(c) || !_remoteEnabled[c - 1])) throw new InvalidOperationException("接收端尚未允许所选手柄，请先开启接收。");
             if (_sessions.Values.Any(s => s.Incoming && s.Active && s.Controllers.Intersect(requested).Any())) throw new InvalidOperationException("控制器已被其他发送设备占用。");
             session = new()
             {
                 DeviceId = remoteId, Name = trusted.Name, Address = address.ToString(), Token = udpToken, Controllers = requested,
-                Id = sessionId, Crypto = new(sessionId, receiverKey, senderKey), Tcp = tcp, Tls = tls, Incoming = true
+                Id = sessionId, Crypto = new(sessionId, receiverKey, senderKey), Tcp = tcp, Tls = tls, Incoming = true, DataOnly = dataOnly
             };
             foreach (int c in requested) { _remote[c - 1].Reset(); session.Grants[c - 1] = NewGrant(); }
             _sessions[remoteId] = session;
@@ -130,7 +137,7 @@ public sealed partial class LanSyncService
         }
         try
         {
-            await WriteMessage(tls, new { type = "session", sessionId, token = udpToken, senderKey = Convert.ToBase64String(senderKey), receiverKey = Convert.ToBase64String(receiverKey), port = udpPort, grants = session.Grants }, handshake.Token);
+            await WriteMessage(tls, new { type = "session", dataOnly, sessionId, token = udpToken, senderKey = Convert.ToBase64String(senderKey), receiverKey = Convert.ToBase64String(receiverKey), port = udpPort, grants = session.Grants }, handshake.Token);
             await RunControlsAsync(session, token);
         }
         finally
@@ -223,20 +230,21 @@ public sealed partial class LanSyncService
         }
     }
 
-    private async Task StartOutgoingAsync(TrustedPeer peer, int generation, Guid startVersion, CancellationToken token)
+    private async Task StartOutgoingAsync(TrustedPeer peer, int generation, Guid startVersion, CancellationToken token, bool dataOnly = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         var connection = await ConnectTls(peer.Address, peer.Port, peer.DeviceId, deadline.Token);
         using var tcp = connection.Tcp; using var tls = connection.Tls;
-        await WriteMessage(tls, new { type = "start", controllers = peer.Controllers }, deadline.Token);
+        await WriteMessage(tls, new { type = dataOnly ? "start-data" : "start", controllers = peer.Controllers }, deadline.Token);
         var ready = await ReadMessage(tls, deadline.Token);
         if (RequiredString(ready, "type") != "session") throw new AuthenticationException("Receiver did not permit session");
+        if (dataOnly && (!ready.TryGetProperty("dataOnly", out var dataFlag) || !dataFlag.GetBoolean())) throw new AuthenticationException("Receiver does not support data sharing");
         Guid id = Guid.Parse(RequiredString(ready, "sessionId"));
         byte[] tx = Convert.FromBase64String(RequiredString(ready, "senderKey")), rx = Convert.FromBase64String(RequiredString(ready, "receiverKey"));
         var session = new Session
         {
-            DeviceId = peer.DeviceId, Name = peer.Name, Address = peer.Address, Token = RequiredString(ready, "token"), Controllers = peer.Controllers,
+            DeviceId = peer.DeviceId, Name = peer.Name, Address = peer.Address, Token = RequiredString(ready, "token"), Controllers = dataOnly ? [] : peer.Controllers, DataOnly = dataOnly,
             Id = id, Crypto = new(id, tx, rx), Tcp = tcp, Tls = tls
         };
         CryptographicOperations.ZeroMemory(tx); CryptographicOperations.ZeroMemory(rx);
@@ -247,7 +255,9 @@ public sealed partial class LanSyncService
         BeforeSessionRegistrationForTest?.Invoke(peer.DeviceId);
         lock (_gate)
         {
-            if (_generation != generation || _mode != "send" || !_trusted.ContainsKey(peer.DeviceId) || _startVersions.GetValueOrDefault(peer.DeviceId) != startVersion) { session.Crypto.Dispose(); throw new OperationCanceledException(); }
+            if (_generation != generation || _mode != (dataOnly ? "share" : "send") || !_trusted.ContainsKey(peer.DeviceId) || _startVersions.GetValueOrDefault(peer.DeviceId) != startVersion) { session.Crypto.Dispose(); throw new OperationCanceledException(); }
+            if (_sessions.TryGetValue(peer.DeviceId, out var activeSession) && activeSession.Active)
+            { session.Crypto.Dispose(); throw new InvalidOperationException("设备已有活动连接，请勿双向同时发起。"); }
             _sessions[peer.DeviceId] = session; _peerErrors.Remove(peer.DeviceId); _error = null;
             _connecting.Remove(peer.DeviceId);
             _work.Enqueue(() =>
@@ -277,6 +287,11 @@ public sealed partial class LanSyncService
             while (!token.IsCancellationRequested)
             {
                 var message = await ReadMessage(session.Tls, token);
+                if (session.DataOnly)
+                {
+                    lock (_gate) ReceiveSharedEventLocked(session, message);
+                    continue;
+                }
                 if (RequiredString(message, "type") != "permissions" || session.Incoming) throw new AuthenticationException("Unexpected control message");
                 uint[] grants = message.GetProperty("grants").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
                 if (grants.Length != 2) throw new AuthenticationException("Invalid grants");

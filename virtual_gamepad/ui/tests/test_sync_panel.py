@@ -35,6 +35,18 @@ class SyncPanelTests(unittest.TestCase):
     def test_constructing_panel_does_not_enable_network(self):
         self.assertEqual(Client.calls, [])
         self.assertEqual(self.panel.mode.currentData(), "off")
+    def test_shared_data_mode_has_separate_permissions_and_no_pad_grant(self):
+        self.assertGreaterEqual(self.panel.mode.findData("share"), 0)
+        self.panel.render({"mode": "share", "networkReady": True})
+        self.assertFalse(self.panel.receive_button.isEnabled())
+        self.assertTrue(self.panel.code_button.isEnabled())
+        self.assertTrue(self.panel.pair_button.isEnabled())
+        self.panel.receive_positions.setChecked(True)
+        self.panel.receive_events.setChecked(False)
+        self.panel.apply_settings()
+        self.wait(lambda: not self.panel.busy)
+        self.assertTrue(Client.calls[0][1]["receivePositions"])
+        self.assertFalse(Client.calls[0][1]["receiveEvents"])
     def test_apply_keeps_controller_route_and_uses_async_pipe(self):
         self.panel.mode.setCurrentIndex(self.panel.mode.findData("receive"))
         self.panel.c2.setChecked(False)

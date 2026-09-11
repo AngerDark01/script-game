@@ -57,7 +57,7 @@ public sealed partial class LanSyncService
             byte[] bytes = reader.GetRemainingBytes();
             if (!session.Crypto.TryDecode(bytes, out byte lane, out var payload) || lane != channel) return;
             try { ReceivePacket(session, lane, payload); }
-            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or EndOfStreamException or OverflowException)
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException or EndOfStreamException or OverflowException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
             { lock (_gate) CloseLocked(session, "invalid_packet"); }
         };
         listener.PeerDisconnectedEvent += (peer, info) =>
@@ -158,14 +158,33 @@ public sealed partial class LanSyncService
             {
                 if (!s.Active || s.Peer?.ConnectionState != ConnectionState.Connected) continue;
                 if (s.LastReceive == 0) s.LastReceive = now;
-                if (overflow && !s.Incoming) { CloseLocked(s, "publication_queue_overflow"); continue; }
+                if (overflow && !s.Incoming && !s.DataOnly) { CloseLocked(s, "publication_queue_overflow"); continue; }
                 if (now - s.LastProbe >= 50)
                 {
                     s.LastProbe = now;
                     ulong id = ++s.ChallengeId;
                     s.Challenges.Enqueue((id, now));
+                    if (s.DataOnly)
+                    {
+                        s.IssuedChallenges[id] = now;
+                        foreach (var old in s.IssuedChallenges.Where(p => now-p.Value > 500).Select(p => p.Key).ToArray()) s.IssuedChallenges.Remove(old);
+                    }
                     byte[] probe = new byte[9]; probe[0] = 0; BinaryPrimitives.WriteUInt64LittleEndian(probe.AsSpan(1), id);
                     packets.Add((s, 2, probe));
+                }
+                if (s.DataOnly)
+                {
+                    if (now - s.LastSend >= 33)
+                    {
+                        s.LastSend = now;
+                        foreach (var p in _publishedPositions.Values)
+                        {
+                            long age = p.AgeMs + now - p.StoredAt;
+                            if (age <= SharePositionTtlMs && s.LastPeerChallenge > 0)
+                                packets.Add((s, 0, JsonSerializer.SerializeToUtf8Bytes(p.Message with { ageMs = age, challenge = s.LastPeerChallenge })));
+                        }
+                    }
+                    continue;
                 }
                 if (s.Incoming) continue;
                 foreach (int controller in s.Controllers)
@@ -219,6 +238,12 @@ public sealed partial class LanSyncService
         lock (_gate)
         {
             if (!session.Active) return;
+            if (session.DataOnly && lane == 0)
+            {
+                ReceivePositionLocked(session, payload);
+                return;
+            }
+            if (session.DataOnly && lane == 1) throw new InvalidDataException("Input packets forbidden in data session");
             using var stream = new MemoryStream(payload); using var reader = new BinaryReader(stream);
             long now = Now;
             if (lane == 0)
@@ -258,6 +283,7 @@ public sealed partial class LanSyncService
                 if (kind == 0)
                 {
                     ulong challenge = reader.ReadUInt64();
+                    session.LastPeerChallenge = challenge;
                     reply = new byte[17]; reply[0] = 1; BinaryPrimitives.WriteUInt64LittleEndian(reply.AsSpan(1), challenge);
                     BinaryPrimitives.WriteUInt32LittleEndian(reply.AsSpan(9), session.ReceivedRevision[0]);
                     BinaryPrimitives.WriteUInt32LittleEndian(reply.AsSpan(13), session.ReceivedRevision[1]);
@@ -270,7 +296,7 @@ public sealed partial class LanSyncService
                         session.Challenges.Dequeue();
                         if (next.Id == challenge) session.RttMs = now - next.Time;
                     }
-                    if (!session.Incoming) session.LastReceive = now;
+                    if (!session.Incoming || session.DataOnly) session.LastReceive = now;
                     uint revision0 = reader.ReadUInt32(), revision1 = reader.ReadUInt32();
                     var retained = session.Unacked.Where(a => a.Revision > (a.Slot == 0 ? revision0 : revision1)).ToArray();
                     session.Unacked.Clear(); foreach (var a in retained) session.Unacked.Enqueue(a);

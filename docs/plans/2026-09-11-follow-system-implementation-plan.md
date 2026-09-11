@@ -35,8 +35,8 @@
 | 5 局部墙体匹配 | 基础版完成 | OpenCV 计算硬边界内 Chamfer 候选，拒绝歧义；未实现金字塔/ORB/自动扩大搜索，绝不暗中全图兜底 |
 | 6 多角色检测 | 组合接口完成 | 复用现有 ColorRegionDetector / 可注入同协议模板 detector；实图 ID 样本、遮挡跟踪调参未验证 |
 | 7 定位会话 | 离线组合完成 | 同一帧配准与颜色观测、旧帧拒绝、单标记缺失隔离；每帧相位预测后局部地图校验防漂移，未接真实游戏 |
-| 8–10 目标/寻路/运动/恢复 | 未实现 | 复用 PathFinder、route_progress、line_is_walkable、StickSlewLimiter、VirtualGamepadActionAdapter；禁止照草案另写 A* |
-| 11 LAN 位置/事件 | 暂停待确认架构冲突 | 旧 receive 模式占用控制器；需要独立数据权限模式，而不是启用旧 receive 来收位置 |
+| 8–10 目标/寻路/运动/恢复 | 底层组合已实现，运行时待接 | 已复用 PathFinder、route_progress、line_is_walkable；独立路径缓存、轨迹后置目标、平面向量跟踪、400ms进度检测；真实脱困待验 |
+| 11 LAN 位置/事件 | 数据通道已实现 | 用户已批准 share 模式；复用 TLS/LiteNetLib 配对，不占手柄；独立位置/事件权限、500ms保守有效期、急停撤销权限；Python bridge已接 |
 | 12 事件链/运行时 | 未实现 | 已有 core/events 的 registry/runner/hooks，需要适配复用，不能另造平行业务事件体系 |
 | 13 工作台 | 未实现 | 配置/状态页面应继续统一到已有 gui，不能另建 workbench 根目录 |
 | 14 回放/实测 | 未实现 | 仅执行了合成图单测和现有模块回归；双机、实图、后台采集、速度精度验收尚未完成 |
@@ -55,7 +55,15 @@ python -m pytest tests/test_foundation_types.py tests/test_map_runtime.py tests/
 
 提交断点：44e2b5a（缓存纠错）、c31fde6（ROI）、876dde2（相位适配）、6cd0dfa（局部匹配）、e4b25a8（标记组合）、a30eb10（定位组合）。
 
-待确认冲突：`LanSyncService.OwnsController` 在 receive 模式占用所选槽位，`ControllerRegistry.ExecuteLocal` 因此抛出 RemoteOwnershipException。自动跟随 A 端必须本地控制手柄，不能直接沿用旧接收模式。建议保留原输入同步，增加“只共享位置/事件”的数据通道和独立接收权限；共享配对身份，不占用手柄。确认后再展开任务 8–14 的联调实现。
+已解决的架构选择：用户确认新增 share 数据专用模式；原 send/receive 保留。位置和行为事件共享配对身份，但不获得控制器所有权。程序输出另用短期令牌，绝不通过开启物理键鼠映射实现自动跟随。
+
+### 2026-09-11 第二批断点
+
+- LAN：`LanSyncService.SharedData.cs` + 原 SyncPanel 新增模式/权限。20 项 LAN 测试通过（本机双实例 TLS/UDP，不等于双电脑实测）；UI 10 项已通过。
+- 代码审查修复：急停后隐式重连、延迟包寿命延长、非法 JSON/数字异常影响其他会话、同时连接覆盖会话。数字异常补用 TryGetInt64；多对端恶意包端到端测试仍待补。
+- 寻路：`follow_target.py`、`follower_planner.py`、`vector_tracker.py`、`stuck_recovery.py`，4 项合成测试通过。穿墙的旧路径直接回中，不能继续沿旧路径靠墙移动。
+- 程序输出：`ControllerRegistry.Program.cs` 在已有宿主增加 acquire/state/release；每帧 TTL 最多300ms，租约1秒，暂停/F7/F8/F9撤销令牌。原始键鼠模式保持暂停。Python `ProgramGamepadOutput` 复用现有客户端与 StickSlewLimiter，不启动第二个手柄实现。宿主51项通过，Python桥接/输出2项通过。
+- 未进行驱动安装、生产宿主替换、实际游戏移动；后续必须验证真实配置。
 
 ### Task 1：建立通用几何与时间类型 ✅
 
@@ -203,7 +211,7 @@ python -m pytest tests/test_foundation_types.py tests/test_map_runtime.py tests/
 
 ## 当前断点
 
-- 当前状态：底层定位组合已推进到 Task 7，尚未接入真实游戏、网络、手柄输出和 UI。
+- 当前状态：Task 7 定位底层完成；Task 8–11 基础实现与安全输出通道已写入，运行时/工作台待接。
 - 起始回滚点：`a155446`；本轮各模块提交号见上方实际进度表。
-- 当前暂停原因：新位置共享模式与旧 LAN 手柄接管权限冲突，等待用户确认数据专用模式。
-- 下一步：确认后复用现有寻路与动作模块推进 Task 8–10，再接数据专用 LAN 和事件链；不要跳过输出权限与超时保护。
+- 当前没有待确认架构冲突，用户已批准 share；按要求连续开发。
+- 下一步：A1/A2 独立运行时、现有 hooks 事件链、采集定位工作进程、工作台配置；持续检查安全期限，最后记录真实验证限制。
