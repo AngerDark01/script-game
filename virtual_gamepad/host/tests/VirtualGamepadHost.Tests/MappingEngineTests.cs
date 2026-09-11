@@ -114,6 +114,9 @@ public sealed class MappingEngineTests
         }, MouseMovePassthrough: false));
 
         Assert.True(engine.ShouldSuppress(new PhysicalInput("keyboard:J", PhysicalInputType.KeyDown)));
+        // Event trigger keys must remain available when they are not part of
+        // the active gamepad mapping. F5 is the local event test shortcut.
+        Assert.False(engine.ShouldSuppress(new PhysicalInput("keyboard:F5", PhysicalInputType.KeyDown)));
         Assert.False(engine.ShouldSuppress(new PhysicalInput("keyboard:K", PhysicalInputType.KeyDown)));
         Assert.True(engine.ShouldSuppress(new PhysicalInput("mouse:left", PhysicalInputType.MouseButtonDown)));
         Assert.True(engine.ShouldSuppress(new PhysicalInput("mouse", PhysicalInputType.MouseMove, DeltaX: 2)));
