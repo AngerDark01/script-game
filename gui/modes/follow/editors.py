@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QLineEdit,QComboB
     QDoubleSpinBox,QDialogButtonBox,QTableWidget,QTableWidgetItem,QPushButton,QHBoxLayout,
     QCheckBox,QLabel,QFileDialog,QMessageBox)
 from core.events.follow_chain import BUTTONS,FollowChainDefinition
+from gui.widgets.gamepad_button_picker import GamepadButtonPicker
 
 
 def spin(value, minimum=0, maximum=1000, decimal=False):
@@ -51,7 +52,7 @@ class ActorEditor(QDialog):
 class ChainEditor(QDialog):
     columns=('op','button','ms','name','then','else','target','count')
     def __init__(self,chain=None,parent=None):
-        super().__init__(parent); self.resize(850,540); self.setWindowTitle('自定义事件链')
+        super().__init__(parent); self.resize(1050,760); self.setMinimumSize(900,650); self.setWindowTitle('自定义事件链')
         chain=chain or dict(name='',steps=[])
         layout=QVBoxLayout(self); form=QFormLayout(); layout.addLayout(form)
         self.name=QLineEdit(chain['name']); form.addRow('事件名称（两端一致）',self.name)
@@ -91,7 +92,8 @@ class ChainEditor(QDialog):
     def add_track(self, track):
         r=self.track_table.rowCount(); self.track_table.insertRow(r)
         mode=QComboBox(); mode.addItems(['once','continuous','frequency']); mode.setCurrentText(track.get('mode','once')); self.track_table.setCellWidget(r,0,mode)
-        self.track_table.setItem(r,1,QTableWidgetItem(','.join(track.get('buttons', ['A']))))
+        combo=GamepadButtonPicker(track.get('buttons', ['A']))
+        self.track_table.setCellWidget(r,1,combo)
         self.track_table.setItem(r,2,QTableWidgetItem(str(track.get('hold_ms',100))))
         self.track_table.setItem(r,3,QTableWidgetItem(str(track.get('interval_ms',''))))
         self.track_table.setItem(r,4,QTableWidgetItem(str(track.get('end_ms',''))))
@@ -108,7 +110,10 @@ class ChainEditor(QDialog):
         tracks=[]
         for r in range(self.track_table.rowCount()):
             mode=self.track_table.cellWidget(r,0).currentText()
-            buttons=tuple(x.strip() for x in self.track_table.item(r,1).text().split(',') if x.strip())
+            button_widget=self.track_table.cellWidget(r,1)
+            buttons=button_widget.buttons() if isinstance(button_widget, GamepadButtonPicker) else tuple()
+            if not buttons:
+                buttons=('A',)
             track={'mode':mode,'buttons':buttons,'hold_ms':int(self.track_table.item(r,2).text() or 0)}
             interval=self.track_table.item(r,3).text().strip(); end=self.track_table.item(r,4).text().strip()
             if interval: track['interval_ms']=int(interval)

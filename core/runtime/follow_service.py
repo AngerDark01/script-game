@@ -29,11 +29,16 @@ class FollowService:
         self.network_status={}; self.snapshot={}; self.client=None; self.thread=None
         self._keys=set()
         self._route_shortcuts={}
+        self._route_controllers={}
+        self._remote_events=set()
         try:
             route_path=data_root(Path(__file__).resolve().parents[2])/'configs'/'events'/'routes.json'
             for route in json.loads(route_path.read_text(encoding='utf-8')):
-                if route.get('source') in ('B端','B','') and route.get('trigger') and route.get('event'):
+                if route.get('source') in ('B端','B','本机','') and route.get('trigger') and route.get('event'):
                     self._route_shortcuts[route['trigger']]=route['event']
+                    self._route_controllers[route['trigger']]=route.get('controller','Controller 1')
+                elif route.get('event') and route.get('source'):
+                    self._remote_events.add(route['event'])
         except (OSError, ValueError, TypeError):
             pass
 
@@ -71,9 +76,19 @@ class FollowService:
             self.stop_event.set()
             raise RuntimeError('control queue full; stopped for safety')
 
-    def send_event(self, name):
+    def _targets_for_controller(self, controller):
+        targets=list(self.config.event_targets)
+        if controller == 'Controller 1':
+            selected=[a for a in targets if str(a).endswith('1')]
+            return tuple(selected or targets[:1])
+        if controller == 'Controller 2':
+            selected=[a for a in targets if str(a).endswith('2')]
+            return tuple(selected or targets[-1:])
+        return tuple(targets)
+
+    def send_event(self, name, *, controller=None):
         from core.actions.program_gamepad import host_clock_ms
-        intent=(name,clock_ms()+250,host_clock_ms()+250)
+        intent=(name,clock_ms()+250,host_clock_ms()+250,controller)
         try: self.outbound.put_nowait(intent)
         except Full:
             self.stop_event.set()
@@ -85,7 +100,7 @@ class FollowService:
         shortcuts=dict(self.config.shortcuts); shortcuts.update(self._route_shortcuts)
         for key,name in shortcuts.items():
             pressed=bool(ctypes.windll.user32.GetAsyncKeyState(0x70+int(key[1:])-1)&0x8000)
-            if pressed and key not in self._keys: self.send_event(name)
+            if pressed and key not in self._keys: self.send_event(name, controller=self._route_controllers.get(key))
             if pressed: self._keys.add(key)
             else: self._keys.discard(key)
 
@@ -105,18 +120,23 @@ class FollowService:
                 remote,events=transport.poll()
                 for actor,queue in self.inputs.items(): put_latest(queue,(local,remote))
                 for event in events:
+                    if self._remote_events and event.name not in self._remote_events:
+                        continue
                     for actor in event.targets:
                         if actor in self.commands:
                             self.commands[actor].put_nowait(dict(kind='event',event=replace(event,targets=(actor,))))
                 for _ in range(32):
-                    try: name,deadline,host_deadline=self.outbound.get_nowait()
+                    try: name,deadline,host_deadline,controller=self.outbound.get_nowait()
                     except Empty: break
                     if clock_ms() >= deadline: continue
                     if self.config.role=='B':
                         if not self.config.recipient_device: raise ValueError('请配置接收事件的A端设备')
-                        transport.send_event(self.config.recipient_device,name,self.config.event_targets,host_deadline_ms=host_deadline)
+                        transport.send_event(self.config.recipient_device,name,
+                            self._targets_for_controller(controller),host_deadline_ms=host_deadline)
                     else:
-                        for actor,queue in self.commands.items():
+                        for actor in self._targets_for_controller(controller):
+                            queue=self.commands.get(actor)
+                            if queue is None: continue
                             queue.put_nowait(dict(kind='event',event=SharedEvent(self.config.leader_device,uuid4().hex,
                                 name,(actor,),deadline)))
                 self.network_status=dict(state='sharing',remote=[dict(actor=p.actor_id,position=p.position,age_ms=clock_ms()-p.captured_at_ms) for p in remote])

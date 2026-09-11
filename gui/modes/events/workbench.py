@@ -3,7 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 import json
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem)
+    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox)
 from core.runtime_paths import data_root
 from ..follow.editors import ChainEditor
 
@@ -87,8 +87,14 @@ class EventWorkbenchPage(QWidget):
         self.routes.setRowCount(0)
         for route in self.routes_data:
             r=self.routes.rowCount(); self.routes.insertRow(r)
-            for c,key in enumerate(('source','trigger','event','target','controller')):
-                self.routes.setItem(r,c,QTableWidgetItem(str(route.get(key,''))))
+            self._set_route_row(r, route)
+
+    def _set_route_row(self, row, route):
+        source=QComboBox(); source.addItems(['本机','已配对设备']); source.setCurrentText(route.get('source','本机')); self.routes.setCellWidget(row,0,source)
+        self.routes.setItem(row,1,QTableWidgetItem(str(route.get('trigger','F5'))))
+        self.routes.setItem(row,2,QTableWidgetItem(str(route.get('event',''))))
+        self.routes.setItem(row,3,QTableWidgetItem(str(route.get('target','本机'))))
+        controller=QComboBox(); controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); controller.setCurrentText(route.get('controller','Controller 1')); self.routes.setCellWidget(row,4,controller)
 
     def _select(self, row):
         self.track_table.setRowCount(0)
@@ -121,8 +127,8 @@ class EventWorkbenchPage(QWidget):
 
     def _add_route(self):
         r = self.routes.rowCount(); self.routes.insertRow(r)
-        for c, value in enumerate(('B端', 'F5', self.events[0]['name'] if self.events else '', 'A端', 'Controller 1')): self.routes.setItem(r, c, QTableWidgetItem(value))
-        self.routes_data.append(dict(source='B端',trigger='F5',event=self.events[0]['name'] if self.events else '',target='A端',controller='Controller 1'))
+        route=dict(source='本机',trigger='F5',event=self.events[0]['name'] if self.events else '',target='本机',controller='Controller 1')
+        self._set_route_row(r,route); self.routes_data.append(route)
 
     def _remove_route(self):
         row=self.routes.currentRow()
@@ -134,7 +140,9 @@ class EventWorkbenchPage(QWidget):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.routes_data=[]
         for r in range(self.routes.rowCount()):
-            values=[self.routes.item(r,c).text().strip() if self.routes.item(r,c) else '' for c in range(5)]
+            source=self.routes.cellWidget(r,0).currentText() if self.routes.cellWidget(r,0) else ''
+            controller=self.routes.cellWidget(r,4).currentText() if self.routes.cellWidget(r,4) else ''
+            values=[source]+[self.routes.item(r,c).text().strip() if self.routes.item(r,c) else '' for c in (1,2,3)]+[controller]
             self.routes_data.append(dict(zip(('source','trigger','event','target','controller'),values)))
         self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8')
         self.routes_path.write_text(json.dumps(self.routes_data, ensure_ascii=False, indent=2), encoding='utf-8')
