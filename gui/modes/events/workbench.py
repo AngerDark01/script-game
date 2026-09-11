@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit)
+    QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit, QLineEdit)
 from core.runtime_paths import data_root
 from core.runtime.local_event_runtime import LocalEventRuntime
 from core.runtime.remote_event_runtime import RemoteEventRuntime
