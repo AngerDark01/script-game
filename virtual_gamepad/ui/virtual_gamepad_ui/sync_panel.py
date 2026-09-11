@@ -74,6 +74,18 @@ class SyncPanel(QWidget):
         self._build()
 
     def _build(self):
+        # Keep popup lists readable on the dark workspace.  The popup is a
+        # native view and does not inherit the panel's line-edit styling.
+        self.setStyleSheet('''
+            QComboBox { min-height:34px; padding:0 10px; border:1px solid #29435f;
+                        border-radius:7px; background:#0d1a2b; color:#e7eef8; }
+            QComboBox:hover, QComboBox:focus { border-color:#38bce9; }
+            QComboBox QAbstractItemView { background:#102238; color:#e7eef8;
+                        selection-background-color:#1c6a93; selection-color:#ffffff;
+                        border:1px solid #315775; padding:4px; }
+            QComboBox QAbstractItemView::item { min-height:30px; padding:5px 10px; }
+            QComboBox QAbstractItemView::item:hover { background:#174363; color:#ffffff; }
+        ''')
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
