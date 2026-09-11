@@ -188,6 +188,7 @@ class SyncPanel(QWidget):
         self.send_button = self._button("向选中设备开始同步", self.start_peer, actions)
         self.send_button.setEnabled(False)
         self._button("停止选中设备", lambda: self.peer_command("sync.stop"), actions)
+        self._button("重置连接状态", lambda: self.peer_command("sync.reset"), actions)
         self._button("移除选中设备", self.forget_peer, actions)
         layout.addLayout(actions)
         layout.addWidget(self._section('安全提示', '停止同步会清理远程按键并让虚拟手柄回中，不会删除配对关系。'))

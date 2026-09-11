@@ -234,6 +234,23 @@ public sealed partial class LanSyncService : ILanSyncService
                         if (selected is null) { _generation++; _startVersions.Clear(); foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId); }
                         else { _startVersions.Remove(selected); _connecting.Remove(selected); }
                         break;
+                    case "sync.reset":
+                        // Reset only the active channel and its diagnostics;
+                        // keep the trusted pairing so it can be started again.
+                        string? resetDevice = String(payload, "deviceId");
+                        foreach (var s in _sessions.Values.Where(s => resetDevice is null || s.DeviceId == resetDevice).ToArray())
+                            CloseLocked(s, "reset_by_user");
+                        if (resetDevice is null)
+                        {
+                            _connecting.Clear(); _startVersions.Clear(); _shareBlockedPeers.Clear(); _peerErrors.Clear();
+                        }
+                        else
+                        {
+                            _connecting.Remove(resetDevice); _startVersions.Remove(resetDevice);
+                            _shareBlockedPeers.Remove(resetDevice); _peerErrors.Remove(resetDevice);
+                        }
+                        _error = null;
+                        break;
                     case "sync.forget":
                         var forgotten = RequiredString(payload, "deviceId");
                         if (_sessions.TryGetValue(forgotten, out var active)) CloseLocked(active, "forgotten");
@@ -262,7 +279,12 @@ public sealed partial class LanSyncService : ILanSyncService
         int port = Int(value, "port", _preferences.Port); ValidatePort(port);
         int rate = Int(value, "rateHz", _preferences.RateHz);
         if (rate is not (60 or 125)) throw new ArgumentException("rateHz must be 60 or 125");
-        int[] controllers = Controllers(value, _preferences.Controllers);
+        // Event/position sharing does not own any virtual controller.  Allow
+        // an empty controller scope in that mode so pairing and event-only
+        // channels work even when both Controller checkboxes are clear.
+        int[] controllers = mode == "share"
+            ? Controllers(value, _preferences.Controllers, allowEmpty: true)
+            : Controllers(value, _preferences.Controllers);
         EmergencyStop();
         _shareBlockedPeers.Clear();
         _receivePositions = mode == "share" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
@@ -356,11 +378,11 @@ public sealed partial class LanSyncService : ILanSyncService
     private static string? String(JsonElement e, string key) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var value) ? value.GetString() : null;
     private static string RequiredString(JsonElement e, string key) => String(e, key) ?? throw new ArgumentException("Missing " + key);
     private static int Int(JsonElement e, string key, int fallback) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var value) ? value.GetInt32() : fallback;
-    private static int[] Controllers(JsonElement e, int[] fallback)
+    private static int[] Controllers(JsonElement e, int[] fallback, bool allowEmpty = false)
     {
         if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("controllers", out var values)) return fallback.ToArray();
         int[] result = values.EnumerateArray().Select(v => v.GetInt32()).Distinct().ToArray();
-        if (result.Length is < 1 or > 2 || result.Any(v => v is < 1 or > 2)) throw new ArgumentException("controllers must contain 1 and/or 2");
+        if ((!allowEmpty && result.Length < 1) || result.Length > 2 || result.Any(v => v is < 1 or > 2)) throw new ArgumentException("controllers must contain 1 and/or 2");
         return result;
     }
     private static void ValidatePort(int port) { if (port is < 1024 or > 65535) throw new ArgumentException("端口应为 1024–65535。"); }
