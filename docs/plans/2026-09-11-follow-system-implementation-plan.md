@@ -33,7 +33,7 @@
 
 状态：已完成。失败测试先因 `core.foundation` 不存在而失败；实现后 `3 passed`。提交号见 Git 历史。
 
-### Task 2：建立地图资源与距离场缓存
+### Task 2：建立地图资源与距离场缓存 ✅
 
 文件：`core/localization/map_runtime.py`、`core/localization/distance_field.py`、`tests/test_map_runtime.py`
 
@@ -42,6 +42,8 @@
 验证：`python -m pytest tests/test_map_runtime.py -q`。
 
 提交：`feat: add cached map runtime and distance fields`
+
+状态：已完成。复用了现有 `map_package.py`、墙体版本目录和导航墙体层，仅新增 `MapRuntime` 缓存外壳；`2 passed`。
 
 ### Task 3：实现小地图帧与 ROI 接口
 
@@ -167,4 +169,4 @@
 
 - 当前状态：计划已建立，尚未开始 Task 1。
 - 回滚点：`6629848 docs: add modular follow system implementation plan`。
-- 下一步：Task 2，建立地图资源与距离场缓存。
+- 下一步：Task 3，小地图帧与 ROI 接口。
