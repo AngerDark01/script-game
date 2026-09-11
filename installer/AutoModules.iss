@@ -129,7 +129,10 @@ Name: "{group}\AutoModules 工作台"; Filename: "{app}\AutoModules.exe"; Workin
 Name: "{autodesktop}\AutoModules 工作台"; Filename: "{app}\AutoModules.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\AutoModules.exe"; Description: "打开 AutoModules 工作台"; Flags: postinstall nowait skipifsilent
+; The launcher requests administrator elevation in its manifest.  Use
+; ShellExecute for the post-install launch so Windows can perform the UAC
+; transition instead of CreateProcess returning ERROR_ELEVATION_REQUIRED.
+Filename: "{app}\AutoModules.exe"; Description: "打开 AutoModules 工作台"; Flags: postinstall nowait skipifsilent shellexec
 
 [Code]
 var
