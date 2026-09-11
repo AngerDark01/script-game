@@ -14,6 +14,7 @@ from .modes.navigation import NavigationModeWidget
 from .modes.map_editor import MapEditorWidget
 from .modes.follow import FollowPage
 from .modes.events import EventWorkbenchPage
+from .modes.lan import LanPage
 from .dialogs.perception import PerceptionWorkbenchDialog
 from .gamepad.host_manager import GamepadHostManager
 from virtual_gamepad.ui.virtual_gamepad_ui.gamepad_page import GamepadPage
@@ -80,18 +81,25 @@ class MainWindow(QMainWindow):
         self.mode_btn_follow.setCheckable(True)
         self.mode_btn_follow.clicked.connect(lambda: self.switch_mode(5))
 
+        self.mode_btn_lan = QPushButton("局域网")
+        self.mode_btn_lan.setProperty("role", "mode")
+        self.mode_btn_lan.setCheckable(True)
+        self.mode_btn_lan.clicked.connect(lambda: self.switch_mode(6))
+
         self.mode_buttons = [
             self.mode_btn_mapping,
             self.mode_btn_nav,
             self.mode_btn_gamepad,
             self.mode_btn_map_editor,
             self.mode_btn_follow,
+            self.mode_btn_lan,
         ]
         mode_layout.addWidget(self.mode_btn_mapping)
         mode_layout.addWidget(self.mode_btn_nav)
         mode_layout.addWidget(self.mode_btn_gamepad)
         mode_layout.addWidget(self.mode_btn_map_editor)
         mode_layout.addWidget(self.mode_btn_follow)
+        mode_layout.addWidget(self.mode_btn_lan)
         mode_layout.addStretch()
         main_layout.addLayout(mode_layout)
 
@@ -128,6 +136,8 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.follow_page)
         self.event_workbench = EventWorkbenchPage(parent=self)
         self.stacked_widget.addWidget(self.event_workbench)
+        self.lan_page = LanPage(self.gamepad_host_manager.create_client, parent=self)
+        self.stacked_widget.addWidget(self.lan_page)
 
         self.perception_button = QPushButton("Perception")
         self.perception_button.setToolTip("Edit reusable detection profiles and test them on screenshots")
@@ -170,6 +180,7 @@ class MainWindow(QMainWindow):
             self.mapping_widget.stop_runtime()
             self.nav_widget.stop_runtime()
             self.follow_page.stop_runtime()
+            self.lan_page.shutdown()
             if self.perception_dialog is not None:
                 self.perception_dialog.close()
         self.gamepad_page.shutdown()
