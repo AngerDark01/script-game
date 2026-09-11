@@ -7,6 +7,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from core.runtime_paths import data_root
 from ..follow.editors import ChainEditor
 
+KEY_OPTIONS = ['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
+               'W','A','S','D','Q','E','R','SPACE','UP','DOWN','LEFT','RIGHT']
+
 
 class EventWorkbenchPage(QWidget):
     def __init__(self, parent=None, *, root=None):
@@ -91,9 +94,9 @@ class EventWorkbenchPage(QWidget):
 
     def _set_route_row(self, row, route):
         source=QComboBox(); source.addItems(['本机','已配对设备']); source.setCurrentText(route.get('source','本机')); self.routes.setCellWidget(row,0,source)
-        self.routes.setItem(row,1,QTableWidgetItem(str(route.get('trigger','F5'))))
-        self.routes.setItem(row,2,QTableWidgetItem(str(route.get('event',''))))
-        self.routes.setItem(row,3,QTableWidgetItem(str(route.get('target','本机'))))
+        trigger=QComboBox(); trigger.addItems(KEY_OPTIONS); trigger.setCurrentText(route.get('trigger','F5')); self.routes.setCellWidget(row,1,trigger)
+        event=QComboBox(); event.addItems([str(e.get('name','')) for e in self.events if e.get('name')]); event.setCurrentText(route.get('event','')); self.routes.setCellWidget(row,2,event)
+        target=QComboBox(); target.addItems(['本机','已配对设备']); target.setCurrentText(route.get('target','本机')); self.routes.setCellWidget(row,3,target)
         controller=QComboBox(); controller.addItems(['Controller 1','Controller 2','Controller 1 + 2']); controller.setCurrentText(route.get('controller','Controller 1')); self.routes.setCellWidget(row,4,controller)
 
     def _select(self, row):
@@ -113,8 +116,12 @@ class EventWorkbenchPage(QWidget):
     def _edit(self):
         row = self.list.currentRow()
         if row < 0: return
-        dialog = ChainEditor(self.events[row], self)
-        if dialog.exec(): self.events[row] = dialog.value(); self._refresh(); self.list.setCurrentRow(row)
+        try:
+            dialog = ChainEditor(self.events[row], self)
+            if dialog.exec(): self.events[row] = dialog.value(); self._refresh(); self.list.setCurrentRow(row)
+        except Exception as exc:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, '打开事件失败', f'事件编辑器无法打开：{exc}')
 
     def _copy(self):
         row = self.list.currentRow()
@@ -142,7 +149,7 @@ class EventWorkbenchPage(QWidget):
         for r in range(self.routes.rowCount()):
             source=self.routes.cellWidget(r,0).currentText() if self.routes.cellWidget(r,0) else ''
             controller=self.routes.cellWidget(r,4).currentText() if self.routes.cellWidget(r,4) else ''
-            values=[source]+[self.routes.item(r,c).text().strip() if self.routes.item(r,c) else '' for c in (1,2,3)]+[controller]
+            values=[source]+[self.routes.cellWidget(r,c).currentText().strip() if self.routes.cellWidget(r,c) else '' for c in (1,2,3)]+[controller]
             self.routes_data.append(dict(zip(('source','trigger','event','target','controller'),values)))
         self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8')
         self.routes_path.write_text(json.dumps(self.routes_data, ensure_ascii=False, indent=2), encoding='utf-8')
