@@ -313,7 +313,8 @@ public sealed partial class LanSyncService : ILanSyncService
                 _sessions.TryGetValue(p.DeviceId, out var s);
                 return new { deviceId = p.DeviceId, name = p.Name, address = p.Address, port = p.Port,
                     connected = s?.Peer?.ConnectionState == ConnectionState.Connected, syncing = s?.Active == true,
-                    connecting = _connecting.ContainsKey(p.DeviceId), controllers = s?.Controllers ?? p.Controllers,
+                    connecting = _connecting.ContainsKey(p.DeviceId), dataOnly = s?.DataOnly == true,
+                    controllers = s?.Controllers ?? p.Controllers,
                     rttMs = s?.RttMs, error = _peerErrors.GetValueOrDefault(p.DeviceId) };
             }).ToArray(),
             discovered = _discovered.Values.Where(d => Now - d.Seen < 6000).Select(d => new { deviceId = d.DeviceId, name = d.Name, address = d.Address, port = d.Port }).ToArray(),

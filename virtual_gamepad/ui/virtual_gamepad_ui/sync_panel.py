@@ -110,7 +110,7 @@ class SyncPanel(QWidget):
         layout.addWidget(self._section('连接模式', '先选择本机角色，再保存设置；配对完成后仍需单独开启同步通道。'))
         form = QFormLayout()
         self.mode = QComboBox()
-        for label, value in (("关闭", "off"), ("发送：用本机控制其他电脑", "send"), ("接收：由主设备控制本机", "receive"), ("位置与事件共享（不接管手柄）", "share")):
+        for label, value in (("关闭", "off"), ("发送手柄：用本机控制其他电脑", "send"), ("接收手柄：由主设备控制本机", "receive"), ("事件/位置共享（不接管手柄）", "share")):
             self.mode.addItem(label, value)
         self.name = QLineEdit()
         self.name.setPlaceholderText("本机名称")
@@ -146,7 +146,7 @@ class SyncPanel(QWidget):
         self.receive_button.setEnabled(False)
         self._button("停止全部同步", lambda: self.command("sync.stop"), buttons)
         layout.addLayout(buttons)
-        layout.addWidget(self._section('设备配对', '对端输入框用于发起配对；收到请求时在待确认列表中核对校验码。'))
+        layout.addWidget(self._section('设备配对', '配对只建立可信设备关系，不会自动接管手柄。事件发送使用“事件/位置共享”模式；只有“发送手柄/接收手柄”模式才会传输手柄状态。'))
         pair_row = QHBoxLayout()
         self.code = QLabel("配对码：未开启")
         pair_row.addWidget(self.code)
@@ -335,7 +335,19 @@ class SyncPanel(QWidget):
                 check.setChecked(n in status.get("controllers", [1, 2]))
         self._fill(self.discovered, status.get("discovered", []), lambda p: f"{p.get('name')} · {p.get('address')}:{p.get('port')}", "deviceId")
         self._fill(self.pending, status.get("pending", []), lambda p: f"{p.get('name')} · 校验码 {p.get('fingerprint')} · {'本机已确认' if p.get('confirmed') else '等待确认'}", "requestId")
-        self._fill(self.peers, status.get("peers", []), lambda p: f"{p.get('name')} · {'同步中' if p.get('syncing') else '已连接' if p.get('connected') else '未连接'} · C{p.get('controllers', [])} · RTT {p.get('rttMs', '—')}ms {p.get('error') or ''}", "deviceId")
+        def peer_text(p):
+            if p.get('error'):
+                state = '连接异常'
+            elif p.get('connecting'):
+                state = '连接中'
+            elif p.get('syncing'):
+                state = '事件通道已连接' if p.get('dataOnly') else '手柄通道已连接'
+            elif p.get('connected'):
+                state = '已建立控制连接'
+            else:
+                state = '已配对，未启动通道'
+            return f"{p.get('name')} · {state} · C{p.get('controllers', [])} · RTT {p.get('rttMs', '—')}ms {p.get('error') or ''}"
+        self._fill(self.peers, status.get("peers", []), peer_text, "deviceId")
 
     def showEvent(self, event):
         super().showEvent(event)
