@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
     QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit)
 from core.runtime_paths import data_root
 from core.runtime.local_event_runtime import LocalEventRuntime
+from core.runtime.remote_event_runtime import RemoteEventRuntime
 from ..follow.editors import ChainEditor
 
 KEY_OPTIONS = ['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
@@ -20,6 +21,7 @@ class EventWorkbenchPage(QWidget):
         self.routes_path = self.path.with_name('routes.json')
         self.events = self._load(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
         self.runtime = LocalEventRuntime(root=self.path.parent)
+        self.remote_runtime = RemoteEventRuntime(root=self.path.parent)
         self.runtime_timer = QTimer(self)
         self.runtime_timer.setInterval(150)
         self.runtime_timer.timeout.connect(self._poll_runtime)
@@ -60,7 +62,9 @@ class EventWorkbenchPage(QWidget):
         subtitle=QLabel('把按键动作编排成可复用事件，再路由到指定电脑和手柄。'); subtitle.setStyleSheet('color:#93a7bd;'); title_box.addWidget(subtitle)
         head.addStretch(); self.save = QPushButton('保存事件版本'); self.save.setProperty('role','primary'); self.save.clicked.connect(self._save); head.addWidget(self.save)
         self.status = QLabel('● 仅编辑配置'); self.status.setStyleSheet('color:#93a7bd;'); root.addWidget(self.status)
-        self.runtime_button = QPushButton('启动本机监控服务'); self.runtime_button.clicked.connect(self._toggle_runtime); root.addWidget(self.runtime_button)
+        buttons = QHBoxLayout(); root.addLayout(buttons)
+        self.runtime_button = QPushButton('启动本机监控服务'); self.runtime_button.clicked.connect(self._toggle_runtime); buttons.addWidget(self.runtime_button)
+        self.remote_button = QPushButton('启动远程事件监控'); self.remote_button.clicked.connect(self._toggle_remote_runtime); buttons.addWidget(self.remote_button)
         # Horizontal workspace tabs keep Chinese labels readable at normal widths.
         self.tabs = QTabWidget(); self.tabs.setTabPosition(QTabWidget.North); root.addWidget(self.tabs, 1)
         self._build_library(); self._build_routes(); self._build_runtime()
@@ -178,6 +182,12 @@ class EventWorkbenchPage(QWidget):
         self.runtime_button.setText('停止本机监控服务')
         self.status.setText('本机监控服务已启动；事件触发键不会被 Xbox 映射层吞掉')
         self.runtime_timer.start()
+
+    def _toggle_remote_runtime(self):
+        if self.remote_runtime.thread and self.remote_runtime.thread.is_alive():
+            self.remote_runtime.stop(); self.remote_button.setText('启动远程事件监控'); self.status.setText('远程事件监控已停止'); return
+        self._save(); self.remote_runtime=RemoteEventRuntime(root=self.path.parent); self.remote_runtime.start()
+        self.remote_button.setText('停止远程事件监控'); self.status.setText('远程事件监控已启动；无需启动定位监视')
 
     def _poll_runtime(self):
         runtime = self.runtime
