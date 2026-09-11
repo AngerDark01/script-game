@@ -54,6 +54,19 @@ public sealed class ControllerRegistryTests
         Assert.True(backend.ReportsByController[1].Last().IsPressed(GamepadButton.A));
     }
 
+    [Fact]
+    public void SubmitAllAcceptsMinimumAxisValueWithoutStoppingReports()
+    {
+        var backend = new FakeXInputBackend(2);
+        backend.Start();
+        var registry = ControllerRegistry.CreateDefault(backend);
+        registry.SetEventState(1, "event:local", new GamepadState(0, 0, 0, short.MinValue, 0, 0, 0), TimeSpan.FromSeconds(1));
+
+        registry.SubmitAll();
+
+        Assert.Equal(short.MinValue, backend.ReportsByController[1].Last().LeftStickX);
+    }
+
     private static ControllerSlot NewSlot(int number)
     {
         var store = new StateStore();

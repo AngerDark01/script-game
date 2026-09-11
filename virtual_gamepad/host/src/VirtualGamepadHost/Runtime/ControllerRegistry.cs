@@ -68,10 +68,15 @@ public sealed partial class ControllerRegistry
 
     private static GamepadState Merge(GamepadState a, GamepadState b)
         => new((ushort)(a.Buttons | b.Buttons), Math.Max(a.LeftTrigger, b.LeftTrigger), Math.Max(a.RightTrigger, b.RightTrigger),
-            Math.Abs(a.LeftStickX) >= Math.Abs(b.LeftStickX) ? a.LeftStickX : b.LeftStickX,
-            Math.Abs(a.LeftStickY) >= Math.Abs(b.LeftStickY) ? a.LeftStickY : b.LeftStickY,
-            Math.Abs(a.RightStickX) >= Math.Abs(b.RightStickX) ? a.RightStickX : b.RightStickX,
-            Math.Abs(a.RightStickY) >= Math.Abs(b.RightStickY) ? a.RightStickY : b.RightStickY);
+            Magnitude(a.LeftStickX) >= Magnitude(b.LeftStickX) ? a.LeftStickX : b.LeftStickX,
+            Magnitude(a.LeftStickY) >= Magnitude(b.LeftStickY) ? a.LeftStickY : b.LeftStickY,
+            Magnitude(a.RightStickX) >= Magnitude(b.RightStickX) ? a.RightStickX : b.RightStickX,
+            Magnitude(a.RightStickY) >= Magnitude(b.RightStickY) ? a.RightStickY : b.RightStickY);
+
+    // Math.Abs(short.MinValue) overflows because +32768 is outside Int16.
+    // Promote before taking the absolute value so a full-left/full-up axis
+    // cannot terminate the report loop.
+    private static int Magnitude(short value) => Math.Abs((int)value);
 
     public void ApplyPhysical(PhysicalInput input)
     {
