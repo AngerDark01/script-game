@@ -1,98 +1,74 @@
-"""Local keyboard-to-event runner, independent from follow/navigation."""
+"""Local event listener; emits non-exclusive event state to the Xbox host."""
 from __future__ import annotations
-
-import ctypes
-import json
-import os
-import threading
-import time
+import ctypes, json, os, threading, time
 from types import SimpleNamespace
 from pathlib import Path
-
 from core.events.action_tracks import ActionTrack, TrackMode
 from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.runtime_paths import data_root
 
-
 class LocalEventRuntime:
-    """Runs local event routes without installing a keyboard hook or swallowing keys."""
-
     def __init__(self, *, root: Path | None = None, client_factory=None):
-        base = Path(root) if root is not None else data_root(Path(__file__).resolve().parents[2]) / "configs" / "events"
-        self.root = base if base.name == "events" else base / "configs" / "events"
-        self.client_factory = client_factory
-        self.stop_event = threading.Event()
-        self.thread: threading.Thread | None = None
-        self.error = ""
-        self.trigger_count = 0
-
-    def start(self) -> None:
-        if self.thread and self.thread.is_alive():
-            return
-        self.stop_event.clear()
-        self.error = ""
-        self.thread = threading.Thread(target=self._run, name="LocalEventRuntime", daemon=True)
-        self.thread.start()
-
-    def stop(self) -> None:
+        base = Path(root) if root is not None else data_root(Path(__file__).resolve().parents[2]) / 'configs' / 'events'
+        self.root = base if base.name == 'events' else base / 'configs' / 'events'
+        self.client_factory = client_factory; self.stop_event = threading.Event(); self.thread = None
+        self.error = ''; self.trigger_count = 0; self.last_event = ''
+    def start(self):
+        if self.thread and self.thread.is_alive(): return
+        self.stop_event.clear(); self.error = ''; self.trigger_count = 0
+        self.thread = threading.Thread(target=self._run, name='LocalEventRuntime', daemon=True); self.thread.start()
+    def stop(self):
         self.stop_event.set()
-        if self.thread:
-            self.thread.join(timeout=1.0)
-
+        if self.thread: self.thread.join(timeout=1.0)
     def _load(self):
-        events = json.loads((self.root / "events.json").read_text(encoding="utf-8"))
-        routes = json.loads((self.root / "routes.json").read_text(encoding="utf-8"))
+        events = json.loads((self.root / 'events.json').read_text(encoding='utf-8'))
+        routes = json.loads((self.root / 'routes.json').read_text(encoding='utf-8'))
         definitions = {}
         for event in events if isinstance(events, list) else []:
-            tracks = tuple(ActionTrack(tuple(item.get("buttons", ())), mode=TrackMode(item.get("mode", "once")),
-                hold_ms=int(item.get("hold_ms", 100)), interval_ms=item.get("interval_ms"), end_ms=item.get("end_ms"))
-                for item in event.get("tracks", ()))
-            definitions[event.get("name", "")] = SimpleNamespace(tracks=tracks,
-                max_runs=event.get("max_runs"), loop=bool(event.get("loop", False)), end_ms=event.get("end_ms"))
+            tracks = []
+            for item in event.get('tracks', ()):
+                mode = TrackMode(item.get('mode', 'once'))
+                tracks.append(ActionTrack(tuple(item.get('buttons', ())), mode=mode, hold_ms=int(item.get('hold_ms', 100)), interval_ms=item.get('interval_ms') if mode is not TrackMode.ONCE else None, end_ms=item.get('end_ms') if mode is not TrackMode.ONCE else None))
+            definitions[event.get('name', '')] = SimpleNamespace(tracks=tuple(tracks), max_runs=event.get('max_runs'), loop=bool(event.get('loop', False)), end_ms=event.get('end_ms'))
         local = {}
         for route in routes if isinstance(routes, list) else []:
-            if route.get("source") in ("本机", "B", "B端", "") and route.get("trigger") and route.get("event"):
-                local[route["trigger"].upper()] = (route["event"], route.get("controller", "Controller 1"))
+            source = str(route.get('source', '')).strip().lower()
+            if source in ('', 'local', '本机', '鏈満', 'b', 'b端', 'b绔?') and route.get('trigger') and route.get('event'):
+                local[str(route['trigger']).upper()] = (route['event'], route.get('controller', 'Controller 1'))
         return definitions, local
-
     def _run(self):
-        output = None
+        client = None
         try:
-            if os.name != "nt":
-                raise RuntimeError("本机事件运行器只支持 Windows 键盘输入")
+            if os.name != 'nt': raise RuntimeError('Local event listener requires Windows')
             definitions, routes = self._load()
-            if not routes:
-                raise RuntimeError("没有找到来源为“本机”的事件路由")
+            if not routes: raise RuntimeError('No local event routes are configured')
             from virtual_gamepad.client.python import VirtualGamepadClient
-            client = (self.client_factory or VirtualGamepadClient)()
-            client.connect(timeout=2)
-            controller = 1
-            for _, selected in routes.values():
-                if selected == "Controller 2": controller = 2; break
-            from core.actions.program_gamepad import ProgramGamepadOutput
-            output = ProgramGamepadOutput(client, controller=controller)
-            output.start()
-            session = EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))
+            client = (self.client_factory or VirtualGamepadClient)(); client.connect(timeout=2)
+            sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             keys = set()
             while not self.stop_event.is_set():
                 for key, (name, _) in routes.items():
-                    if not key.startswith("F") or not key[1:].isdigit():
-                        continue
-                    vk = 0x70 + int(key[1:]) - 1
-                    pressed = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+                    if not key.startswith('F') or not key[1:].isdigit(): continue
+                    pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x70 + int(key[1:]) - 1) & 0x8000)
+                    selected = routes[key][1]
+                    targets_for_route = (1, 2) if selected == 'Controller 1 + 2' else (2,) if selected == 'Controller 2' else (1,)
                     if pressed and key not in keys:
-                        session.start(name)
-                        self.trigger_count += 1
+                        started = any(sessions[target].start(name) for target in targets_for_route)
+                        if started: self.trigger_count += 1; self.last_event = name
                     if pressed: keys.add(key)
                     else: keys.discard(key)
-                buttons = 0
-                for button in session.tick(): buttons |= BUTTONS.get(button, 0)
-                output.write((0, 0), buttons=buttons, valid_for_ms=100)
+                for target, session in sessions.items():
+                    buttons = 0
+                    for button in session.tick(): buttons |= BUTTONS.get(button, 0)
+                    state = dict(buttons=buttons, leftTrigger=0, rightTrigger=0, leftStickX=0, leftStickY=0, rightStickX=0, rightStickY=0)
+                    client.request('event.state', {'controller': target, 'source': 'event:local', 'state': state, 'ttlMs': 120})
                 self.stop_event.wait(0.02)
-        except Exception as exc:
-            self.error = str(exc)
+        except Exception as exc: self.error = str(exc)
         finally:
-            if output:
-                try: output.stop()
+            if client:
+                for target in (1, 2):
+                    try: client.request('event.clear', {'controller': target, 'source': 'event:local'})
+                    except Exception: pass
+                try: client.close()
                 except Exception: pass

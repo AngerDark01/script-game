@@ -61,6 +61,8 @@ public sealed class CommandRouter
                 "set_axis" => HandleAxis(message),
                 "set_trigger" => HandleTrigger(message),
                 "set_state" => HandleState(message),
+                "event.state" => HandleEventState(message),
+                "event.clear" => HandleEventClear(message),
                 "heartbeat" => HandleHeartbeat(message),
                 "subscribe_state" => ProtocolSerializer.Success(message.Id, new { subscribed = true }),
                 _ => ProtocolSerializer.Failure(message.Id, "unknown_type", $"Unknown message type: {message.Type}"),
@@ -190,6 +192,22 @@ public sealed class CommandRouter
         var slot = _registry.Get(payload.Controller ?? 1);
         _registry.ExecuteLocal(slot.Number, local => local.Store.SetState(payload.Source, payload.State, Ttl(payload.TtlMs)));
         return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number });
+    }
+
+    private string HandleEventState(MessageEnvelope message)
+    {
+        var payload = Deserialize<StateCommand>(message.Payload);
+        var slot = _registry.Get(payload.Controller ?? 1);
+        _registry.SetEventState(slot.Number, payload.Source, payload.State, Ttl(payload.TtlMs));
+        return ProtocolSerializer.Success(message.Id, new { accepted = true, controller = slot.Number, mode = "event" });
+    }
+
+    private string HandleEventClear(MessageEnvelope message)
+    {
+        var controller = message.Payload.TryGetProperty("controller", out var value) && value.ValueKind != JsonValueKind.Null ? value.GetInt32() : 1;
+        var source = message.Payload.TryGetProperty("source", out var sourceElement) ? sourceElement.GetString() : null;
+        _registry.ClearEventState(controller, source);
+        return ProtocolSerializer.Success(message.Id, new { accepted = true, controller, mode = "event" });
     }
 
     private string HandleHeartbeat(MessageEnvelope message)

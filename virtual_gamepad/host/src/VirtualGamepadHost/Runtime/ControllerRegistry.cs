@@ -16,6 +16,7 @@ public sealed partial class ControllerRegistry
     private readonly Dictionary<int, GamepadState> _lastRemote = new();
     private ILanSyncService? _sync;
     private readonly Dictionary<string, long> _syncCommandSequences = new();
+    private readonly Dictionary<int, StateStore> _eventStores = new();
 
     public void AttachSync(ILanSyncService sync)
     {
@@ -35,10 +36,41 @@ public sealed partial class ControllerRegistry
     public GamepadState EffectiveState(int number)
     {
         lock (_routingGate)
-            return IsRemote(number)
+        {
+            var baseState = IsRemote(number)
                 ? (_sync!.IsRemoteActive(number) ? _lastRemote.GetValueOrDefault(number, GamepadState.Neutral) : GamepadState.Neutral)
                 : LocalState(number);
+            return Merge(baseState, _eventStores.TryGetValue(number, out var events) ? events.Snapshot() : GamepadState.Neutral);
+        }
     }
+
+    public void SetEventState(int number, string source, GamepadState state, TimeSpan? ttl)
+    {
+        lock (_routingGate)
+        {
+            if (IsRemote(number)) throw new RemoteOwnershipException(number);
+            if (!_eventStores.TryGetValue(number, out var store))
+                _eventStores[number] = store = new StateStore();
+            store.SetState(source.StartsWith("event:", StringComparison.Ordinal) ? source : $"event:{source}", state, ttl);
+        }
+    }
+
+    public void ClearEventState(int number, string? source)
+    {
+        lock (_routingGate)
+        {
+            if (!_eventStores.TryGetValue(number, out var store)) return;
+            if (string.IsNullOrWhiteSpace(source)) store.ClearAll();
+            else store.ClearSource(source.StartsWith("event:", StringComparison.Ordinal) ? source : $"event:{source}");
+        }
+    }
+
+    private static GamepadState Merge(GamepadState a, GamepadState b)
+        => new((ushort)(a.Buttons | b.Buttons), Math.Max(a.LeftTrigger, b.LeftTrigger), Math.Max(a.RightTrigger, b.RightTrigger),
+            Math.Abs(a.LeftStickX) >= Math.Abs(b.LeftStickX) ? a.LeftStickX : b.LeftStickX,
+            Math.Abs(a.LeftStickY) >= Math.Abs(b.LeftStickY) ? a.LeftStickY : b.LeftStickY,
+            Math.Abs(a.RightStickX) >= Math.Abs(b.RightStickX) ? a.RightStickX : b.RightStickX,
+            Math.Abs(a.RightStickY) >= Math.Abs(b.RightStickY) ? a.RightStickY : b.RightStickY);
 
     public void ApplyPhysical(PhysicalInput input)
     {

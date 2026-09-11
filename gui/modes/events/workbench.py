@@ -2,6 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 import json
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox)
 from core.runtime_paths import data_root
@@ -19,6 +20,9 @@ class EventWorkbenchPage(QWidget):
         self.routes_path = self.path.with_name('routes.json')
         self.events = self._load(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
         self.runtime = LocalEventRuntime(root=self.path.parent)
+        self.runtime_timer = QTimer(self)
+        self.runtime_timer.setInterval(150)
+        self.runtime_timer.timeout.connect(self._poll_runtime)
 
     def _load(self):
         try:
@@ -83,7 +87,7 @@ class EventWorkbenchPage(QWidget):
 
     def _build_runtime(self):
         page = QWidget(); layout = QVBoxLayout(page); layout.addWidget(QLabel('显示远程事件的发送、接收和执行状态，不表示游戏内技能成功。'))
-        self.runtime = QTableWidget(0, 6); self.runtime.setHorizontalHeaderLabels(['目标设备', '手柄', '事件', '状态', '当前轨道', '下一步']); layout.addWidget(self.runtime); self.tabs.addTab(page, '运行监控')
+        self.runtime_table = QTableWidget(0, 6); self.runtime_table.setHorizontalHeaderLabels(['目标设备', '手柄', '事件', '状态', '当前轨道', '下一步']); layout.addWidget(self.runtime_table); self.tabs.addTab(page, '运行监控')
 
     def _refresh(self):
         self.list.clear(); self.list.addItems([e.get('name', '未命名事件') for e in self.events])
@@ -160,6 +164,7 @@ class EventWorkbenchPage(QWidget):
     def _toggle_runtime(self):
         if self.runtime.thread and self.runtime.thread.is_alive():
             self.runtime.stop()
+            self.runtime_timer.stop()
             self.runtime_button.setText('启动本机事件测试')
             self.status.setText('本机事件测试已停止')
             return
@@ -168,3 +173,15 @@ class EventWorkbenchPage(QWidget):
         self.runtime.start()
         self.runtime_button.setText('停止本机事件测试')
         self.status.setText('本机事件测试已启动；事件触发键不会被 Xbox 映射层吞掉')
+        self.runtime_timer.start()
+
+    def _poll_runtime(self):
+        runtime = self.runtime
+        if runtime.thread and runtime.thread.is_alive():
+            detail = f' · 最近：{runtime.last_event}' if runtime.last_event else ''
+            self.status.setText(f'本机事件监听中 · 已触发 {runtime.trigger_count} 次{detail}')
+            return
+        self.runtime_timer.stop()
+        if runtime.error:
+            self.runtime_button.setText('启动本机事件测试')
+            self.status.setText(f'本机事件监听失败：{runtime.error}')
