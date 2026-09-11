@@ -205,7 +205,9 @@ public sealed partial class ControllerRegistry
             foreach (var slot in _slots.Values)
             {
                 var remote = IsRemote(slot.Number);
-                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : LocalState(slot.Number);
+                // Submit the same effective state exposed to get_state/status:
+                // keyboard mapping + event source + any other local source.
+                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : EffectiveState(slot.Number);
                 if (remote) _lastRemote[slot.Number] = state;
                 if (_backend?.IsConnected == true) _backend.Submit(slot.Number, state);
                 if (state.Buttons != 0 || state.LeftStickX != 0 || state.LeftStickY != 0 || state.RightStickX != 0 || state.RightStickY != 0 || state.LeftTrigger != 0 || state.RightTrigger != 0)

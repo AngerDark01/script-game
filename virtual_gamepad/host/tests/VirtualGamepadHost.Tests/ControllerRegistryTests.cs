@@ -41,6 +41,19 @@ public sealed class ControllerRegistryTests
         Assert.Equal(GamepadState.Neutral, second.Store.Snapshot());
     }
 
+    [Fact]
+    public void SubmitAllIncludesNonExclusiveEventStateWhileControllerIsPaused()
+    {
+        var backend = new FakeXInputBackend(2);
+        backend.Start();
+        var registry = ControllerRegistry.CreateDefault(backend);
+        registry.SetEventState(1, "event:local", new GamepadState((ushort)GamepadButton.A, 0, 0, 0, 0, 0, 0), TimeSpan.FromSeconds(1));
+
+        registry.SubmitAll();
+
+        Assert.True(backend.ReportsByController[1].Last().IsPressed(GamepadButton.A));
+    }
+
     private static ControllerSlot NewSlot(int number)
     {
         var store = new StateStore();
