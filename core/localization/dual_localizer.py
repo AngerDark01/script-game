@@ -60,7 +60,8 @@ class MultiMarkerLocalizer:
         for identity, observation in self.markers.detect(frame).items():
             position = None
             confidence = 0.
-            if observation is not None:
+            if (observation is not None and observation.detected_at_ms == stamp
+                    and observation.coordinate_space == CoordinateSpace.MINIMAP):
                 x, y = observation.center
                 h, w = wall_mask.shape
                 if isfinite(x) and isfinite(y) and 0 <= x < w and 0 <= y < h:

@@ -29,3 +29,9 @@ def test_identical_candidate_regions_are_rejected():
     walls[20:30, 50] = walls[29, 50:60] = 255
     matcher = LocalMapMatcher(MapRuntime.from_wall_layer(walls))
     assert not matcher.match(walls[15:35, 15:35], origin=(30, 15), radius=20).valid
+
+
+def test_tiny_uniform_search_cannot_claim_unique_match():
+    matcher = LocalMapMatcher(MapRuntime.from_wall_layer(np.ones((20, 20), np.uint8)))
+    for radius in (0, 1, 2):
+        assert not matcher.match(np.ones((5, 5), np.uint8), origin=(7, 7), radius=radius).valid

@@ -18,6 +18,8 @@ class LocalMapMatcher:
             raise ValueError('invalid matching thresholds')
         self.runtime = runtime
         self.max_error, self.min_margin, self.min_features = max_error, min_margin, min_features
+        # Validate once per immutable snapshot, never scan the global field per frame.
+        self._usable = bool(np.isfinite(runtime.distance_field).all())
 
     def match(self, walls, *, origin, radius, scale=1.0):
         started = perf_counter()
@@ -30,7 +32,7 @@ class LocalMapMatcher:
             return invalid
         template = (scale_wall_template(walls, scale, 1) > 0).astype(np.float32)
         count = int(template.sum())
-        if count < self.min_features or not np.isfinite(self.runtime.distance_field).all():
+        if count < self.min_features or not self._usable:
             return invalid
         h, w = template.shape
         mh, mw = self.runtime.shape
@@ -44,9 +46,11 @@ class LocalMapMatcher:
         error = float(costs[by, bx])
         # Exclude the same peak's subpixel neighbourhood before testing ambiguity.
         other = costs.copy()
-        other[max(0, by-2):by+3, max(0, bx-2):bx+3] = np.inf
-        margin = float(other.min()) - error
-        valid = error <= self.max_error and margin >= self.min_margin
+        exclusion = 1 if min(costs.shape) >= 5 else 0
+        other[max(0, by-exclusion):by+exclusion+1, max(0, bx-exclusion):bx+exclusion+1] = np.inf
+        second_error = float(other.min())
+        margin = second_error - error if isfinite(second_error) else 0.
+        valid = error <= self.max_error and margin >= self.min_margin and isfinite(second_error)
         return FrameRegistration(valid,
             confidence=max(0., 1.-error/self.max_error) if valid else 0.,
             frame_origin_global=(float(x0+bx), float(y0+by)) if valid else None,
