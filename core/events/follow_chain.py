@@ -8,10 +8,9 @@ from core.events.base.handler import EventHandler
 from core.events.base.definition import EventDefinition
 from core.events.models import EventAction
 from core.events.hooks.models import EventHookContext
+from core.events.gamepad_output import BUTTON_MASKS, EVENT_INPUTS
 
-BUTTONS = {'A': 0x1000, 'B': 0x2000, 'X': 0x4000, 'Y': 0x8000,
-    'LB': 0x100, 'RB': 0x200, 'BACK': 0x20, 'START': 0x10,
-    'LS': 0x40, 'RS': 0x80, 'UP': 1, 'DOWN': 2, 'LEFT': 4, 'RIGHT': 8}
+BUTTONS = BUTTON_MASKS
 
 
 def button_mask(step):
@@ -23,9 +22,9 @@ def button_mask(step):
         raise ValueError('one to sixteen Xbox buttons required')
     mask = 0
     for name in names:
-        if not isinstance(name, str) or name not in BUTTONS:
-            raise ValueError('unknown Xbox button')
-        mask |= BUTTONS[name]
+        if not isinstance(name, str) or name not in EVENT_INPUTS:
+            raise ValueError('unknown Xbox input')
+        mask |= BUTTONS.get(name, 0)
     return mask
 
 

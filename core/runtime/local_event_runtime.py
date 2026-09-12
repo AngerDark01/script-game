@@ -4,11 +4,11 @@ import ctypes, json, os, threading, time
 from types import SimpleNamespace
 from pathlib import Path
 from core.events.action_tracks import ActionTrack, TrackMode
-from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.runtime_paths import data_root
 from core.events.event_store import EventStore
 from core.events.event_catalog import catalog_summary
+from core.events.gamepad_output import state_from_inputs
 from core.actions.program_gamepad import host_clock_ms
 
 
@@ -87,7 +87,7 @@ class LocalEventRuntime:
             device_status = client.request('sync.status').get('status', {})
             store = EventStore(self.root, str(device_status.get('deviceId', 'local')))
             keys = set()
-            previous_buttons = {1: 0, 2: 0}
+            previous_state = {1: (0, 0, 0), 2: (0, 0, 0)}
             while not self.stop_event.is_set():
                 for key, (name, _, target) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
@@ -144,15 +144,15 @@ class LocalEventRuntime:
                     if pressed: keys.add(key)
                     else: keys.discard(key)
                 for target, session in sessions.items():
-                    buttons = 0
-                    for button in session.tick(): buttons |= BUTTONS.get(button, 0)
-                    state = dict(buttons=buttons, leftTrigger=0, rightTrigger=0, leftStickX=0, leftStickY=0, rightStickX=0, rightStickY=0)
+                    state = state_from_inputs(session.tick())
+                    buttons = state['buttons']
                     reply = client.request('event.state', {'controller': target, 'source': 'event:local', 'state': state, 'ttlMs': 120})
-                    if buttons != previous_buttons[target]:
-                        _event_log(f'轨道状态 controller={target} buttons={buttons} previous={previous_buttons[target]} reply={reply}')
-                        previous_buttons[target] = buttons
-                    if buttons:
-                        _event_log(f'event.state sent controller={target} buttons={buttons} reply={reply}')
+                    current = (buttons, state['leftStickX'], state['leftStickY'])
+                    if current != previous_state[target]:
+                        _event_log(f'轨道状态 controller={target} buttons={buttons} axes={current[1]},{current[2]} previous={previous_state[target]} reply={reply}')
+                        previous_state[target] = current
+                    if any(current):
+                        _event_log(f'event.state sent controller={target} buttons={buttons} axes={current[1]},{current[2]} reply={reply}')
                 self.stop_event.wait(0.02)
         except Exception as exc:
             self.error = str(exc); _event_log(f'listener error={exc!r}')

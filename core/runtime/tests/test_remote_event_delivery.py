@@ -85,6 +85,55 @@ class RemoteEventDeliveryTests(unittest.TestCase):
             self.assertEqual(runtime.receive_count, 1)
             self.assertTrue(any(state["controller"] == 1 and state["state"]["buttons"] for state in client.states))
 
+    def test_remote_receiver_writes_left_stick_movement(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "events.json").write_text(
+                json.dumps([{
+                    "id": "move-up", "name": "move up", "revision": 1,
+                    "tracks": [{"mode": "once", "buttons": ["LS_UP"], "hold_ms": 100}],
+                }]),
+                encoding="utf-8",
+            )
+
+            class Client:
+                def __init__(self):
+                    self.drained = False
+                    self.states = []
+
+                def connect(self, timeout):
+                    pass
+
+                def request(self, command, payload=None):
+                    if command == "sync.status":
+                        return {"status": {"deviceId": "receiver", "mode": "share", "receiveEvents": True, "peers": []}}
+                    if command == "sync.share.drain":
+                        if self.drained:
+                            return {"events": [], "catalogs": []}
+                        self.drained = True
+                        return {"events": [{
+                            "name": "move up", "eventId": "move-up", "eventRevision": 1,
+                            "targets": ["1"], "remainingMs": 400,
+                        }], "catalogs": []}
+                    if command == "event.state":
+                        self.states.append(payload)
+                        return {"accepted": True}
+                    if command == "event.clear":
+                        return {"accepted": True}
+                    raise AssertionError(command)
+
+                def close(self):
+                    pass
+
+            client = Client()
+            runtime = RemoteEventRuntime(root=root, client_factory=lambda: client)
+            runtime.start()
+            deadline = __import__("time").monotonic() + 1
+            while not any(item["state"]["leftStickY"] for item in client.states) and __import__("time").monotonic() < deadline:
+                __import__("time").sleep(0.01)
+            runtime.stop()
+            self.assertTrue(any(item["state"]["leftStickY"] == 32767 for item in client.states))
+
     def test_local_event_peer_selection_excludes_controller_sessions(self):
         status = {
             "peers": [

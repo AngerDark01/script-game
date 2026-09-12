@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 from core.events.action_tracks import ActionTrack, TrackMode
-from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.events.event_store import EventStore
+from core.events.gamepad_output import state_from_inputs
 
 def _event_log(message: str) -> None:
     try:
@@ -128,11 +128,10 @@ class RemoteEventRuntime:
                         f'targets={item.get("targets", ())}'
                     )
                 for controller,session in sessions.items():
-                    buttons=0
-                    for button in session.tick(): buttons |= BUTTONS.get(button,0)
-                    state_reply = client.request('event.state', {'controller':controller,'source':'event:remote','state':{'buttons':buttons,'leftTrigger':0,'rightTrigger':0,'leftStickX':0,'leftStickY':0,'rightStickX':0,'rightStickY':0},'ttlMs':120})
-                    if buttons:
-                        _event_log(f'remote event.state sent controller={controller} buttons={buttons} reply={state_reply}')
+                    state = state_from_inputs(session.tick())
+                    state_reply = client.request('event.state', {'controller':controller,'source':'event:remote','state':state,'ttlMs':120})
+                    if state['buttons'] or state['leftStickX'] or state['leftStickY']:
+                        _event_log(f'remote event.state sent controller={controller} buttons={state["buttons"]} axes={state["leftStickX"]},{state["leftStickY"]} reply={state_reply}')
                 self.stop_event.wait(.025)
         except Exception as exc:
             self.error=str(exc); _event_log(f'remote listener error={exc!r}')

@@ -3,8 +3,8 @@ from copy import deepcopy
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QLineEdit,QComboBox,QSpinBox,
     QDoubleSpinBox,QDialogButtonBox,QTableWidget,QTableWidgetItem,QPushButton,QHBoxLayout,
     QCheckBox,QLabel,QFileDialog,QMessageBox)
-from core.events.follow_chain import BUTTONS,FollowChainDefinition
-from gui.widgets.gamepad_button_picker import GamepadButtonPicker
+from core.events.follow_chain import FollowChainDefinition
+from gui.widgets.gamepad_button_picker import GAMEPAD_INPUTS, GamepadButtonPicker
 
 
 def spin(value, minimum=0, maximum=1000, decimal=False):
@@ -68,16 +68,16 @@ class ChainEditor(QDialog):
         self.max_runs=spin(chain.get('max_runs',0),0,100000); form.addRow('事件执行次数（0=不限）',self.max_runs)
         self.loop=QCheckBox('循环执行'); self.loop.setChecked(chain.get('loop',False)); form.addRow(self.loop)
         self.event_end=spin(chain.get('end_ms',0),0,3600000); form.addRow('事件结束时间（毫秒，0=不限）',self.event_end)
-        layout.addWidget(QLabel('并行按键轨道：支持单次、持续按下、按频率重复。按钮用逗号分隔，例如 LB,X。'))
-        self.track_table=QTableWidget(0,5); self.track_table.setHorizontalHeaderLabels(['模式','按钮/组合','保持ms','间隔ms','轨道结束ms'])
+        layout.addWidget(QLabel('并行输入轨道：支持按键和左摇杆八方向移动，可单次、持续或按频率重复。'))
+        self.track_table=QTableWidget(0,5); self.track_table.setHorizontalHeaderLabels(['模式','手柄输入/组合','保持ms','间隔ms','轨道结束ms'])
         layout.addWidget(self.track_table,1)
         for track in chain.get('tracks',[]): self.add_track(track)
         track_row=QHBoxLayout(); layout.addLayout(track_row)
-        add_track=QPushButton('添加按键轨道'); add_track.clicked.connect(lambda:self.add_track({})); track_row.addWidget(add_track)
+        add_track=QPushButton('添加输入轨道'); add_track.clicked.connect(lambda:self.add_track({})); track_row.addWidget(add_track)
         remove_track=QPushButton('删除轨道'); remove_track.clicked.connect(lambda:self.track_table.removeRow(self.track_table.currentRow())); track_row.addWidget(remove_track)
         hint=QLabel('步骤从0编号。wait=等待；button=手柄按键；condition=条件分支；retry=有限重试；emit=模块钩子。\n内置条件：localized、leader_fresh。分支填目标步骤编号。未知钩子不会执行外部代码。')
         hint.setWordWrap(True); layout.addWidget(hint)
-        self.table=QTableWidget(0,len(self.columns)); self.table.setHorizontalHeaderLabels(['动作','按钮','持续ms','条件/钩子','真跳转','假跳转','重试起点','重试次数'])
+        self.table=QTableWidget(0,len(self.columns)); self.table.setHorizontalHeaderLabels(['动作','手柄输入','持续ms','条件/钩子','真跳转','假跳转','重试起点','重试次数'])
         layout.addWidget(self.table,1)
         for step in chain['steps']: self.add_step(step)
         row=QHBoxLayout(); layout.addLayout(row)
@@ -90,8 +90,15 @@ class ChainEditor(QDialog):
         r=self.table.rowCount(); self.table.insertRow(r)
         for c,key in enumerate(self.columns):
             if key in ('op','button'):
-                w=QComboBox(); w.addItems(['wait','button','condition','retry','emit'] if key=='op' else list(BUTTONS))
-                w.setCurrentText(str(step.get(key,'wait' if key=='op' else 'A'))); self.table.setCellWidget(r,c,w)
+                w=QComboBox()
+                if key == 'op':
+                    w.addItems(['wait','button','condition','retry','emit'])
+                    w.setCurrentText(str(step.get(key, 'wait')))
+                else:
+                    for value, label in GAMEPAD_INPUTS:
+                        w.addItem(label, value)
+                    w.setCurrentIndex(max(0, w.findData(str(step.get(key, 'A')))))
+                self.table.setCellWidget(r,c,w)
             else: self.table.setItem(r,c,QTableWidgetItem(str(step.get(key,''))))
 
     def add_track(self, track):
@@ -109,7 +116,7 @@ class ChainEditor(QDialog):
             step={}
             for c,key in enumerate(self.columns):
                 w=self.table.cellWidget(r,c)
-                value=w.currentText() if w else self.table.item(r,c).text().strip()
+                value=(w.currentData() if key == 'button' else w.currentText()) if w else self.table.item(r,c).text().strip()
                 if value: step[key]=int(value) if key in ('ms','then','else','target','count') else value
             steps.append(step)
         tracks=[]

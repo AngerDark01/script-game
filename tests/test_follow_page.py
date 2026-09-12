@@ -32,4 +32,10 @@ def test_actor_and_chain_editors_roundtrip():
     assert value['tracks'][0]['buttons']==('LB','X')
     assert value['tracks'][0]['interval_ms']==500
     assert value['max_runs'] is None
-    dialog.close(); chain.close()
+    movement=ChainEditor(dict(name='move',steps=[dict(op='button',button='LS_UP_RIGHT',ms=500)],
+        tracks=[dict(mode='once',buttons=['LS_LEFT'],hold_ms=300)]))
+    movement_value=movement.value()
+    assert movement_value['steps'][0]['button']=='LS_UP_RIGHT'
+    assert movement_value['tracks'][0]['buttons']==('LS_LEFT',)
+    assert '移动 左' in movement.track_table.cellWidget(0,1).text()
+    dialog.close(); chain.close(); movement.close()
