@@ -181,6 +181,8 @@ public sealed partial class LanSyncService : ILanSyncService
                     case "sync.share.drain":
                         var drained = DrainSharedEventsLocked();
                         return new { ok = true, events = drained.Events, catalogs = drained.Catalogs, status = StatusLocked() };
+                    case "sync.share.catalog_drain":
+                        return new { ok = true, catalogs = DrainSharedCatalogsLocked(), status = StatusLocked() };
                     case "sync.status": break;
                     case "sync.configure": ConfigureLocked(payload); break;
                     case "sync.pairing":

@@ -8,7 +8,6 @@ from core.events.action_tracks import ActionTrack, TrackMode
 from core.events.follow_chain import BUTTONS
 from core.runtime.event_session import EventSession
 from core.events.event_store import EventStore
-from core.events.event_catalog import catalog_summary
 
 def _event_log(message: str) -> None:
     try:
@@ -97,19 +96,7 @@ class RemoteEventRuntime:
             )
             store = EventStore(self.root, str(status.get('deviceId', 'local')))
             definitions=self._definitions(store); sessions={1:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)),2:EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
-            last_catalog = 0.0
             while not self.stop_event.is_set():
-                if time.monotonic() - last_catalog >= 2.0:
-                    status = client.request('sync.status').get('status', {})
-                    summary = catalog_summary(store.local(), str(status.get('deviceId', 'local')))
-                    catalog = {**summary, 'definitions': store.local()}
-                    for peer in status.get('peers', []):
-                        if peer.get('connected') and peer.get('syncing') and peer.get('dataOnly'):
-                            try:
-                                client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': catalog})
-                            except Exception as exc:
-                                _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
-                    last_catalog = time.monotonic()
                 reply=client.request('sync.share.drain')
                 if reply.get('events') or reply.get('catalogs'):
                     _event_log(

@@ -157,6 +157,15 @@ public sealed partial class LanSyncService
         return new DrainedSharedData(items.ToArray(), catalogs.ToArray());
     }
 
+    // Catalog synchronization has its own consumer so the workbench can keep
+    // the read-only event cache current without consuming trigger messages.
+    private JsonElement[] DrainSharedCatalogsLocked()
+    {
+        var catalogs = new List<JsonElement>();
+        while (_sharedCatalogs.TryDequeue(out var catalog)) catalogs.Add(catalog);
+        return catalogs.ToArray();
+    }
+
     private static bool FreshChallenge(Session session, JsonElement message, out long deadline)
     {
         deadline = 0;

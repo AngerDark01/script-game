@@ -86,19 +86,9 @@ class LocalEventRuntime:
             sessions = {1: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000)), 2: EventSession(definitions, clock_ms=lambda: int(time.monotonic() * 1000))}
             device_status = client.request('sync.status').get('status', {})
             store = EventStore(self.root, str(device_status.get('deviceId', 'local')))
-            last_catalog = 0.0
             keys = set()
             previous_buttons = {1: 0, 2: 0}
             while not self.stop_event.is_set():
-                if time.monotonic() - last_catalog >= 2.0:
-                    status = client.request('sync.status').get('status', {})
-                    for peer in _data_only_peers(status):
-                        try:
-                            client.request('sync.share.catalog', {'deviceId': peer.get('deviceId'), 'catalog': self._catalog_payload(store, str(status.get('deviceId', 'local')))})
-                            _event_log(f'event catalog sent device={peer.get("deviceId")} count={len(store.local())}')
-                        except Exception as exc:
-                            _event_log(f'event catalog send error device={peer.get("deviceId")} error={exc!r}')
-                    last_catalog = time.monotonic()
                 for key, (name, _, target) in routes.items():
                     if not key.startswith('F') or not key[1:].isdigit(): continue
                     pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x70 + int(key[1:]) - 1) & 0x8000)

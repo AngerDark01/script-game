@@ -181,6 +181,7 @@ class MainWindow(QMainWindow):
             self.nav_widget.stop_runtime()
             self.follow_page.stop_runtime()
             self.lan_page.shutdown()
+            self.event_workbench.shutdown()
             if self.perception_dialog is not None:
                 self.perception_dialog.close()
         self.gamepad_page.shutdown()

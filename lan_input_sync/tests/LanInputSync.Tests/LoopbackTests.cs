@@ -158,6 +158,38 @@ public class LoopbackTests
     }
 
     [Fact]
+    public async Task CatalogDrainDoesNotConsumeSharedEvents()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+
+        await Until(() =>
+        {
+            try
+            {
+                Call(pair.Sender, "sync.share.catalog", new { deviceId = pair.ReceiverId, catalog = new {
+                    deviceId = "sender", catalogRevision = 1, catalogHash = "hash", events = Array.Empty<object>(),
+                    definitions = new[] { new { id = "event-a", name = "A event", owner_device_id = "sender", revision = 1, tracks = Array.Empty<object>() } }
+                }});
+                Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "A event", eventId = "event-a", eventRevision = 1,
+                    targets = new[] { "1" }, deadlineMs = Environment.TickCount64 + 400 });
+                return true;
+            }
+            catch { return false; }
+        }, pair.Details);
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32() == 1
+            && Call(pair.Receiver, "sync.status").GetProperty("pendingSharedCatalogs").GetInt32() == 1, pair.Details);
+
+        var catalogs = JsonSerializer.SerializeToElement(pair.Receiver.Handle("sync.share.catalog_drain", JsonSerializer.SerializeToElement(new { })));
+        Assert.Single(catalogs.GetProperty("catalogs").EnumerateArray());
+        Assert.Equal(1, Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32());
+        var events = JsonSerializer.SerializeToElement(pair.Receiver.Handle("sync.share.drain", JsonSerializer.SerializeToElement(new { })));
+        Assert.Single(events.GetProperty("events").EnumerateArray());
+        Assert.Empty(events.GetProperty("catalogs").EnumerateArray());
+    }
+
+    [Fact]
     public async Task RealTlsUdpTwoSlotsShortTapAndIndependentReceiverPause()
     {
         using var pair = new Pair(); await pair.ConfigureAndPair(); await pair.Start();

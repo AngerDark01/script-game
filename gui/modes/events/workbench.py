@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from core.runtime_paths import data_root
 from core.runtime.local_event_runtime import LocalEventRuntime
 from core.runtime.remote_event_runtime import RemoteEventRuntime
+from core.runtime.event_catalog_runtime import EventCatalogRuntime
 from ..follow.editors import ChainEditor
 
 KEY_OPTIONS = ['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
@@ -24,6 +25,11 @@ class EventWorkbenchPage(QWidget):
         self.events = self._load(); self.remote_events = self._load_remote(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
         self.runtime = LocalEventRuntime(root=self.path.parent)
         self.remote_runtime = RemoteEventRuntime(root=self.path.parent)
+        # Event definitions are synchronized independently from event
+        # execution.  Opening the workbench is enough to keep the read-only
+        # remote catalog current while a LAN share session is connected.
+        self.catalog_runtime = EventCatalogRuntime(root=self.path.parent)
+        self.catalog_runtime.start()
         self.runtime_timer = QTimer(self)
         self.runtime_timer.setInterval(150)
         self.runtime_timer.timeout.connect(self._poll_runtime)
@@ -80,6 +86,7 @@ class EventWorkbenchPage(QWidget):
         subtitle=QLabel('把按键动作编排成可复用事件，再路由到指定电脑和手柄。'); subtitle.setStyleSheet('color:#93a7bd;'); title_box.addWidget(subtitle)
         head.addStretch(); self.save = QPushButton('保存事件版本'); self.save.setProperty('role','primary'); self.save.clicked.connect(self._save); head.addWidget(self.save)
         self.status = QLabel('● 仅编辑配置'); self.status.setStyleSheet('color:#93a7bd;'); root.addWidget(self.status)
+        self.catalog_status = QLabel('事件目录同步：后台中'); self.catalog_status.setStyleSheet('color:#6f9ab8;'); root.addWidget(self.catalog_status)
         buttons = QHBoxLayout(); root.addLayout(buttons)
         self.runtime_button = QPushButton('启动本机监控服务'); self.runtime_button.clicked.connect(self._toggle_runtime); buttons.addWidget(self.runtime_button)
         self.remote_button = QPushButton('启动远程事件监控'); self.remote_button.clicked.connect(self._toggle_remote_runtime); buttons.addWidget(self.remote_button)
@@ -283,6 +290,29 @@ class EventWorkbenchPage(QWidget):
                         value = combo.currentText(); combo.blockSignals(True); combo.clear(); combo.addItems(names); combo.setCurrentText(value); combo.blockSignals(False)
             if 0 <= selected < self.list.count():
                 self.list.setCurrentRow(selected)
+        runtime = getattr(self, 'catalog_runtime', None)
+        if runtime is not None:
+            if runtime.error:
+                self.catalog_status.setText(f'事件目录同步：等待连接 ({runtime.error})')
+            elif runtime.last_peer_count:
+                self.catalog_status.setText(
+                    f'事件目录同步：已连接 {runtime.last_peer_count} 台设备，'
+                    f'已读取 {len(self.remote_events)} 个远程事件'
+                )
+            else:
+                self.catalog_status.setText('事件目录同步：等待共享同步通道')
+
+    def shutdown(self):
+        """Stop workbench-owned workers before the host process closes."""
+        self.catalog_timer.stop()
+        self.runtime_timer.stop()
+        self.catalog_runtime.stop()
+        self.runtime.stop()
+        self.remote_runtime.stop()
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
 
     def _poll_runtime(self):
         runtime = self.runtime

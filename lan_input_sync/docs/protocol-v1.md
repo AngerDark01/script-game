@@ -18,6 +18,17 @@ No input session exists during pairing. Pending confirmation expires after three
 
 Subsequent TLS is certificate-pinned. Sender sends `{type:"start",controllers:[1,2]}`; receiver must already have enabled local permission for each selected slot. Overlapping owners are rejected. Receiver creates a session and replies with `{type:"session",sessionId,token,senderKey,receiverKey,port,grants:[g1,g2]}`. Each key is independently random, 256 bits. Token is random, used to associate LiteNetLib's initial connection; input authorization always additionally requires valid AEAD payloads.
 
+Event/position sharing uses the same paired TLS connection without owning a
+controller. A data-only session is started with `{type:"start-data"}` after
+both devices are configured for `share` mode and have enabled the corresponding
+data permission. `sync.share.catalog` publishes a versioned event definition
+catalog. The host exposes `sync.share.catalog_drain` as a catalog-only read
+queue; it never consumes pending shared trigger events. `sync.share.drain`
+continues to return trigger events (and retains its legacy catalog field for
+older clients). This separation allows the workbench to refresh read-only
+event definitions in the background without starting an event listener or
+interfering with remote event execution.
+
 Receiver sends `{type:"permissions",grants:[g1,g2]}` to change local slot permission. Zero denies; reauthorization creates a new random nonzero grant. Sender transmits a fresh reliable baseline for a changed nonzero grant. TCP closure invalidates the associated UDP session. Stop uses closure plus immediate local neutralization rather than waiting for a delivered stop message.
 
 ## UDP envelope
