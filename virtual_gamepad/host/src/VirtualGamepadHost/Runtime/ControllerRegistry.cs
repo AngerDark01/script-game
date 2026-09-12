@@ -40,7 +40,7 @@ public sealed partial class ControllerRegistry
             var baseState = IsRemote(number)
                 ? (_sync!.IsRemoteActive(number) ? _lastRemote.GetValueOrDefault(number, GamepadState.Neutral) : GamepadState.Neutral)
                 : LocalState(number);
-            return Merge(baseState, _eventStores.TryGetValue(number, out var events) ? events.Snapshot() : GamepadState.Neutral);
+            return Merge(baseState, EventState(number));
         }
     }
 
@@ -48,11 +48,15 @@ public sealed partial class ControllerRegistry
     {
         lock (_routingGate)
         {
-            if (IsRemote(number)) throw new RemoteOwnershipException(number);
+            // Events are an independent input channel.  A controller can be
+            // locally mapped, remotely owned, or in data-sharing mode while an
+            // event source is active.  Do not treat event delivery as a local
+            // controller write, otherwise remote reception makes event actions
+            // mutually exclusive with the other input channel.
             if (!_eventStores.TryGetValue(number, out var store))
                 _eventStores[number] = store = new StateStore();
             store.SetState(source.StartsWith("event:", StringComparison.Ordinal) ? source : $"event:{source}", state, ttl);
-            HostDiagnostics.Write($"event.state stored controller={number} source={source} buttons={state.Buttons} ttlMs={(ttl?.TotalMilliseconds ?? 0):0}");
+            HostDiagnostics.Write($"event.state stored controller={number} remote={IsRemote(number)} source={source} buttons={state.Buttons} ttlMs={(ttl?.TotalMilliseconds ?? 0):0}");
         }
     }
 
@@ -77,6 +81,11 @@ public sealed partial class ControllerRegistry
     // Promote before taking the absolute value so a full-left/full-up axis
     // cannot terminate the report loop.
     private static int Magnitude(short value) => Math.Abs((int)value);
+
+    private GamepadState EventState(int number)
+        => _eventStores.TryGetValue(number, out var events)
+            ? events.Snapshot()
+            : GamepadState.Neutral;
 
     public void ApplyPhysical(PhysicalInput input)
     {
@@ -210,10 +219,25 @@ public sealed partial class ControllerRegistry
             foreach (var slot in _slots.Values)
             {
                 var remote = IsRemote(slot.Number);
-                // Submit the same effective state exposed to get_state/status:
-                // keyboard mapping + event source + any other local source.
-                var state = remote ? LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number)) : EffectiveState(slot.Number);
-                if (remote) _lastRemote[slot.Number] = state;
+                // Remote reception and event delivery are separate channels.
+                // Consume the remote controller state first, then overlay the
+                // event store just like local keyboard/mouse mapping.  The old
+                // remote branch submitted the consumed state directly, which
+                // silently dropped event buttons whenever a controller was in
+                // receive mode.
+                GamepadState state;
+                if (remote)
+                {
+                    var remoteState = LanSyncAdapter.ToGamepad(_sync!.Consume(slot.Number));
+                    _lastRemote[slot.Number] = remoteState;
+                    state = Merge(remoteState, EventState(slot.Number));
+                }
+                else
+                {
+                    // Submit the same effective state exposed to get_state/status:
+                    // keyboard mapping + event source + any other local source.
+                    state = EffectiveState(slot.Number);
+                }
                 // A disconnected slot must not prevent the other virtual
                 // controller from receiving reports.  IsConnected is an
                 // aggregate status; route each slot independently.
@@ -231,6 +255,7 @@ public sealed partial class ControllerRegistry
         {
             _sync?.EmergencyStop();
             _lastRemote.Clear();
+            foreach (var events in _eventStores.Values) events.ClearAll();
             foreach (var slot in _slots.Values) RevokeProgram(slot.Number);
             foreach (var slot in _slots.Values) slot.Safety.EmergencyReset();
         }

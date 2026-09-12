@@ -93,6 +93,23 @@ public sealed class LanIntegrationTests
     }
 
     [Fact]
+    public void EventChannelOverlaysRemoteControllerWithoutTakingOwnership()
+    {
+        var service = new FakeSync();
+        var registry = Registry(service);
+
+        registry.SetEventState(1, "event:remote", GamepadState.Neutral.WithButton(GamepadButton.B, true), TimeSpan.FromSeconds(1));
+
+        // The receive channel supplies A; the independent event channel must
+        // add B instead of being rejected or replacing the remote state.
+        registry.SubmitAll();
+
+        var state = registry.EffectiveState(1);
+        Assert.True(state.IsPressed(GamepadButton.A));
+        Assert.True(state.IsPressed(GamepadButton.B));
+    }
+
+    [Fact]
     public void ReceptionPermissionWithoutLiveSenderIsPausedButHotkeyRevokesPermission()
     {
         var service = new FakeSync { Active = false };

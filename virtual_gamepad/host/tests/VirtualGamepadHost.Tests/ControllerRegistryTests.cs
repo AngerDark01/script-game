@@ -55,6 +55,28 @@ public sealed class ControllerRegistryTests
     }
 
     [Fact]
+    public void LocalMappingAndEventStateAreMergedAndClearedIndependently()
+    {
+        var backend = new FakeXInputBackend(2);
+        backend.Start();
+        var registry = ControllerRegistry.CreateDefault(backend);
+        registry[1].Safety.Start();
+
+        registry[1].Mapping.Apply(new PhysicalInput("keyboard:W", PhysicalInputType.KeyDown));
+        registry.SetEventState(1, "event:remote", GamepadState.Neutral.WithButton(GamepadButton.X, true), TimeSpan.FromSeconds(1));
+
+        var merged = registry.EffectiveState(1);
+        Assert.Equal(short.MaxValue, merged.LeftStickY);
+        Assert.True(merged.IsPressed(GamepadButton.X));
+
+        registry.ClearEventState(1, "event:remote");
+
+        var mappingOnly = registry.EffectiveState(1);
+        Assert.Equal(short.MaxValue, mappingOnly.LeftStickY);
+        Assert.False(mappingOnly.IsPressed(GamepadButton.X));
+    }
+
+    [Fact]
     public void SubmitAllAcceptsMinimumAxisValueWithoutStoppingReports()
     {
         var backend = new FakeXInputBackend(2);
