@@ -2,7 +2,7 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from PySide6.QtWidgets import QApplication
 from gui.modes.follow.page import FollowPage
-from gui.modes.follow.editors import ActorEditor,ChainEditor
+from gui.modes.follow.editors import ActorEditor,ChainEditor,ParallelGroupEditor
 
 
 def test_follow_page_opens_disarmed_and_saves_versions(tmp_path):
@@ -39,3 +39,28 @@ def test_actor_and_chain_editors_roundtrip():
     assert movement_value['tracks'][0]['buttons']==('LS_LEFT',)
     assert '移动 左' in movement.track_table.cellWidget(0,1).text()
     dialog.close(); chain.close(); movement.close()
+
+
+def test_parallel_group_editor_and_chain_roundtrip():
+    app=QApplication.instance() or QApplication([])
+    tracks=[
+        dict(mode='continuous',buttons=['LS_RIGHT'],delay_ms=0,hold_ms=100),
+        dict(mode='once',buttons=['RB'],delay_ms=200,hold_ms=100),
+        dict(mode='frequency',buttons=['X','Y'],delay_ms=100,hold_ms=50,interval_ms=250,end_ms=800),
+    ]
+    group=ParallelGroupEditor(tracks,1000)
+    assert group.value()[1]['delay_ms']==200
+    assert group.value()[2]['buttons']==('X','Y')
+    assert group.value()[2]['interval_ms']==250
+
+    chain=ChainEditor(dict(name='move-and-cast',steps=[
+        dict(op='parallel',ms=1000,tracks=tracks),
+        dict(op='button',button='A',ms=100),
+    ]))
+    value=chain.value()
+    assert chain.table.cellWidget(0,0).currentText()=='并行动作组'
+    assert value['steps'][0]['op']=='parallel'
+    assert value['steps'][0]['tracks'][0]['buttons']==['LS_RIGHT']
+    assert value['steps'][0]['tracks'][1]['delay_ms']==200
+    assert value['steps'][1]=={'op':'button','ms':100,'button':'A'}
+    group.close(); chain.close()

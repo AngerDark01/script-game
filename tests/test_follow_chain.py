@@ -1,6 +1,7 @@
 from core.events.follow_chain import FollowChainDefinition
 from core.events.models import EventTask, EventTick, EventActionType
 from core.events.hooks.registry import EventHookRegistry
+import pytest
 
 
 def test_chain_button_wait_condition_hook_and_complete():
@@ -27,3 +28,22 @@ def test_loop_is_bounded_and_cancel_clears_progress():
     assert result.type == EventActionType.FAIL
     h.reset()
     assert h.executed == 0
+
+
+def test_chain_definition_accepts_a_bounded_parallel_step():
+    definition = FollowChainDefinition('combo', [{
+        'op': 'parallel', 'ms': 1000,
+        'tracks': [
+            {'buttons': ['LS_RIGHT'], 'mode': 'continuous', 'delay_ms': 0},
+            {'buttons': ['RB'], 'mode': 'once', 'delay_ms': 200, 'hold_ms': 100},
+        ],
+    }])
+    assert definition.steps[0]['tracks'][1]['buttons'] == ('RB',)
+
+
+def test_chain_definition_rejects_nested_parallel_step():
+    with pytest.raises(ValueError):
+        FollowChainDefinition('nested', [{
+            'op': 'parallel', 'ms': 100,
+            'tracks': [{'op': 'parallel', 'buttons': ['A'], 'mode': 'once'}],
+        }])

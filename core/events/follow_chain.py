@@ -4,11 +4,14 @@ Remote peers send only a configured event name. They never send executable code
 or a chain definition. Button output is declarative metadata for the existing
 program output adapter; no device is accessed by this module.
 """
+from copy import deepcopy
+
 from core.events.base.handler import EventHandler
 from core.events.base.definition import EventDefinition
 from core.events.models import EventAction
 from core.events.hooks.models import EventHookContext
 from core.events.gamepad_output import BUTTON_MASKS, EVENT_INPUTS
+from core.events.event_lifecycle import parallel_inputs_at, validate_parallel_step
 
 BUTTONS = BUTTON_MASKS
 
@@ -28,16 +31,23 @@ def button_mask(step):
     return mask
 
 
+def inputs_mask(inputs):
+    mask = 0
+    for name in inputs:
+        mask |= BUTTONS.get(name, 0)
+    return mask
+
+
 class FollowChainDefinition(EventDefinition):
     def __init__(self, name, steps, *, hooks=None, timeout_ms=30000, priority=0, resume=False):
         self.event_type, self.display_name = name, name
         if not name or len(steps) > 128 or not 1 <= timeout_ms <= 60000:
             raise ValueError('invalid chain bounds')
-        self.steps = tuple(dict(s) for s in steps)
+        self.steps = tuple(deepcopy(s) for s in steps)
         self.hooks, self.timeout_ms, self.priority, self.resume = hooks, timeout_ms, priority, resume
         for index, step in enumerate(self.steps):
             op = step.get('op')
-            if op not in ('wait', 'button', 'condition', 'retry', 'emit'):
+            if op not in ('wait', 'button', 'parallel', 'condition', 'retry', 'emit'):
                 raise ValueError(f'unknown chain operation: {op}')
             if op in ('wait', 'button') and not 0 <= int(step.get('ms', 100)) <= 5000:
                 raise ValueError('step duration must be 0..5000ms')
@@ -45,6 +55,10 @@ class FollowChainDefinition(EventDefinition):
                 button_mask(step)
                 if 'buttons' in step:
                     step['buttons'] = tuple(step['buttons'])
+            if op == 'parallel':
+                validate_parallel_step(step)
+                for track in step['tracks']:
+                    track['buttons'] = tuple(track['buttons'])
             if op == 'retry' and not 1 <= int(step.get('count', 1)) <= 10:
                 raise ValueError('retry count must be 1..10')
             for key in ('then', 'else', 'target'):
@@ -89,9 +103,12 @@ class FollowChainHandler(EventHandler):
             op = step['op']
             if self.step_started is None: self.step_started = now
             duration = int(step.get('ms', 100))
-            if op in ('wait', 'button') and now-self.step_started < duration:
+            if op in ('wait', 'button', 'parallel') and now-self.step_started < duration:
+                inputs = parallel_inputs_at(step, now-self.step_started) if op == 'parallel' else ()
                 return EventAction.wait(duration-(now-self.step_started), metadata={
-                    'buttons': button_mask(step) if op == 'button' else 0})
+                    'buttons': button_mask(step) if op == 'button' else inputs_mask(inputs),
+                    'inputs': tuple(sorted(inputs)),
+                })
             next_index = self.index+1
             if op == 'condition':
                 condition = bool(task.metadata.get('conditions', {}).get(step['name'], False))

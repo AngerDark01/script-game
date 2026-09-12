@@ -134,6 +134,65 @@ class RemoteEventDeliveryTests(unittest.TestCase):
             runtime.stop()
             self.assertTrue(any(item["state"]["leftStickY"] == 32767 for item in client.states))
 
+    def test_remote_receiver_writes_parallel_movement_and_button(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "events.json").write_text(
+                json.dumps([{
+                    "id": "move-cast", "name": "move cast", "revision": 1,
+                    "tracks": [],
+                    "steps": [{
+                        "op": "parallel", "ms": 500,
+                        "tracks": [
+                            {"mode": "continuous", "buttons": ["LS_RIGHT"], "delay_ms": 0},
+                            {"mode": "once", "buttons": ["RB"], "delay_ms": 0, "hold_ms": 200},
+                        ],
+                    }],
+                }]),
+                encoding="utf-8",
+            )
+
+            class Client:
+                def __init__(self):
+                    self.drained = False
+                    self.states = []
+
+                def connect(self, timeout):
+                    pass
+
+                def request(self, command, payload=None):
+                    if command == "sync.status":
+                        return {"status": {"deviceId": "receiver", "mode": "share", "receiveEvents": True, "peers": []}}
+                    if command == "sync.share.drain":
+                        if self.drained:
+                            return {"events": [], "catalogs": []}
+                        self.drained = True
+                        return {"events": [{
+                            "name": "move cast", "eventId": "move-cast", "eventRevision": 1,
+                            "targets": ["1"], "remainingMs": 1000,
+                        }], "catalogs": []}
+                    if command == "event.state":
+                        self.states.append(payload)
+                        return {"accepted": True}
+                    if command == "event.clear":
+                        return {"accepted": True}
+                    raise AssertionError(command)
+
+                def close(self):
+                    pass
+
+            client = Client()
+            runtime = RemoteEventRuntime(root=root, client_factory=lambda: client)
+            runtime.start()
+            deadline = __import__("time").monotonic() + 1
+            while not any(item["state"]["leftStickX"] and item["state"]["buttons"] for item in client.states) and __import__("time").monotonic() < deadline:
+                __import__("time").sleep(0.01)
+            runtime.stop()
+            self.assertTrue(any(
+                item["state"]["leftStickX"] == 32767 and item["state"]["buttons"] == 0x200
+                for item in client.states
+            ))
+
     def test_local_event_peer_selection_excludes_controller_sessions(self):
         status = {
             "peers": [
