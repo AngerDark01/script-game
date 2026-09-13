@@ -234,8 +234,12 @@ public sealed partial class LanSyncService : ILanSyncService
                                 peer = peer with { Controllers = controllers }; _trusted[peerId] = peer;
                                 var capturedPeer = peer; var startVersion = Guid.NewGuid();
                                 _shareBlockedPeers.Remove(peerId);
-                                ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
                                 _startVersions[peerId] = startVersion;
+                                // Publish the fencing version before starting
+                                // the worker. Task.Run may execute immediately;
+                                // otherwise a valid session can observe the
+                                // previous/default version and self-cancel.
+                                ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
                             }
                             SavePreferencesLater();
                         }
