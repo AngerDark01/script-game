@@ -78,9 +78,10 @@ public class LoopbackTests
             Call(Sender, "sync.start", new { deviceId = ReceiverId, controllers = new[] { 1, 2 } });
             await Until(() => Call(Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), Details);
         }
-        public async Task PairAdditional(LanSyncService receiver, int port)
+        public async Task PairAdditional(LanSyncService receiver, int port, bool dataOnly = false)
         {
-            Call(receiver, "sync.configure", new { mode = "receive", bindAddress = "127.0.0.1", port });
+            Call(receiver, "sync.configure", new { mode = dataOnly ? "share" : "receive", bindAddress = "127.0.0.1", port,
+                receivePositions = dataOnly, receiveEvents = dataOnly });
             await Until(() => Call(receiver, "sync.status").GetProperty("networkReady").GetBoolean());
             var code = Call(receiver, "sync.pairing").GetProperty("pairingCode").GetString();
             Call(Sender, "sync.pair", new { address = "127.0.0.1", port, code });
@@ -352,6 +353,37 @@ public class LoopbackTests
                 Assert.Equal(PadState.Neutral, pair.Receiver.Consume(1));
             }
             finally { pair.Receiver.BeforePollForTest = null; release.Set(); }
+        }
+        finally { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+    }
+
+    [Fact]
+    public async Task SharedEventsReachTwoDataOnlyReceiversOnIndependentSessions()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        string temp = Path.Combine(Path.GetTempPath(), "lan-second-event-receiver-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var second = new LanSyncService(temp);
+            await pair.PairAdditional(second, FreePort(), dataOnly: true);
+            string secondId = Call(second, "sync.status").GetProperty("deviceId").GetString()!;
+            // A single start command in share mode atomically opens all paired
+            // event sessions; this is the broadcast setup used by the UI.
+            Call(pair.Sender, "sync.start", new { controllers = Array.Empty<int>(), broadcast = true });
+            await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers").EnumerateArray().Count(p => p.GetProperty("connected").GetBoolean()) == 2, pair.Details);
+
+            await Until(() =>
+            {
+                try
+                {
+                    Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "broadcast", targets = new[] { "1" }, deadlineMs = Environment.TickCount64 + 400 });
+                    Call(pair.Sender, "sync.share.event", new { deviceId = secondId, name = "broadcast", targets = new[] { "1" }, deadlineMs = Environment.TickCount64 + 400 });
+                    return true;
+                }
+                catch { return false; }
+            }, pair.Details);
+            await Until(() => Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32() == 1
+                && Call(second, "sync.status").GetProperty("pendingSharedEvents").GetInt32() == 1, pair.Details);
         }
         finally { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
     }

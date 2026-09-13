@@ -226,3 +226,28 @@ class RemoteEventDeliveryTests(unittest.TestCase):
         now = host_clock_ms()
         self.assertEqual(captured["command"], "sync.share.event")
         self.assertTrue(0 < deadline - now <= 250)
+
+    def test_broadcast_peer_failure_does_not_block_other_event_peer(self):
+        """The sender must isolate one failed data session from the broadcast."""
+        sent = []
+
+        class Client:
+            def request(self, command, payload=None):
+                if command == 'sync.share.catalog' or command == 'sync.share.event':
+                    if payload['deviceId'] == 'bad':
+                        raise RuntimeError('peer disconnected')
+                    sent.append((command, payload['deviceId']))
+                    return {'ok': True}
+                raise AssertionError(command)
+
+        peers = [
+            {'deviceId': 'bad', 'connected': True, 'syncing': True, 'dataOnly': True},
+            {'deviceId': 'good', 'connected': True, 'syncing': True, 'dataOnly': True},
+        ]
+        result = LocalEventRuntime._send_remote_event_to_peers(
+            Client(), peers, catalog={'definitions': []},
+            event_payload={'name': 'broadcast', 'eventId': 'e1', 'eventRevision': 1,
+                           'targets': ['1'], 'deadlineMs': 123},
+        )
+        self.assertEqual(result, ['good'])
+        self.assertEqual(sent, [('sync.share.catalog', 'good'), ('sync.share.event', 'good')])

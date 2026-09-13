@@ -185,8 +185,9 @@ class SyncPanel(QWidget):
         self.peers.setMinimumHeight(100)
         layout.addWidget(self.peers)
         actions = QHBoxLayout()
-        self.send_button = self._button("向选中设备开始同步", self.start_peer, actions)
+        self.send_button = self._button("启动全部事件通道", self.start_all_events, actions)
         self.send_button.setEnabled(False)
+        self._button("启动选中设备", self.start_peer, actions)
         self._button("停止选中设备", lambda: self.peer_command("sync.stop"), actions)
         self._button("重置连接状态", lambda: self.peer_command("sync.reset"), actions)
         self._button("移除选中设备", self.forget_peer, actions)
@@ -240,6 +241,13 @@ class SyncPanel(QWidget):
 
     def start_peer(self):
         self.peer_command("sync.start", {"controllers": self.controllers()})
+
+    def start_all_events(self):
+        """Start one data-only event session for every paired peer."""
+        if self._status.get("mode") != "share":
+            self.message.setText("只有“位置与事件共享”模式支持同时启动全部事件通道。")
+            return
+        self.command("sync.start", {"controllers": [], "broadcast": True})
 
     def peer_command(self, command, extra=None):
         item = self.peers.currentItem()

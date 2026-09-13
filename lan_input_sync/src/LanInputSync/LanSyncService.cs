@@ -220,16 +220,24 @@ public sealed partial class LanSyncService : ILanSyncService
                         else
                         {
                             RequireSenderOrShare();
-                            var peerId = RequiredString(payload, "deviceId");
-                            if (!_trusted.TryGetValue(peerId, out var peer)) throw new InvalidOperationException("设备尚未配对。");
-                            if (_sessions.TryGetValue(peerId, out var existing)) CloseLocked(existing, "restart");
-                            peer = peer with { Controllers = controllers }; _trusted[peerId] = peer; SavePreferencesLater();
-                            var capturedPeer = peer; var generation = _generation; var token = _run.Token;
-                            var startVersion = Guid.NewGuid();
                             bool dataOnly = _mode == "share";
-                            _shareBlockedPeers.Remove(peerId);
-                            ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
-                            _startVersions[peerId] = startVersion;
+                            string? selectedPeer = String(payload, "deviceId");
+                            var peerIds = selectedPeer is null
+                                ? (dataOnly ? _trusted.Keys.ToArray() : throw new ArgumentException("请选择目标设备。"))
+                                : new[] { selectedPeer };
+                            if (peerIds.Length == 0) throw new InvalidOperationException("尚未配对任何事件设备。");
+                            var generation = _generation; var token = _run.Token;
+                            foreach (var peerId in peerIds)
+                            {
+                                if (!_trusted.TryGetValue(peerId, out var peer)) throw new InvalidOperationException("设备尚未配对。");
+                                if (_sessions.TryGetValue(peerId, out var existing)) CloseLocked(existing, "restart");
+                                peer = peer with { Controllers = controllers }; _trusted[peerId] = peer;
+                                var capturedPeer = peer; var startVersion = Guid.NewGuid();
+                                _shareBlockedPeers.Remove(peerId);
+                                ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
+                                _startVersions[peerId] = startVersion;
+                            }
+                            SavePreferencesLater();
                         }
                         break;
                     case "sync.stop":

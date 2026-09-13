@@ -69,6 +69,33 @@ class LocalEventRuntime:
     @staticmethod
     def _catalog_payload(store: EventStore, device_id: str) -> dict:
         return {"deviceId": device_id, "events": catalog_summary(store.local(), device_id).get("events", []), "definitions": store.local(), "catalogRevision": catalog_summary(store.local(), device_id).get("catalogRevision", 0), "catalogHash": catalog_summary(store.local(), device_id).get("catalogHash", "")}
+
+    @staticmethod
+    def _send_remote_event_to_peers(client, peers, *, catalog, event_payload) -> list[str]:
+        """Broadcast independently; one dead peer must not abort later peers."""
+        sent = []
+        for peer in peers:
+            peer_id = peer.get('deviceId')
+            try:
+                try:
+                    client.request('sync.share.catalog', {'deviceId': peer_id, 'catalog': catalog})
+                    _event_log(f'event catalog ensured device={peer_id}')
+                except Exception as exc:
+                    _event_log(f'event catalog ensure error device={peer_id} error={exc!r}')
+                reply = client.request('sync.share.event', {**event_payload, 'deviceId': peer_id})
+                sent.append(str(peer_id))
+                _event_log(
+                    f'remote event sent event={event_payload.get("name", "")} '
+                    f'eventId={event_payload.get("eventId", "")} device={peer_id} '
+                    f'targets={event_payload.get("targets", ())} reply={reply}'
+                )
+            except Exception as exc:
+                _event_log(
+                    f'remote event send error event={event_payload.get("name", "")} '
+                    f'device={peer_id} error={exc!r}'
+                )
+        return sent
+
     def _run(self):
         client = None
         try:
@@ -107,34 +134,21 @@ class LocalEventRuntime:
                                 )
                                 targets = [str(n) for n in targets_for_route]
                                 record = store.by_name(name)
-                                for peer in peers:
-                                    # Catalog and event share the same ordered
-                                    # data session.  This removes the startup
-                                    # race where the event arrives before the
-                                    # receiver has its read-only definition.
-                                    try:
-                                        client.request('sync.share.catalog', {
-                                            'deviceId': peer.get('deviceId'),
-                                            'catalog': self._catalog_payload(
-                                                store, str(status.get('deviceId', 'local'))
-                                            ),
-                                        })
-                                        _event_log(f'event catalog ensured device={peer.get("deviceId")}')
-                                    except Exception as exc:
-                                        _event_log(f'event catalog ensure error device={peer.get("deviceId")} error={exc!r}')
-                                    reply = client.request('sync.share.event', {
-                                        'deviceId': peer.get('deviceId'), 'name': name,
+                                sent_peers = self._send_remote_event_to_peers(
+                                    client, peers,
+                                    catalog=self._catalog_payload(store, str(status.get('deviceId', 'local'))),
+                                    event_payload={
+                                        'name': name,
                                         'eventId': (record or {}).get('id', ''),
                                         'eventRevision': int((record or {}).get('revision', 0)),
                                         'targets': targets,
                                         'deadlineMs': host_clock_ms() + 500,
-                                    })
-                                    _event_log(
-                                        f'remote event sent key={key} event={name} '
-                                        f'eventId={(record or {}).get("id", "")} '
-                                        f'device={peer.get("deviceId")} targets={targets} reply={reply}'
-                                    )
-                                self.trigger_count += 1; self.last_event = name
+                                    },
+                                )
+                                if sent_peers:
+                                    self.trigger_count += 1; self.last_event = name
+                                else:
+                                    raise RuntimeError('all shared-event peers rejected the event')
                             except Exception as exc:
                                 _event_log(f'remote event send error key={key} event={name} error={exc!r}')
                         started = False if key in remote_routes else any(sessions[target].start(name) for target in targets_for_route)
