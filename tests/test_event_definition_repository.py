@@ -53,6 +53,30 @@ def test_repository_catalog_and_lookup_share_stable_identity(tmp_path):
     assert payload["deviceId"] == "device-a"
 
 
+def test_repository_save_versions_only_changed_existing_records(tmp_path):
+    _write(tmp_path / "events.json", [{
+        "id": "stable",
+        "name": "roll",
+        "owner_device_id": "device-a",
+        "revision": 3,
+        "tracks": [{"mode": "once", "buttons": ["B"], "hold_ms": 80}],
+    }])
+    repository = EventDefinitionRepository(tmp_path, "device-a")
+    original = repository.local_records()[0]
+
+    unchanged = repository.save_local([original])[0]
+    changed_draft = dict(unchanged)
+    changed_draft["tracks"] = [{"mode": "once", "buttons": ["A"], "hold_ms": 80}]
+    changed = repository.save_local([changed_draft])[0]
+    created = repository.save_local([changed, {"name": "dash", "tracks": []}])[1]
+
+    assert unchanged["revision"] == 3
+    assert changed["revision"] == 4
+    assert changed["owner_device_id"] == "device-a"
+    assert created["id"]
+    assert created["revision"] == 1
+
+
 def test_repository_resolves_shared_execution_key_by_identity_or_legacy_revision(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "stable",

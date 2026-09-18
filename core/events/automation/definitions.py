@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from core.events.action_tracks import ActionTrack, TrackMode
-from core.events.event_catalog import catalog_summary
+from core.events.event_catalog import EventRecord, catalog_summary
 from core.events.event_store import EventStore
 
 
@@ -102,8 +102,30 @@ class EventDefinitionRepository:
             definitions[definition.event_id] = definition
         return definitions
 
-    def save_local(self, records: Iterable[Mapping]) -> None:
-        self._store.save_local([deepcopy(dict(record)) for record in records])
+    def save_local(self, records: Iterable[Mapping]) -> list[dict]:
+        current = {
+            str(record.get("id")): EventRecord.from_dict(
+                record,
+                default_owner=self.device_id,
+            )
+            for record in self.local_records()
+            if record.get("id")
+        }
+        saved: list[dict] = []
+        for draft in records:
+            value = deepcopy(dict(draft))
+            event_id = str(value.get("id") or "")
+            previous = current.get(event_id)
+            candidate = EventRecord.from_dict(value, default_owner=self.device_id)
+            if previous is None:
+                record = candidate
+            elif candidate.definition == previous.definition and not previous.deleted:
+                record = previous
+            else:
+                record = previous.updated(candidate.definition)
+            saved.append(record.to_dict())
+        self._store.save_local(saved)
+        return saved
 
     def apply_remote(self, records: Iterable[Mapping]) -> int:
         return self._store.apply_remote(

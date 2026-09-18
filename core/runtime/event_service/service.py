@@ -143,11 +143,12 @@ class EventWorkbenchService:
         with self._lock:
             return [route.to_record() for route in self._routes.load()]
 
-    def save(self, events: Iterable[dict], routes: Iterable[dict]) -> None:
+    def save(self, events: Iterable[dict], routes: Iterable[dict]) -> list[dict]:
         with self._lock:
-            self._definitions.save_local(events)
+            saved = self._definitions.save_local(events)
             self._routes.save(routes)
             self._reload_configuration()
+            return deepcopy(saved)
 
     def send_remote_event(
         self,
