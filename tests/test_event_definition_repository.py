@@ -36,9 +36,9 @@ def test_repository_uses_one_parser_for_local_and_remote_records(tmp_path):
     definitions = repository.definitions()
     local[0]["tracks"][0]["buttons"][0] = "A"
 
-    assert definitions["roll"].tracks[0].buttons == ("B",)
-    assert definitions["dash"].tracks[0].mode is TrackMode.CONTINUOUS
-    assert definitions["dash"].owner_device_id == "device-b"
+    assert definitions["l1"].tracks[0].buttons == ("B",)
+    assert definitions["r1"].tracks[0].mode is TrackMode.CONTINUOUS
+    assert definitions["r1"].owner_device_id == "device-b"
 
 
 def test_repository_catalog_and_lookup_share_stable_identity(tmp_path):
@@ -53,7 +53,7 @@ def test_repository_catalog_and_lookup_share_stable_identity(tmp_path):
     assert payload["deviceId"] == "device-a"
 
 
-def test_repository_resolves_legacy_shared_identity_by_revision(tmp_path):
+def test_repository_resolves_shared_execution_key_by_identity_or_legacy_revision(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "stable",
         "name": "roll",
@@ -63,19 +63,24 @@ def test_repository_resolves_legacy_shared_identity_by_revision(tmp_path):
     }])
     repository = EventDefinitionRepository(tmp_path, "device-a")
 
-    assert repository.resolve_shared_name({
+    assert repository.resolve_shared_key({
+        "name": "roll",
+        "eventId": "stable",
+        "eventRevision": 3,
+    }) == "stable"
+    assert repository.resolve_shared_key({
         "name": "roll",
         "eventId": "stale",
         "eventRevision": 2,
-    }) == "roll"
-    assert repository.resolve_shared_name({
+    }) == "stable"
+    assert repository.resolve_shared_key({
         "name": "roll",
         "eventId": "stale",
         "eventRevision": 4,
     }) is None
 
 
-def test_repository_rejects_duplicate_visible_names(tmp_path):
+def test_repository_keeps_duplicate_names_isolated_by_stable_id(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "local",
         "name": "roll",
@@ -93,9 +98,7 @@ def test_repository_rejects_duplicate_visible_names(tmp_path):
 
     repository = EventDefinitionRepository(tmp_path, "device-a")
 
-    try:
-        repository.definitions()
-    except ValueError as exc:
-        assert "duplicate event name" in str(exc)
-    else:
-        raise AssertionError("duplicate names must not silently replace definitions")
+    definitions = repository.definitions()
+
+    assert set(definitions) == {"local", "remote"}
+    assert repository.local_key("roll") == "local"

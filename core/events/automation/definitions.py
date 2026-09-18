@@ -97,9 +97,9 @@ class EventDefinitionRepository:
         definitions: dict[str, ExecutableEventDefinition] = {}
         for record in self.visible_records():
             definition = parse_event_definition(record)
-            if definition.name in definitions:
-                raise ValueError(f"duplicate event name: {definition.name}")
-            definitions[definition.name] = definition
+            if not definition.event_id:
+                raise ValueError(f"event id is required: {definition.name}")
+            definitions[definition.event_id] = definition
         return definitions
 
     def save_local(self, records: Iterable[Mapping]) -> None:
@@ -116,6 +116,17 @@ class EventDefinitionRepository:
     def by_name(self, name: str) -> dict | None:
         return self._store.by_name(str(name))
 
+    def local_by_name(self, name: str) -> dict | None:
+        normalized = str(name)
+        return next(
+            (record for record in self.local_records() if record.get("name") == normalized),
+            None,
+        )
+
+    def local_key(self, name: str) -> str | None:
+        record = self.local_by_name(name)
+        return str(record.get("id")) if record and record.get("id") else None
+
     def catalog_payload(self) -> dict:
         records = self.local_records()
         return {
@@ -123,18 +134,19 @@ class EventDefinitionRepository:
             "definitions": records,
         }
 
-    def resolve_shared_name(self, item: Mapping) -> str | None:
+    def resolve_shared_key(self, item: Mapping) -> str | None:
         name = str(item.get("name") or "")
         event_id = str(item.get("eventId") or "")
         if not event_id:
-            return name or None
+            fallback = self.by_name(name)
+            return str(fallback.get("id")) if fallback and fallback.get("id") else None
 
         record = self.by_id(event_id)
         if record is not None:
-            return str(record.get("name") or name) or None
+            return str(record.get("id"))
 
         fallback = self.by_name(name)
         sent_revision = int(item.get("eventRevision") or 0)
         if fallback is not None and int(fallback.get("revision") or 0) >= sent_revision:
-            return str(fallback.get("name") or name) or None
+            return str(fallback.get("id")) if fallback.get("id") else None
         return None
