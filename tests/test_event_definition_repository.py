@@ -77,6 +77,29 @@ def test_repository_save_versions_only_changed_existing_records(tmp_path):
     assert created["revision"] == 1
 
 
+def test_repository_creates_identity_free_draft_from_existing_record(tmp_path):
+    repository = EventDefinitionRepository(tmp_path, "device-a")
+    source = {
+        "id": "stable",
+        "name": "roll",
+        "owner_device_id": "device-a",
+        "revision": 3,
+        "updated_at": "2026-09-18T00:00:00Z",
+        "deleted": False,
+        "content_hash": "hash",
+        "tracks": [{"mode": "once", "buttons": ["B"], "hold_ms": 80}],
+    }
+
+    draft = repository.new_draft(source)
+    draft["tracks"][0]["buttons"][0] = "A"
+
+    assert draft["name"] == "roll"
+    assert set(draft).isdisjoint({
+        "id", "owner_device_id", "revision", "updated_at", "deleted", "content_hash",
+    })
+    assert source["tracks"][0]["buttons"] == ["B"]
+
+
 def test_repository_resolves_shared_execution_key_by_identity_or_legacy_revision(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "stable",

@@ -214,3 +214,22 @@ def test_direct_send_uses_host_deadline_and_shutdown_is_idempotent(tmp_path):
     assert payload["targets"] == ["2"]
     assert bridges[0].closed
     assert bridges[1].closed
+
+
+def test_service_exposes_identity_free_drafts_and_bounded_runtime_logs(tmp_path):
+    _write_events(tmp_path, [_event()])
+    service = EventWorkbenchService(
+        tmp_path,
+        bridge_factory=FakeBridge,
+        trigger_source=TriggerSource(),
+    )
+
+    draft = service.new_event_draft(service.load_local_events()[0])
+    service.set_local_running(True)
+    service.set_local_running(False)
+
+    assert draft["name"] == "roll"
+    assert "id" not in draft
+    assert "revision" not in draft
+    assert len(service.recent_log_lines(limit=1)) == 1
+    assert "disabled" in service.recent_log_lines(limit=1)[0]

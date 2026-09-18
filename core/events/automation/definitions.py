@@ -12,6 +12,26 @@ from core.events.event_catalog import EventRecord, catalog_summary
 from core.events.event_store import EventStore
 
 
+_PERSISTENCE_FIELDS = {
+    "id",
+    "owner_device_id",
+    "revision",
+    "updated_at",
+    "deleted",
+    "content_hash",
+}
+
+
+def new_event_draft(source: Mapping | None = None) -> dict:
+    """Return an editable definition without catalog identity or version fields."""
+
+    return {
+        key: deepcopy(value)
+        for key, value in dict(source or {}).items()
+        if key not in _PERSISTENCE_FIELDS
+    }
+
+
 @dataclass(frozen=True)
 class ExecutableEventDefinition:
     """Validated execution snapshot detached from its persisted record."""
@@ -126,6 +146,9 @@ class EventDefinitionRepository:
             saved.append(record.to_dict())
         self._store.save_local(saved)
         return saved
+
+    def new_draft(self, source: Mapping | None = None) -> dict:
+        return new_event_draft(source)
 
     def apply_remote(self, records: Iterable[Mapping]) -> int:
         return self._store.apply_remote(

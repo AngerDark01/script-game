@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -94,6 +96,7 @@ class EventWorkbenchService:
         self._last_event = ""
         self._error = ""
         self._peer_errors: tuple[str, ...] = ()
+        self._recent_logs: deque[str] = deque(maxlen=200)
         self._pending_clears: set[str] = set()
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -114,6 +117,7 @@ class EventWorkbenchService:
                 daemon=True,
             )
             self._thread.start()
+            self._log("event service started")
 
     def set_local_running(self, enabled: bool) -> None:
         with self._lock:
@@ -122,6 +126,7 @@ class EventWorkbenchService:
                 self._execution.cancel_source(LOCAL_SOURCE)
                 self._pending_clears.add(LOCAL_SOURCE)
             self._local_running = enabled
+            self._log(f"local event monitoring {'enabled' if enabled else 'disabled'}")
 
     def set_remote_running(self, enabled: bool) -> None:
         with self._lock:
@@ -130,6 +135,7 @@ class EventWorkbenchService:
                 self._execution.cancel_source(REMOTE_SOURCE)
                 self._pending_clears.add(REMOTE_SOURCE)
             self._remote_running = enabled
+            self._log(f"remote event monitoring {'enabled' if enabled else 'disabled'}")
 
     def load_local_events(self) -> list[dict]:
         with self._lock:
@@ -143,11 +149,16 @@ class EventWorkbenchService:
         with self._lock:
             return [route.to_record() for route in self._routes.load()]
 
+    def new_event_draft(self, source: dict | None = None) -> dict:
+        with self._lock:
+            return self._definitions.new_draft(source)
+
     def save(self, events: Iterable[dict], routes: Iterable[dict]) -> list[dict]:
         with self._lock:
             saved = self._definitions.save_local(events)
             self._routes.save(routes)
             self._reload_configuration()
+            self._log(f"saved {len(saved)} local event definitions")
             return deepcopy(saved)
 
     def send_remote_event(
@@ -185,7 +196,10 @@ class EventWorkbenchService:
                 "targets": [str(value) for value in controller_numbers],
                 "deadlineMs": self._host_clock_ms() + 250,
             }
-            return bridge.send_event(target, payload)
+            reply = bridge.send_event(target, payload)
+            with self._lock:
+                self._log(f"sent remote event {name} to {target}")
+            return reply
         finally:
             bridge.close()
 
@@ -202,6 +216,11 @@ class EventWorkbenchService:
                 error=self._error,
                 peer_errors=self._peer_errors,
             )
+
+    def recent_log_lines(self, limit: int = 80) -> list[str]:
+        with self._lock:
+            count = max(0, int(limit))
+            return list(self._recent_logs)[-count:] if count else []
 
     def tick_once(self) -> None:
         with self._lock:
@@ -238,6 +257,7 @@ class EventWorkbenchService:
             self._execution.cancel_source(LOCAL_SOURCE)
             self._execution.cancel_source(REMOTE_SOURCE)
             self._cleanup_bridge()
+            self._log("event service stopped")
 
     def _run(self) -> None:
         try:
@@ -247,6 +267,7 @@ class EventWorkbenchService:
                 except Exception as exc:
                     with self._lock:
                         self._error = str(exc)
+                        self._log(f"event service error: {exc}")
                         self._connected = False
                         self._cleanup_bridge()
                     if self._stop_event.wait(0.5):
@@ -313,6 +334,7 @@ class EventWorkbenchService:
                 if started:
                     self._trigger_count += 1
                     self._last_event = dispatch.event_name
+                    self._log(f"triggered local route {trigger}: {dispatch.event_name}")
 
     def _broadcast(self, bridge: EventHostBridge, peers: tuple[dict, ...], dispatch) -> bool:
         record = self._definitions.local_by_name(dispatch.event_name)
@@ -355,6 +377,7 @@ class EventWorkbenchService:
             ):
                 self._receive_count += 1
                 self._last_event = str(item.get("name") or "")
+                self._log(f"received remote event {self._last_event}")
 
     def _flush_pending_clears(self, bridge: EventHostBridge) -> None:
         for source in sorted(self._pending_clears):
@@ -376,3 +399,7 @@ class EventWorkbenchService:
             bridge.close()
         finally:
             self._connected = False
+
+    def _log(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._recent_logs.append(f"{timestamp} {message}")

@@ -1,60 +1,47 @@
 """Focused event workbench; navigation/follow execution remains elsewhere."""
-from copy import deepcopy
 from pathlib import Path
-import json
-from uuid import uuid4
+
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QListWidget, QListWidgetItem, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit, QLineEdit)
 from core.runtime_paths import data_root
-from core.runtime.local_event_runtime import LocalEventRuntime
-from core.runtime.remote_event_runtime import RemoteEventRuntime
-from core.runtime.event_catalog_runtime import EventCatalogRuntime
+from core.runtime.event_service import EventWorkbenchService
 from ..follow.editors import ChainEditor
 
 KEY_OPTIONS = ['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
                'W','A','S','D','Q','E','R','SPACE','UP','DOWN','LEFT','RIGHT']
+CONTROLLER_SELECTIONS = {
+    'Controller 1': (1,),
+    'Controller 2': (2,),
+    'Controller 1 + 2': (1, 2),
+}
 
 
 class EventWorkbenchPage(QWidget):
-    def __init__(self, parent=None, *, root=None):
+    def __init__(self, parent=None, *, root=None, service=None):
         super().__init__(parent)
-        self.path = Path(root or data_root(Path(__file__).resolve().parents[3]) / 'configs' / 'events') / 'events.json'
-        self.remote_path = self.path.with_name('remote_events.json')
-        self.routes_path = self.path.with_name('routes.json')
-        self.events = self._load(); self.remote_events = self._load_remote(); self.routes_data = self._load_routes(); self._build(); self._refresh(); self._refresh_routes()
-        self.runtime = LocalEventRuntime(root=self.path.parent)
-        self.remote_runtime = RemoteEventRuntime(root=self.path.parent)
-        # Event definitions are synchronized independently from event
-        # execution.  Opening the workbench is enough to keep the read-only
-        # remote catalog current while a LAN share session is connected.
-        self.catalog_runtime = EventCatalogRuntime(root=self.path.parent)
-        self.catalog_runtime.start()
+        config_root = Path(
+            root or data_root(Path(__file__).resolve().parents[3]) / 'configs' / 'events'
+        )
+        self.service = service or EventWorkbenchService(config_root)
+        self.events = self.service.load_local_events()
+        self.remote_events = self.service.load_remote_events()
+        self.routes_data = self.service.load_routes()
+        self._shutdown = False
+        self._build()
+        self._refresh()
+        self._refresh_routes()
         self.runtime_timer = QTimer(self)
         self.runtime_timer.setInterval(150)
         self.runtime_timer.timeout.connect(self._poll_runtime)
+        self.runtime_timer.start()
         self.catalog_timer = QTimer(self)
         self.catalog_timer.setInterval(1000)
         self.catalog_timer.timeout.connect(self._refresh_remote_catalog)
         self.catalog_timer.start()
-
-    def _load(self):
-        try:
-            data = json.loads(self.path.read_text(encoding='utf-8'))
-            return data if isinstance(data, list) else []
-        except (OSError, ValueError): return []
-
-    def _load_routes(self):
-        try:
-            data=json.loads(self.routes_path.read_text(encoding='utf-8'))
-            return data if isinstance(data,list) else []
-        except (OSError, ValueError): return []
-
-    def _load_remote(self):
-        try:
-            data = json.loads(self.remote_path.read_text(encoding='utf-8'))
-            return data if isinstance(data, list) else []
-        except (OSError, ValueError): return []
+        self.service.start()
+        self._poll_runtime()
+        self._refresh_remote_catalog()
 
     def _visible_events(self):
         return [(event, False) for event in self.events if not event.get('deleted')] + [(event, True) for event in self.remote_events if not event.get('deleted')]
@@ -108,8 +95,12 @@ class EventWorkbenchPage(QWidget):
 
     def _send_remote_event(self):
         try:
-            from core.runtime.remote_event_sender import RemoteEventSender
-            reply = RemoteEventSender().send(self.remote_device.text(), self.remote_event.currentText(), self.remote_controller.currentText())
+            controllers = CONTROLLER_SELECTIONS[self.remote_controller.currentText()]
+            reply = self.service.send_remote_event(
+                self.remote_device.text(),
+                self.remote_event.currentText(),
+                controllers,
+            )
             self.remote_status.setText(f'发送成功：{reply}')
         except Exception as exc:
             self.remote_status.setText(f'发送失败：{exc}')
@@ -175,7 +166,6 @@ class EventWorkbenchPage(QWidget):
         if row < 0 or row >= self.list.count():
             self.summary.setText('请选择一个事件')
             return
-        if row < 0 or row >= len(self.events): self.summary.setText('请选择一个事件'); return
         data = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
         event = data.get('event', {}); tracks = event.get('tracks', [])
         self.summary.setText(f"{event.get('name')}\n执行次数：{event.get('max_runs') or '不限'} · 循环：{'是' if event.get('loop') else '否'} · 结束：{event.get('end_ms') or '手动停止'}")
@@ -185,7 +175,10 @@ class EventWorkbenchPage(QWidget):
         self.timeline.setText('时间线：' + '  |  '.join(f"{'+'.join(t.get('buttons', []))} {t.get('mode', 'once')}" for t in tracks) if tracks else '暂无轨道')
 
     def _new(self):
-        dialog = ChainEditor(dict(name='新事件', steps=[], tracks=[]), self)
+        draft = self.service.new_event_draft(
+            dict(name='新事件', steps=[], tracks=[])
+        )
+        dialog = ChainEditor(draft, self)
         if dialog.exec(): self.events.append(dialog.value()); self._refresh(); self.list.setCurrentRow(len(self.events)-1)
 
     def _edit(self):
@@ -201,7 +194,7 @@ class EventWorkbenchPage(QWidget):
         try:
             dialog = ChainEditor(self.events[local_row], self)
             if dialog.exec():
-                updated = dialog.value(); updated['id'] = self.events[local_row].get('id', str(uuid4())); updated['owner_device_id'] = self.events[local_row].get('owner_device_id', 'local'); updated['revision'] = int(self.events[local_row].get('revision', 1)) + 1
+                updated = {**self.events[local_row], **dialog.value()}
                 self.events[local_row] = updated; self._refresh(); self.list.setCurrentRow(row)
         except Exception as exc:
             from PySide6.QtWidgets import QMessageBox
@@ -212,7 +205,9 @@ class EventWorkbenchPage(QWidget):
         if row < 0: return
         current = self.list.item(row).data(Qt.ItemDataRole.UserRole) or {}
         if current.get('remote'): return
-        item = deepcopy(self.events[row]); item['name'] = item.get('name', '事件') + ' 副本'; self.events.append(item); self._refresh(); self.list.setCurrentRow(len(self.events)-1)
+        item = self.service.new_event_draft(current.get('event'))
+        item['name'] = item.get('name', '事件') + ' 副本'
+        self.events.append(item); self._refresh(); self.list.setCurrentRow(len(self.events)-1)
 
     def _remove(self):
         row = self.list.currentRow()
@@ -237,42 +232,32 @@ class EventWorkbenchPage(QWidget):
             if row < len(self.routes_data): self.routes_data.pop(row)
 
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        for event in self.events:
-            event.setdefault('id', str(uuid4()))
-            event.setdefault('owner_device_id', 'local')
-            event.setdefault('revision', 1)
         self.routes_data=[]
         for r in range(self.routes.rowCount()):
             source=self.routes.cellWidget(r,0).currentText() if self.routes.cellWidget(r,0) else ''
             controller=self.routes.cellWidget(r,4).currentText() if self.routes.cellWidget(r,4) else ''
             values=[source]+[self.routes.cellWidget(r,c).currentText().strip() if self.routes.cellWidget(r,c) else '' for c in (1,2,3)]+[controller]
             self.routes_data.append(dict(zip(('source','trigger','event','target','controller'),values)))
-        self.path.write_text(json.dumps(self.events, ensure_ascii=False, indent=2), encoding='utf-8')
-        self.routes_path.write_text(json.dumps(self.routes_data, ensure_ascii=False, indent=2), encoding='utf-8')
+        self.events = self.service.save(self.events, self.routes_data)
+        self._refresh()
+        self.status.setText('事件和路由已保存')
 
     def _toggle_runtime(self):
-        if self.runtime.thread and self.runtime.thread.is_alive():
-            self.runtime.stop()
-            self.runtime_timer.stop()
-            self.runtime_button.setText('启动本机监控服务')
-            self.status.setText('本机监控服务已停止')
-            return
-        self._save()
-        self.runtime = LocalEventRuntime(root=self.path.parent)
-        self.runtime.start()
-        self.runtime_button.setText('停止本机监控服务')
-        self.status.setText('本机监控服务已启动；事件触发键不会被 Xbox 映射层吞掉')
-        self.runtime_timer.start()
+        enabled = not self.service.status().local_running
+        if enabled:
+            self._save()
+        self.service.set_local_running(enabled)
+        self._poll_runtime()
 
     def _toggle_remote_runtime(self):
-        if self.remote_runtime.thread and self.remote_runtime.thread.is_alive():
-            self.remote_runtime.stop(); self.remote_button.setText('启动远程事件监控'); self.status.setText('远程事件监控已停止'); return
-        self._save(); self.remote_runtime=RemoteEventRuntime(root=self.path.parent); self.remote_runtime.start()
-        self.remote_button.setText('停止远程事件监控'); self.status.setText('远程事件监控已启动；无需启动定位监视')
+        enabled = not self.service.status().remote_running
+        if enabled:
+            self._save()
+        self.service.set_remote_running(enabled)
+        self._poll_runtime()
 
     def _refresh_remote_catalog(self):
-        latest = self._load_remote()
+        latest = self.service.load_remote_events()
         if latest != self.remote_events:
             selected = self.list.currentRow()
             self.remote_events = latest
@@ -290,42 +275,50 @@ class EventWorkbenchPage(QWidget):
                         value = combo.currentText(); combo.blockSignals(True); combo.clear(); combo.addItems(names); combo.setCurrentText(value); combo.blockSignals(False)
             if 0 <= selected < self.list.count():
                 self.list.setCurrentRow(selected)
-        runtime = getattr(self, 'catalog_runtime', None)
-        if runtime is not None:
-            if runtime.error:
-                self.catalog_status.setText(f'事件目录同步：等待连接 ({runtime.error})')
-            elif runtime.last_peer_count:
-                self.catalog_status.setText(
-                    f'事件目录同步：已连接 {runtime.last_peer_count} 台设备，'
-                    f'已读取 {len(self.remote_events)} 个远程事件'
-                )
-            else:
-                self.catalog_status.setText('事件目录同步：等待共享同步通道')
+        status = self.service.status()
+        if status.error:
+            self.catalog_status.setText(f'事件目录同步：等待连接 ({status.error})')
+        elif status.peer_count:
+            self.catalog_status.setText(
+                f'事件目录同步：已连接 {status.peer_count} 台设备，'
+                f'已读取 {len(self.remote_events)} 个远程事件'
+            )
+        else:
+            self.catalog_status.setText('事件目录同步：等待共享同步通道')
 
     def shutdown(self):
         """Stop workbench-owned workers before the host process closes."""
+        if self._shutdown:
+            return
+        self._shutdown = True
         self.catalog_timer.stop()
         self.runtime_timer.stop()
-        self.catalog_runtime.stop()
-        self.runtime.stop()
-        self.remote_runtime.stop()
+        self.service.shutdown()
 
     def closeEvent(self, event):
         self.shutdown()
         super().closeEvent(event)
 
     def _poll_runtime(self):
-        runtime = self.runtime
-        if runtime.thread and runtime.thread.is_alive():
-            detail = f' · 最近：{runtime.last_event}' if runtime.last_event else ''
-            self.status.setText(f'本机事件监听中 · 已触发 {runtime.trigger_count} 次{detail}')
-            try:
-                path = Path(__import__('os').environ.get('LOCALAPPDATA', str(Path.home()))) / 'AutoModules' / 'Workbench' / 'logs' / 'event-runtime.log'
-                if path.is_file(): self.local_log.setPlainText('\n'.join(path.read_text(encoding='utf-8', errors='replace').splitlines()[-80:]))
-            except OSError:
-                pass
-            return
-        self.runtime_timer.stop()
-        if runtime.error:
-            self.runtime_button.setText('启动本机监控服务')
-            self.status.setText(f'本机事件监听失败：{runtime.error}')
+        status = self.service.status()
+        self.runtime_button.setText(
+            '停止本机监控服务' if status.local_running else '启动本机监控服务'
+        )
+        self.remote_button.setText(
+            '停止远程事件监控' if status.remote_running else '启动远程事件监控'
+        )
+        detail = f' · 最近：{status.last_event}' if status.last_event else ''
+        if status.error:
+            self.status.setText(f'事件服务等待连接：{status.error}')
+        elif status.local_running and status.remote_running:
+            self.status.setText(
+                f'本机与远程事件监听中 · 本机 {status.trigger_count} 次 · '
+                f'远程 {status.receive_count} 次{detail}'
+            )
+        elif status.local_running:
+            self.status.setText(f'本机事件监听中 · 已触发 {status.trigger_count} 次{detail}')
+        elif status.remote_running:
+            self.status.setText(f'远程事件监听中 · 已接收 {status.receive_count} 次{detail}')
+        else:
+            self.status.setText('事件服务后台运行；监控已停止')
+        self.local_log.setPlainText('\n'.join(self.service.recent_log_lines(limit=80)))
