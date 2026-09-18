@@ -101,8 +101,16 @@ class EventDefinitionRepository:
         normalized = str(device_id or "local")
         if normalized == self.device_id:
             return
+        local_records = self._store.local()
         self.device_id = normalized
         self._store = EventStore(self.root, self.device_id)
+        if local_records:
+            rebound = []
+            for record in local_records:
+                value = deepcopy(record)
+                value["owner_device_id"] = normalized
+                rebound.append(value)
+            self._store.save_local(rebound)
 
     def local_records(self) -> list[dict]:
         return self._store.local()

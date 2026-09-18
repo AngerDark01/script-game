@@ -100,6 +100,24 @@ def test_repository_creates_identity_free_draft_from_existing_record(tmp_path):
     assert source["tracks"][0]["buttons"] == ["B"]
 
 
+def test_repository_rebinds_local_ownership_to_active_device_without_new_revision(tmp_path):
+    _write(tmp_path / "events.json", [{
+        "id": "stable",
+        "name": "roll",
+        "owner_device_id": "local",
+        "revision": 3,
+        "tracks": [],
+    }])
+    repository = EventDefinitionRepository(tmp_path, "local")
+
+    repository.set_device_id("device-a")
+
+    record = repository.local_records()[0]
+    assert record["id"] == "stable"
+    assert record["owner_device_id"] == "device-a"
+    assert record["revision"] == 3
+
+
 def test_repository_resolves_shared_execution_key_by_identity_or_legacy_revision(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "stable",
