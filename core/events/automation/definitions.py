@@ -101,7 +101,7 @@ class EventDefinitionRepository:
         normalized = str(device_id or "local")
         if normalized == self.device_id:
             return
-        local_records = self._store.local()
+        local_records = self._store.local_catalog()
         self.device_id = normalized
         self._store = EventStore(self.root, self.device_id)
         if local_records:
@@ -136,10 +136,12 @@ class EventDefinitionRepository:
                 record,
                 default_owner=self.device_id,
             )
-            for record in self.local_records()
+            for record in self._store.local_catalog()
             if record.get("id")
         }
         saved: list[dict] = []
+        persisted: list[dict] = []
+        retained_ids: set[str] = set()
         for draft in records:
             value = deepcopy(dict(draft))
             event_id = str(value.get("id") or "")
@@ -151,8 +153,16 @@ class EventDefinitionRepository:
                 record = previous
             else:
                 record = previous.updated(candidate.definition)
-            saved.append(record.to_dict())
-        self._store.save_local(saved)
+            serialized = record.to_dict()
+            saved.append(serialized)
+            persisted.append(serialized)
+            retained_ids.add(record.id)
+        for event_id, previous in current.items():
+            if event_id in retained_ids:
+                continue
+            tombstone = previous if previous.deleted else previous.tombstone()
+            persisted.append(tombstone.to_dict())
+        self._store.save_local(persisted)
         return saved
 
     def new_draft(self, source: Mapping | None = None) -> dict:
@@ -181,7 +191,7 @@ class EventDefinitionRepository:
         return str(record.get("id")) if record and record.get("id") else None
 
     def catalog_payload(self) -> dict:
-        records = self.local_records()
+        records = self._store.local_catalog()
         return {
             **catalog_summary(records, self.device_id),
             "definitions": records,

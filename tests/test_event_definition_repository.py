@@ -118,6 +118,49 @@ def test_repository_rebinds_local_ownership_to_active_device_without_new_revisio
     assert record["revision"] == 3
 
 
+def test_repository_publishes_versioned_tombstone_for_removed_event(tmp_path):
+    _write(tmp_path / "events.json", [{
+        "id": "removed",
+        "name": "roll",
+        "owner_device_id": "device-a",
+        "revision": 3,
+        "tracks": [],
+    }, {
+        "id": "kept",
+        "name": "dash",
+        "owner_device_id": "device-a",
+        "revision": 1,
+        "tracks": [],
+    }])
+    repository = EventDefinitionRepository(tmp_path, "device-a")
+
+    saved = repository.save_local([repository.local_by_name("dash")])
+    catalog = repository.catalog_payload()
+    removed = next(item for item in catalog["definitions"] if item["id"] == "removed")
+
+    assert [item["id"] for item in saved] == ["kept"]
+    assert [item["id"] for item in repository.local_records()] == ["kept"]
+    assert removed["deleted"] is True
+    assert removed["revision"] == 4
+
+
+def test_remote_tombstone_hides_previously_shared_event(tmp_path):
+    repository = EventDefinitionRepository(tmp_path, "device-b")
+    active = {
+        "id": "shared",
+        "name": "roll",
+        "owner_device_id": "device-a",
+        "revision": 1,
+        "tracks": [],
+    }
+    tombstone = {**active, "revision": 2, "deleted": True}
+
+    assert repository.apply_remote([active]) == 1
+    assert repository.remote_records()[0]["id"] == "shared"
+    assert repository.apply_remote([tombstone]) == 1
+    assert repository.remote_records() == []
+
+
 def test_repository_resolves_shared_execution_key_by_identity_or_legacy_revision(tmp_path):
     _write(tmp_path / "events.json", [{
         "id": "stable",

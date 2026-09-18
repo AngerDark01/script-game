@@ -22,7 +22,7 @@ class EventStore:
         except (OSError, ValueError):
             return []
 
-    def local(self) -> list[dict]:
+    def local_catalog(self) -> list[dict]:
         raw = self._read(self.local_path)
         records = migrate_events(raw, self.device_id)
         # Legacy event files may not have versioned IDs.  Persist the
@@ -34,6 +34,10 @@ class EventStore:
                 json.dumps(records, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        return records
+
+    def local(self) -> list[dict]:
+        records = self.local_catalog()
         return [item for item in records if not item.get("deleted", False)]
 
     def remote(self) -> list[dict]:
