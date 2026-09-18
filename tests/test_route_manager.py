@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.routing import RouteManager
+from auto_modules.core.routing import RouteManager
 
 
 class RouteManagerTest(unittest.TestCase):

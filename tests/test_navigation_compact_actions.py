@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from gui.main_window import MainWindow
+from auto_modules.ui.main_window import MainWindow
 from tests.gamepad_test_support import InertGamepadHostManager
 
 

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "f56fe400-939c-44dc-a9fd-28be6ddb0826",
+    "name": "翻滚测试",
+    "owner_device_id": "local",
+    "revision": 1,
+    "updated_at": "2026-09-18T14:36:10.174910Z",
+    "deleted": false,
+    "content_hash": "7ca68c00f5a51c487a6541f2aa8d3170c4c73e45ea54723de3c21758faeb20ad",
+    "steps": [],
+    "tracks": [
+      {
+        "mode": "once",
+        "buttons": [
+          "B"
+        ],
+        "hold_ms": 100,
+        "interval_ms": 100
+      }
+    ],
+    "max_runs": null,
+    "loop": false,
+    "end_ms": null,
+    "priority": 100,
+    "timeout_ms": 30000,
+    "resume": false,
+    "enabled": true
+  }
+]

@@ -1,11 +1,11 @@
 import unittest
 
-from core.perception.algorithms.ocr_adapter import ProviderBackedOcrDetector
-from core.perception.algorithms import ProviderBackedOcrDetector as PublicProviderBackedOcrDetector
-from core.perception.builtins import create_default_algorithm_registry, create_ocr_detector
-from core.perception import AlgorithmProfile, PerceptionEngine, TargetProfile
-from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
-from core.perception.providers import OcrSpan, ProviderError
+from auto_modules.core.perception.algorithms.ocr_adapter import ProviderBackedOcrDetector
+from auto_modules.core.perception.algorithms import ProviderBackedOcrDetector as PublicProviderBackedOcrDetector
+from auto_modules.core.perception.builtins import create_default_algorithm_registry, create_ocr_detector
+from auto_modules.core.perception import AlgorithmProfile, PerceptionEngine, TargetProfile
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, FrameContext
+from auto_modules.core.perception.providers import OcrSpan, ProviderError
 
 
 class MemoryOcrProvider:

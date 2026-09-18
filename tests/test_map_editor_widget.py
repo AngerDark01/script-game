@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QScrollArea
 
-from gui.modes.map_editor.widget import MapEditorWidget
+from auto_modules.ui.modes.map_editor.widget import MapEditorWidget
 
 
 class MapEditorWidgetTests(unittest.TestCase):

@@ -3,11 +3,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.perception.algorithms.ocr_adapter import ProviderBackedOcrDetector
-from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
-from core.perception.providers import ProviderError, ProviderUnavailableError
-from core.perception.providers.rapidocr import RapidOcrProvider
-from core.perception.providers.rapidocr_models import (
+from auto_modules.core.perception.algorithms.ocr_adapter import ProviderBackedOcrDetector
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, FrameContext
+from auto_modules.core.perception.providers import ProviderError, ProviderUnavailableError
+from auto_modules.adapters.perception.rapidocr import RapidOcrProvider
+from auto_modules.adapters.perception.rapidocr_models import (
     RAPIDOCR_PPOCR_V6_MULTILINGUAL_SMALL,
     resolve_rapidocr_engine_options,
 )
@@ -135,7 +135,7 @@ class RapidOcrProviderTests(unittest.TestCase):
 
     def test_missing_optional_backend_fails_only_when_recognition_is_requested(self):
         provider = RapidOcrProvider()
-        with patch("core.perception.providers.rapidocr.import_module", side_effect=ModuleNotFoundError("missing")):
+        with patch("auto_modules.adapters.perception.rapidocr.import_module", side_effect=ModuleNotFoundError("missing")):
             with self.assertRaises(ProviderUnavailableError):
                 provider.recognize(FrameContext(image=object()))
 
@@ -153,7 +153,7 @@ class RapidOcrProviderTests(unittest.TestCase):
         provider = RapidOcrProvider(engine_options={"intra_op_num_threads": 4, "inter_op_num_threads": 1})
         self.assertEqual([], created_options)
 
-        with patch("core.perception.providers.rapidocr.import_module", return_value=fake_module):
+        with patch("auto_modules.adapters.perception.rapidocr.import_module", return_value=fake_module):
             spans = provider.recognize(FrameContext(image=object()))
 
         self.assertEqual([{"intra_op_num_threads": 4, "inter_op_num_threads": 1}], created_options)

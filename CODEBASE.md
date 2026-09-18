@@ -1,5 +1,35 @@
 # CODEBASE
 
+## 0. 当前物理布局与路径解释
+
+Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说明中仍使用部分逻辑简称；这些简称必须按下表解析，不能据此重新创建根级兼容包。
+
+| 文档逻辑简称 | 当前权威物理路径 | 说明 |
+| --- | --- | --- |
+| `core/...` | `src/auto_modules/core/...` | 纯算法、领域契约、状态机、任务和 intent |
+| `gui/...` | `src/auto_modules/ui/...` | PySide6 展示和交互协调 |
+| `workflows/...` | `src/auto_modules/application/workflows/...` | 应用用例编排 |
+| `utils/...` | `tools/probes/...` | 显式执行的验证探针 |
+| `debug/...` | `tools/debug/...` 或 `data/diagnostics/...` | 可复用脚本与生成数据分离 |
+| `assets/...` | `resources/assets/...` | 只读发布资源 |
+| `configs/events/...` | `data/events/...` | 可写事件定义和路由 |
+| `map_data/...` | `data/maps/...` | 地图目录；单个地图包文件仍名为 `map_data.npz` |
+| `virtual_gamepad/host|launcher|protocol` | `services/virtual_gamepad/...` | 独立 C# 服务 |
+| `lan_input_sync/...` | `services/lan_input_sync/...` | 独立 C# LAN 库 |
+| `distribution/...`、`installer/...` | `packaging/distribution/...`、`packaging/installer/...` | 离线发布和安装器 |
+| `architecture_docs/...` | `docs/architecture/...` | 历史和专题架构资料 |
+
+特殊迁移不使用上述简单前缀映射：
+
+- 原 `core/input` 和 `core/platform` 的具体副作用实现现位于 `src/auto_modules/adapters/input`、`adapters/platform`。
+- RapidOCR 实现位于 `adapters/perception`；通用 perception contracts/algorithms 仍在 `core/perception`。
+- `EventWorkbenchService` 位于 `application/event_workbench`，Host bridge 位于 `adapters/host`，Win32 hotkeys 位于 `adapters/windows`。
+- follow 用例位于 `application/follow`；`SharedPosition` / `SharedEvent` 留在 `core/lan_follow`，Host wire translation 位于 `adapters/host/follow_transport.py`。
+- 通用 `ProgramGamepadOutput` 的 Host 协议实现和 Host-compatible clock 位于 `adapters/virtual_gamepad/program_output.py`。
+- 根 `main.py` 仅把 `src` 放入导入路径并委托 `auto_modules.bootstrap.main.main()`；完整启动逻辑不再位于根脚本。
+
+当前强制依赖方向为 `core <- application/adapters <- ui/bootstrap`。箭头表示右侧可使用左侧；`core` 不得导入 `application`、`adapters`、`ui` 或 `bootstrap`。所有生产 Python import 使用 `auto_modules.*`。
+
 ## 当前补充：Navigation 首帧定位诊断
 
 2026-06-04 新增独立首帧定位探针：`D:\ACloud\.venv\Scripts\python.exe debug\navigation_localization_probe.py --map-folder "D:\ACloud\minimap_stitcher copy 13\map_data\A" --image "D:\ACloud\minimap_stitcher copy 13\debug\minimap_samples\A\20260604_135548_439_A_minimap.png" --top 10`。探针只用于诊断，不接入正式导航循环；它复用正式 `NavigationCore`、`HSVRecognizer`、`NavConfig` 的识别参数、`map_data.npz` 的 `draw_scale/wall_close_kernel_size`，然后输出 `report.json`、`wall_mask.png`、`match_mask.png`、`wall_mask_scaled.png`、`matched_map_patch.png`、`saved_pos_patch.png` 和 `top_candidates_sheet.png`。
@@ -57,11 +87,36 @@ D:\ACloud\.venv\Scripts\python.exe debug\loot_event_probe.py --target-jitter-smo
 相关中文文档：`architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md`。
 
 ## 1. 项目概览
-PySide6 + OpenCV 的实时小地图拼接与导航工具。绘图模式从游戏小地图截图提取 HSV/墙体特征并写入 `map_data/<name>/map_data.npz`；导航模式读取同一份地图数据、用实时截图定位玩家全局地图坐标，并可基于用户设置的出口、必经点、途经点执行自动导航。当前任务相关的关键约束是：定位截图范围、地图全局坐标、真实主画面点击范围必须分离，不能用旧偏移参数修正定位。
+Python 3.11+、PySide6、OpenCV、NumPy 与 C#/.NET 服务组成的桌面自动化工作台。Python 进程提供建图、定位、路径、事件、跟随、UI 和设备适配；C# Host 提供双虚拟 Xbox 输出，独立 LAN 库提供认证同步。源码开发默认把可写数据放在 `data/`，安装态由 `AUTO_MODULES_DATA_DIR` 指向 `%LOCALAPPDATA%/AutoModules/Workbench`。关键约束：定位截图、地图全局坐标、主画面物理坐标、控制器来源和远端设备会话必须显式区分；真实输入和网络同步只能由专用 adapter/service 在明确启动后执行。
 
 ## 2. 目录结构图
 ```text
-main.py - 创建 QApplication 和 MainWindow。
+main.py - 源码/安装态薄启动器，只委托 bootstrap。
+pyproject.toml - `src` package、setuptools 和 pytest 导入/发现配置。
+src/auto_modules/paths.py - 统一 repository/resources/data 路径和环境变量覆盖。
+src/auto_modules/core/ - 通用算法、状态机、领域模型、任务和 action contracts。
+src/auto_modules/application/ - event workbench、follow 和 workflow 应用编排。
+src/auto_modules/adapters/ - 输入、Windows、OCR、Host、虚拟手柄和平台实现。
+src/auto_modules/ui/ - PySide6 工作台、模式、对话框和独立虚拟手柄 UI。
+src/auto_modules/bootstrap/ - 输出、日志、DPI、UAC、单实例和 QApplication 装配。
+services/virtual_gamepad/ - C# Host、独立启动器、protocol 和测试。
+services/lan_input_sync/ - C# LAN 同步库、协议文档和测试。
+resources/assets/ - 事件模板、detector 定义和可选模型资源。
+resources/defaults/ - 随包默认模板。
+data/events/ - 工作区事件定义与路由。
+data/maps/ - 地图包、配置、路线和墙体版本。
+data/virtual_gamepad/ - 本机控制器 profile。
+data/logs/ - 运行日志。
+data/diagnostics/ - 生成的诊断输出。
+tools/probes/ - 可复用只读/显式执行探针。
+tools/debug/ - 算法调试和数据集评估脚本。
+tools/virtual_gamepad/ - Host 构建、启动和真实输入 opt-in 探针。
+packaging/distribution/ - 离线 payload builder、smoke check 和第三方声明。
+packaging/installer/ - 原生 launcher、Inno Setup 和测试。
+docs/ - 当前指南、设计计划、架构材料和历史归档。
+tests/ - Python 单元、offscreen UI 和 adapter contract 测试。
+
+# 下列逐文件清单保留逻辑简称；按 §0 映射到当前物理路径。
 gui/app_context.py - 从 core 系统包初始化共享服务：SquareScreenCapture、HSVRecognizer、MapStitcher、PlayerTracker、PathFinder。
 gui/main_window.py - 创建绘图/导航两个模式并共享 AppContext。
 gui/navigation_params.py - 定义 NavConfig、RecognizerParams、NavPreferences，并负责 config.json 序列化契约。
@@ -499,6 +554,66 @@ Level 3: unified action-event path
 ```
 
 ## 4. 模块与文件详解
+### `main.py`
+职责：源码 checkout 和安装 payload 共用的最薄启动入口。
+关键导出：从 `auto_modules.bootstrap.main` 导入的 `main`。
+对外依赖：标准库 `sys/pathlib`、`auto_modules.bootstrap.main`。
+注意事项：只把同级 `src` 前置到 `sys.path`；不得重新承载权限、日志、GUI 或业务逻辑。
+
+### `src/auto_modules/paths.py`
+职责：统一源码与安装态的 package、仓库、只读资源和可写数据根目录。
+关键导出：`package_root()`、`repository_root()`、`resource_root()`、`data_root()`。
+对外依赖：标准库 `os/pathlib`。
+注意事项：`AUTO_MODULES_RESOURCE_DIR`、`AUTO_MODULES_DATA_DIR` 是显式部署边界；调用方不再根据自身 `__file__` 深度猜根目录。
+
+### `src/auto_modules/adapters/input/keyboard_device.py`
+职责：把通用 `KeyboardDevice` contract 适配为 PyDirectInput 的 keyDown/keyUp 调用。
+关键导出：`PyDirectInputKeyboardDevice`。
+对外依赖：延迟导入第三方 `pydirectinput`。
+注意事项：具体桌面输入实现已从 `core.actions.keyboard` 移出；测试可注入 fake module，构造本身不发送按键。
+
+### `src/auto_modules/adapters/virtual_gamepad/program_output.py`
+职责：把跟随/事件产生的摇杆和按钮状态适配为 Host `program.acquire/state/release` lease 协议。
+关键导出：`host_clock_ms()`、`ProgramGamepadOutput`。
+对外依赖：`core.actions.StickSlewLimiter`、Windows `GetTickCount64`、注入的 Host client。
+注意事项：`start()` 才获取 lease，`write()` 不会启动 controller mapping，`stop()` 幂等释放；Host 协议和 Windows clock 不再位于 core。
+
+### `src/auto_modules/core/lan_follow/models.py`
+职责：定义与设备/协议无关的共享位置和共享事件不可变数据契约。
+关键导出：`SharedPosition`、`SharedEvent`。
+对外依赖：仅标准库 `dataclasses`。
+注意事项：字段使用调用方本地单调时钟语义；Host deadline translation 不属于该模块。
+
+### `src/auto_modules/adapters/host/follow_transport.py`
+职责：把 `SharedPosition/SharedEvent` 与 Host `sync.share.*` wire payload 双向转换，并在 IPC 延迟后重新检查 TTL。
+关键导出：`FollowTransport`。
+对外依赖：`core.lan_follow` contracts、`adapters.virtual_gamepad.host_clock_ms`、注入的 Host client。
+注意事项：没有 socket ownership；LAN 会话仍由 Host 拥有。`poll()` 丢弃非法、非有限或过期记录，不把远端单调时间戳当成本机时间。
+
+### `src/auto_modules/application/event_workbench/service.py`
+职责：组合通用事件定义/路由/执行、Win32 trigger source 和 Host bridge，拥有本机与远程事件工作台生命周期。
+关键导出：`EventWorkbenchService`。
+对外依赖：`core.events.automation`、`adapters.host`、`adapters.windows`、`adapters.virtual_gamepad.host_clock_ms`。
+注意事项：UI 只消费 service contract；Host clock 和 wire commands 均留在 adapter 边界。
+
+### `src/auto_modules/application/follow/service.py`
+职责：协调 follow workers、热键边沿、Host share transport 和有界队列。
+关键导出：`FollowService`。
+对外依赖：`core.lan_follow.SharedEvent`、`adapters.host.FollowTransport`、`adapters.windows.HotkeyTriggerSource`、`adapters.virtual_gamepad`。
+注意事项：不再直接读取 Win32 key state；网络 I/O 在线程中运行，真实 worker/Host 连接只有显式 `start()` 后发生。
+
+### `services/virtual_gamepad/launcher/src/VirtualGamepadLauncher/LauncherPaths.cs`
+职责：从 `services/virtual_gamepad` 解析 repository、workspace、Python、.NET、Host、UI 和 client 物理路径。
+关键导出：`LauncherPaths` 及 candidate/path properties。
+对外依赖：.NET `System.IO`、环境变量 `DOTNET_ROOT`。
+注意事项：`AutoModulesRoot` 是 `D:/.../auto_modules`，`WorkspaceRoot` 是其父目录；`SourceRoot` 必须从前者构造，`.venv` 和 workspace-local SDK 从后者查找。
+
+### `packaging/distribution/build.py`
+职责：从 allowlist 源码、只读资源、锁定 Python wheels、C# publish 输出和签名依赖组装离线 payload。
+关键导出：`select_runtime_sources()`、`sanitize_config()`、`dependency_closure()`、`assemble()`。
+对外依赖：Python 3.12 x64、.NET SDK、缓存下载物、`packaging/distribution/requirements.lock`。
+注意事项：payload 应包含 `app/main.py`、`app/src/auto_modules`、`app/resources`；默认数据写入 payload `defaults/maps` 和 `defaults/virtual_gamepad/configs`，绝不打包本机身份或日志。
+
 ### `gui/app_context.py`
 职责：作为 GUI 共享服务组合根，创建并持有截图、识别、建图、追踪、寻路对象以及当前监控区域状态。
 关键导出：`AppContext`。
@@ -1330,31 +1445,31 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 对外依赖：`core.events.event_catalog.EventRecord`、`migrate_events`。
 注意事项：`apply_remote()` 只接受 revision 更高的记录；远程 tombstone 保留在文件中但被 `remote()` 隐藏。目录发布必须调用含 tombstone 的路径，否则删除无法传播。
 
-### `core/runtime/event_service/__init__.py`
+### `src/auto_modules/application/event_workbench/__init__.py`
 职责：作为事件工作台平台服务的公共导出入口。
 关键导出：`EventWorkbenchService`、`EventWorkbenchStatus`、`HostEventBridge`、`HotkeyTriggerSource`。
 对外依赖：同包 `service`、`models`、`host_bridge`、`hotkeys`。
 注意事项：GUI 应从此入口依赖组合服务；纯 core 算法不应从这里反向导入平台能力。
 
-### `core/runtime/event_service/models.py`
+### `src/auto_modules/application/event_workbench/models.py`
 职责：定义服务所需的可注入 trigger/Host Protocol 与不可变 UI 状态快照。
 关键导出：`EventTriggerSource`、`EventHostBridge`、`EventWorkbenchStatus`。
 对外依赖：`core.events.automation.execution.EventStateFrame`。
 注意事项：Protocol 使服务测试不需要真实 Windows、Host 或网络；`peer_errors` 独立保存 fanout 的单 peer 错误，不把它升级为整条服务失败。
 
-### `core/runtime/event_service/host_bridge.py`
+### `src/auto_modules/adapters/host/event_bridge.py`
 职责：把类型化服务调用翻译为现有虚拟手柄 Host/LAN JSON-lines 命令，是事件路径唯一协议字符串所有者。
 关键导出：`HostEventBridge`。
 对外依赖：`core.events.automation.execution.EventStateFrame`；默认运行时延迟导入 `virtual_gamepad.client.python.VirtualGamepadClient`。
 注意事项：事件 inbox 使用 `sync.share.drain`，目录 inbox 单独使用 `sync.share.catalog_drain`，两者不能互相消费；`write_state()` 保留 source/controller/TTL，`close()` 幂等。
 
-### `core/runtime/event_service/hotkeys.py`
+### `src/auto_modules/adapters/windows/hotkeys.py`
 职责：把 Windows key state 转换为一次按下只发一个 trigger 的边沿事件。
 关键导出：`HotkeyTriggerSource`。
 对外依赖：默认读取器在 Windows 上延迟导入 `ctypes`；测试可注入 `Callable[[int], bool]`。
 注意事项：支持 F1-F12、A-Z、SPACE 和方向键；未知键不调用平台读取器。模块可在非 Windows 环境导入，只有使用默认读取器时才抛 `RuntimeError`。
 
-### `core/runtime/event_service/service.py`
+### `src/auto_modules/application/event_workbench/service.py`
 职责：动作事件工作台的唯一组合根和长期 worker owner，统一本机触发、远程 inbox、目录交换、A->B/C fanout、直接发送、执行帧写入与 shutdown 清理。
 关键导出：`EventWorkbenchService`、`LOCAL_SOURCE="event:local"`、`REMOTE_SOURCE="event:remote"`。
 对外依赖：纯 `core.events.automation` 模块、`HostEventBridge`、`HotkeyTriggerSource`、`EventWorkbenchStatus` 与 Host deadline clock。
@@ -1384,19 +1499,19 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 对外依赖：`parse_event_definition`、`EventExecutionRuntime`。
 注意事项：使用注入时钟，不发送真实 XInput report。
 
-### `core/runtime/tests/test_event_host_bridge.py`
+### `tests/test_event_host_bridge.py`
 职责：以假 client 固定 Host/LAN 命令名、payload、数据 peer 过滤、独立 drain 与幂等关闭契约。
 关键导出：`FakeClient` 和 pytest 测试函数。
 对外依赖：`HostEventBridge`、`EventStateFrame`。
 注意事项：不连接命名管道；命令序列断言防止目录 drain 再次偷取消费事件 inbox。
 
-### `core/runtime/tests/test_event_hotkeys.py`
+### `tests/test_event_hotkeys.py`
 职责：验证按下边沿、松开重装、UI 全部键名和未知键忽略。
 关键导出：pytest 测试函数，无生产导出。
 对外依赖：`HotkeyTriggerSource`。
 注意事项：注入内存 key-state 函数，不调用 Win32。
 
-### `core/runtime/tests/test_event_workbench_service.py`
+### `tests/test_event_workbench_service.py`
 职责：在假 bridge/trigger 上验证统一服务的本机执行、远程接收、目录更新、fanout 故障隔离、source 清理、直接发送 deadline 与幂等 shutdown。
 关键导出：`TriggerSource`、`FakeBridge` 和 pytest 测试函数。
 对外依赖：`EventWorkbenchService`。
@@ -1409,6 +1524,75 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 注意事项：断言页面没有在临时 root 创建文件，因此 JSON 持久化不能重新泄漏到 GUI。
 
 ## 5. 函数索引与算法实现
+### `paths.repository_root() -> Path`
+```python
+def repository_root() -> Path
+```
+行为与算法：
+1. 从已导入的 `_PACKAGE_ROOT` 开始向父目录遍历。
+2. 选择同时存在 `main.py` 与 `src/auto_modules` 的第一个 candidate，兼容源码仓库和安装 payload 的 `app` 目录。
+3. 普通 wheel/editable 环境没有 launcher 时回退到 package root 的两级父目录。
+副作用：无；只读取目录存在性。
+失败行为：无显式异常；极端非标准安装按 deterministic fallback 返回路径。
+调用关系：Called by `resource_root()`、`data_root()`、UI composition path helpers。
+
+### `program_output.host_clock_ms() -> int`
+```python
+def host_clock_ms() -> int
+```
+行为与算法：
+1. Windows 下读取 `kernel32.GetTickCount64`，与 .NET Host `Environment.TickCount64` 使用同一 uptime 时基。
+2. 非 Windows 测试环境回退为 `time.monotonic()*1000`。
+3. 始终返回整数毫秒。
+副作用：只读系统单调时钟，不连接 Host、不发送输入。
+失败行为：Windows API 不可用时异常向上传播；调用方可注入 `host_clock_ms_func` 避免平台依赖。
+调用关系：Called by `ProgramGamepadOutput.start/write()`、`FollowTransport.publish/send_event()`、application services。
+
+### `ProgramGamepadOutput.start/write/stop`
+```python
+def start(self, *, requested_at_ms=None)
+def write(self, vector, *, elapsed_ms=20, valid_for_ms=None, buttons=0)
+def stop(self)
+```
+行为与算法：
+1. `start()` 拒绝重复 lease，发送 `program.acquire(controller, requestedAtMs)`，保存返回 token 并重置 slew limiter。
+2. `write()` 校验二维有限 vector，经 2x2 basis 转换到摇杆坐标并按向量范数归一化到 XInput `[-32768,32767]`。
+3. 非零向量通过 `StickSlewLimiter` 限制变化率；零向量或无效 TTL 立即归零，不能因 slew 延迟安全停止。
+4. TTL 被 controller 上限夹紧，发送完整 `program.state` 和 Host clock deadline。
+5. `stop()` 先清本地 token/limiter，再在曾获取 lease 时发送 `program.release`；重复 stop 无 wire 副作用。
+副作用：仅通过注入 client 写 Host named-pipe protocol；不会启动 mapping 或安装驱动。
+失败行为：未 acquire 写入抛 `RuntimeError`；非法 controller/basis/vector/TTL 抛 `ValueError`；client 异常传播给 application worker 做安全停止。
+调用关系：Called by `application.follow.workers.actor_worker()`；Calls `StickSlewLimiter`、client `request()`、`host_clock_ms()`。
+
+### `FollowTransport.publish/send_event/poll`
+```python
+def publish(self, position: SharedPosition) -> bool
+def send_event(self, device_id, name, targets, *, host_deadline_ms=None)
+def poll(self) -> tuple[tuple[SharedPosition, ...], tuple[SharedEvent, ...]]
+```
+行为与算法：
+1. `publish()` 用 caller local clock 计算观测 age，拒绝负 age 或 `>=500ms` 数据，再把剩余期限转换为 Host clock deadline。
+2. `send_event()` 生成或接受 Host deadline，在发送前再次与 Host clock 比较；过期直接返回 `False` 且不触碰 client。
+3. `poll()` 记录 IPC 前后 local clock，从 `sync.share.drain` 分别解析 positions/events。
+4. position 必须包含有限 age/x/y/confidence 且 confidence 在 `[0,1]`；用 IPC 开始时间减 age 重建 local timestamp，并在 IPC 返回后再次检查是否过期。
+5. event 的 remainingMs 必须在 `(0,500]`，换算 local deadline 后必须仍未过期；非法单条记录被丢弃，其他记录继续。
+副作用：调用 Host `sync.share.position`、`sync.share.event`、`sync.share.drain`；不直接拥有 socket。
+失败行为：单条 malformed inbound 捕获 `KeyError/TypeError/ValueError` 并丢弃；client request 异常向上传播。
+调用关系：Called by `application.follow.service.FollowService._network()`；Calls injected client 和 Host-compatible clock。
+
+### `LauncherPaths.LauncherPaths(string moduleRoot)`
+```csharp
+public LauncherPaths(string moduleRoot)
+```
+行为与算法：
+1. 把 service module root 转为绝对路径。
+2. 从 `services/virtual_gamepad` 向上两级得到 Auto Modules repository root。
+3. 再向上一级得到共享 workspace root；`.venv` 和 `dotnet-sdk2` 从此层查找。
+4. `SourceRoot` 固定从 repository root 拼接 `src`，UI/client 继续从 `src/auto_modules` 定位。
+副作用：无；只构造路径。
+失败行为：目录层级不足抛 `ArgumentException`；具体 executable 缺失由 `FindExecutable()` 抛 `FileNotFoundException`。
+调用关系：Called by launcher `Program.Main()` 和 tests；used by `LauncherCoordinator` 创建 Host/UI 进程参数。
+
 ### `memory.merge.merge_event_observations(memory, observations: Iterable[EventObservation], config, now_ms: int) -> None`
 行为：把稳定后的 EventObservation 合并进 EventMemory 的任务表，处理 disabled、cooldown、dedupe、创建和确认帧。
 算法：
@@ -3914,6 +4098,28 @@ def shutdown(self)
 调用关系：called by Qt signals and `MainWindow.closeEvent()`；calls only `EventWorkbenchService` public methods。
 
 ## 6. 完整数据流链路
+### Flow: 源码与安装态启动
+1. `main.py::<module>` 输入当前脚本绝对路径，输出 `<root>/src` 并前置到 `sys.path`；副作用仅修改当前 Python 进程 import path。
+2. `main.py` 导入 `auto_modules.bootstrap.main::main`；输出 callable，不创建 GUI。
+3. `bootstrap.main::main()` 执行输出/日志、DPI、UAC、单实例和旧窗口检查；输出启动许可或安全退出，副作用限于 Windows process bootstrap 和 `data_root()/logs/runtime.log`。
+4. bootstrap 构造 `QApplication` 和 `ui.main_window.MainWindow`；MainWindow 组合 core capabilities、application services 和 concrete adapters。
+5. 安装态 `RuntimeLayout.CreateStartInfo()` 以 bundled `pythonw.exe -I -B app/main.py` 启动，并设置 `AUTO_MODULES_DATA_DIR/HOST_DIR/RESOURCE_DIR`；Python 仍沿用同一根入口。
+
+### Flow: Follow 位置共享与程序手柄输出
+1. `application.follow.workers::vision_worker()` 输入小地图帧/定位结果，输出 `core.lan_follow.SharedPosition` 到 bounded latest queue；不理解 Host wire payload。
+2. `application.follow.service::FollowService._network()` 取 local contracts，调用 `adapters.host.follow_transport::publish()`；adapter 输出 `sync.share.position` payload 并转换 local age 到 Host deadline。
+3. `_network()` 调用 `FollowTransport.poll()`，输出经过有限值、confidence、TTL 和 IPC-delay 检查的 `SharedPosition/SharedEvent` tuples。
+4. `actor_worker()` 输入共享观察和事件，`DualFollowSession/FollowerController` 输出二维 movement vector/buttons。
+5. `adapters.virtual_gamepad.program_output::ProgramGamepadOutput.write()` 输入 vector、elapsed、TTL、buttons，输出完整 `program.state`；副作用为 named-pipe Host request。
+6. C# Host 校验 lease/token/deadline 后合并到指定 controller report；暂停、TTL、release 或异常 cleanup 使贡献归零。真实 XInput 和 LAN 输出只发生在 Host 已由用户显式启动的情况下。
+
+### Flow: 离线 payload 与默认数据
+1. `packaging/distribution/build.py::select_runtime_sources(root)` 输入 repository root，输出 allowlist 中的 `main.py`、`src/auto_modules/**/*.py` 和允许后缀的 `resources` 文件；排除 tests、cache、secret 和 writable data。
+2. `assemble()` 输入新 destination、.NET SDK、requirements lock，输出 isolated embedded Python、wheel closure、`app/`、Host、launcher 和 manifest；现有 destination 会被拒绝而非覆盖。
+3. workspace `data/config.json`、`data/virtual_gamepad/configs/controller-*.json`、`data/maps/**` 经清洗复制到 payload `defaults/`；credential/display geometry 被移除。
+4. installer 把 payload 安装到 `{app}`，`RuntimeLayout.SeedDefaults(defaults, data)` 仅补缺失 config/profile/map directory，已有用户 map 作为整体不被恢复或覆盖。
+5. installed smoke 使用临时 `AUTO_MODULES_DATA_DIR`、offscreen Qt 和 fake Host 构造完整 UI；不连接真实 Host、网络或输入钩子。
+
 ### Flow: 自动导航移动点击
 1. `NavigationRuntimeFrameLoop.run()` 调用 `capture_navigation_localization_tick()` 获取 `capture_rect`、屏幕截图帧、玩家局部坐标和 `localized_pos=(global_x, global_y)`；副作用是更新定位核心状态，后续再更新地图上的玩家点、绿色定位框、橙色真实可见框和事件 marker。
 2. `NavigationCore.localize_result()` 输入实时小地图截图和 `player_pos`；内部调用历史 `localize()` 并输出 `LocalizationResult(GLOBAL_MAP)`；副作用仍是更新 `current_pos/last_good_pos/prev_mask` 与 `last_frame_registration`。
@@ -4034,8 +4240,19 @@ def shutdown(self)
 5. `HostEventBridge.send_event()` 发送 `sync.share.event` 并返回 reply；`finally` 无条件关闭短连接。GUI 捕获异常并渲染成功/失败，不理解协议。
 
 ## 7. 外部集成详情
-`main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。管理员进程启动后会获取基于项目路径的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口；如果已有实例存在，新实例直接退出，防止多个 GUI 同时识别事件并向游戏发送移动/按键。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
-`logs/runtime.log` 每次进程启动都会重建，不再把旧会话定位刷屏追加到新会话后面；事件系统另有专用 `logs/event_runtime.log`，用于测试传送门时只看事件链路。
+当前物理集成边界：
+
+- Python Host client：`src/auto_modules/adapters/virtual_gamepad/virtual_gamepad_client.py`，默认 named pipe `AutoModules.VirtualGamepad.v1`；具体 action connection 由 `connect_action_adapter(timeout=5.0)` 建立，连接失败抛 `VirtualGamepadError`，不自动启动 Host。
+- 程序手柄 lease：`adapters/virtual_gamepad/program_output.py`，TTL 限制 `1..300ms`；client request 无内部重试，worker/application 捕获后进入既有安全停止。
+- Follow share wire：`adapters/host/follow_transport.py`；position/event 最大接受窗口 500ms，单条 malformed inbound 丢弃，IPC 失败向上传播。
+- Win32 hotkeys：`adapters/windows/hotkeys.py`；具体 `GetAsyncKeyState` 只在 adapter 内，application 只消费按下边沿。
+- OCR backend：`adapters/perception/rapidocr.py` 与 `rapidocr_models.py`；core perception 不导入具体 provider。
+- 开发资源：`resources/`；开发可写数据：`data/`；安装态资源/data 由 `AUTO_MODULES_RESOURCE_DIR`、`AUTO_MODULES_DATA_DIR` 明确覆盖。
+- C# Launcher path：`LauncherPaths` 以 `services/virtual_gamepad` 为 ModuleRoot，以 repository parent 为 WorkspaceRoot；`.venv`、workspace-local .NET、`src` 三者不得混用根层级。
+- C# build/test 当前机器只有 .NET runtime 6.0.23、没有 SDK，因此本轮不能执行 `dotnet build/test`；Python 和静态路径验证不能替代 C# 编译验证。
+
+`src/auto_modules/bootstrap/main.py` 拥有 Windows 启动前置：先配置 UTF-8 输出和 `data_root()/logs/runtime.log`，随后默认 `FreeConsole()`，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动根 `main.py` 并退出原进程。管理员进程获取基于 repository path 的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口。默认 GUI 启动不保留控制台；设置 `MINIMAP_DEBUG_CONSOLE=1` 时保留控制台。真实游戏输入依赖管理员完整性级别。
+`data/logs/runtime.log` 每次进程启动都会重建；事件系统另有 `data/logs/event_runtime.log` 和 per-run logs。安装态两者位于 `AUTO_MODULES_DATA_DIR/logs`。
 
 `InputDriver.click(x, y)`：由 `MotionController._execute_click()` 的 `win32_mouse_event` 后端调用，执行 `SetCursorPos(x, y)` 后用 Win32 `mouse_event` 分开发送 left-down/left-up。该路径来自旧脚本 `t2.py` 的可用实现，当前是游戏点击主后端。
 
@@ -4072,6 +4289,18 @@ The provider's supported call settings come from one OCR profile instance's `pro
 重试策略：热键读取本身无独立重试；由 service worker 顶层统一重试。按住只 emit 一次，松开后重新武装。
 
 ## 8. 数据模型与契约
+### Repository path contract
+
+`package_root() -> Path` 固定为 imported `auto_modules` package directory。`repository_root() -> Path` 返回源码仓库或安装态 `app` 根。`resource_root()` 优先 `AUTO_MODULES_RESOURCE_DIR`，否则 `<repository>/resources`；`data_root()` 优先 `AUTO_MODULES_DATA_DIR`，否则 `<repository>/data`。环境变量值统一 `resolve()`；业务模块不自行拼用户 profile 或向 resources 写入。
+
+### Follow sharing contracts
+
+`SharedPosition(device_id: str, actor_id: str, map_id: str, map_version: str, position: tuple[float,float], confidence: float, captured_at_ms: int, session_id: str="")` 是 device-neutral immutable observation。`captured_at_ms` 属于当前 Python caller 的 local monotonic clock；adapter 负责 age/deadline translation。
+
+`SharedEvent(device_id: str, event_id: str, name: str, targets: tuple[str,...], deadline_ms: int, session_id: str="")` 是解析后的 local-deadline event。core controller 不接触 Host `remainingMs/deadlineMs` 字段。
+
+`ProgramGamepadOutput` 的 wire contract 是 `program.acquire -> token`、`program.state(controller,token,ttlMs,deadlineMs,state)`、`program.release(controller,token)`。state 总是完整包含 buttons、两个 trigger 和两组 stick；TTL 最大 300ms，Host 是最终失效/归零责任方。
+
 ### `RapidOcrProvider` provider contract
 
 `RapidOcrProvider(engine_options: Mapping[str, Any] | None, backend_factory: Callable[[], Any] | None)` is runtime composition state, never profile JSON. `recognize(frame: FrameContext, parameters: Mapping[str, Any] | None) -> tuple[OcrSpan, ...]` accepts only `roi`, `language`, and `backend_options` in `parameters`; all inputs are copied before use. `roi` is a `BoundingBox`, four-number sequence, or mapping with finite `left/top/width/height` and positive width/height. `language` is an optional non-empty string label. `backend_options` is a mapping passed to the backend per invocation.
@@ -4183,6 +4412,12 @@ Each output `OcrSpan` uses `frame.coordinate_space` and has a positive-area `Bou
 `sync.share.catalog` payload：`deviceId: str`、`catalog: {deviceId,catalogRevision,catalogHash,events,definitions}`。
 
 ## 9. 风险与隐患登记
+P1 - `src/auto_modules/core/routing/pathfinder/runtime.py::PathFinder.find_path()` 与三条既有策略测试存在冲突。触发条件：斜向穿过两个阻塞正交邻居、`explored_map` 中间有未探索带、或严格模式遇到一像素贯穿墙。复现方式：运行 `pytest tests/test_pathfinder.py -q`，当前 3 条断言失败，算法返回直线路径。建议：作为独立行为修复任务确认 wall-map 0/255 语义、corner-cut gate、explored mask 合成和 wall shrink 顺序；不要在目录迁移中静默改变寻路策略。
+
+P2 - `services/virtual_gamepad/launcher/src/VirtualGamepadLauncher/LauncherPaths.cs::LauncherPaths()` 及 C# ProjectReference/installer path 本轮只完成静态审计。触发条件：在装有 .NET SDK 的机器构建 Host、LAN、launcher 或 installer tests。复现方式：当前机器执行 `dotnet --list-sdks` 为空，无法编译验证。建议：在 .NET 8 SDK 环境运行 LAN、Host、Launcher、Installer 四组 tests；重点确认 repository/workspace 两级根目录和 `../../../../lan_input_sync` ProjectReference。
+
+P2 - `CODEBASE.md` 后续历史章节仍使用 §0 定义的逻辑简称。触发条件：读者把 `core/...`、`gui/...` 当成根目录物理路径执行命令。复现方式：根目录已不存在这些 package。建议：新增/修改条目必须写 `src/auto_modules/...` 物理路径；逐轮维护时把触达的旧条目迁为物理路径，不重新建立 compatibility shell。
+
 P1 - `MotionController._calculate_target_screen_position()` 默认半径未校准。触发条件：游戏实际点击触发距离大于 180px 或可交互范围小于 360px。复现方式：自动导航状态栏显示 `click r`，但人物不移动或点击到不可达点。建议：在参数面板调整最小/最大点击半径，并用橙色框观察真实可见范围。
 
 P1 - `main.py` 的 UAC relaunch 会启动一个新的管理员进程并退出原进程。触发条件：从非管理员 shell/IDE 启动。复现方式：启动后弹出 UAC，授权后 GUI 进程启动；如果用户取消授权，程序退出。建议：测试时查看 `logs/runtime.log` 中的 `Admin: True`；只有设置 `MINIMAP_DEBUG_CONSOLE=1` 时才依赖控制台输出。
@@ -4193,7 +4428,7 @@ P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观�
 
 Resolved 2026-09-18 - 旧的平行定义解析、混合 runtime 和 GUI-owned persistence 三项风险已消除。`EventDefinitionRepository`/`EventRouter`/`EventExecutionRuntime` 现在是唯一通用能力，`EventWorkbenchService` 是唯一组合根，`EventWorkbenchPage` 只依赖服务；`LocalEventRuntime`、`RemoteEventRuntime`、`EventCatalogRuntime`、`RemoteEventSender` 及其绑定测试已删除。删除事件也通过 versioned tombstone 传播，不再在远端目录残留旧活动记录。
 
-P2 - `core/runtime/event_service/service.py::EventWorkbenchService.tick_once()` 在持有 `_lock` 时执行 `sync.status`、catalog drain/publish、event drain/send 和 `event.state` 命名管道 IO。触发条件：Host 请求阻塞或 LAN 背压，同时 GUI timer 调用 `status()`、用户保存配置或关闭页面。复现方式：假 bridge 的 request 人为阻塞后，GUI 的 `service.status()`/`save()` 等待同一 `RLock`，页面短时无响应。建议：后续把 bridge IO 移到锁外，以不可变 tick snapshot/command queue 提交配置变更，只在短临界区交换 router/definition/status；在改变 worker ownership 前先增加阻塞 bridge 并发测试。
+P2 - `src/auto_modules/application/event_workbench/service.py::EventWorkbenchService.tick_once()` 在持有 `_lock` 时执行 `sync.status`、catalog drain/publish、event drain/send 和 `event.state` 命名管道 IO。触发条件：Host 请求阻塞或 LAN 背压，同时 GUI timer 调用 `status()`、用户保存配置或关闭页面。复现方式：假 bridge 的 request 人为阻塞后，GUI 的 `service.status()`/`save()` 等待同一 `RLock`，页面短时无响应。建议：后续把 bridge IO 移到锁外，以不可变 tick snapshot/command queue 提交配置变更，只在短临界区交换 router/definition/status；在改变 worker ownership 前先增加阻塞 bridge 并发测试。
 
 P2 - `RapidOcrProvider.recognize()` serializes one cached RapidOCR model and performs CPU ONNX inference. Trigger condition: a full-resolution frame is requested every navigation tick, or many OCR profile instances use the same provider with expensive detector settings. Reproduction: provider metadata timings dominate a frame budget or recognition becomes delayed while other algorithms continue. Mitigation: use an instance-specific ROI for fixed text zones, set conservative RapidOCR `backend_options`/confidence thresholds, reuse one provider, and measure the recorded `elapsed_seconds` before adding parallel provider instances. Do not move OCR retries or actions into this module.
 

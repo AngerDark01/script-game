@@ -1,6 +1,6 @@
-from core.events.follow_chain import FollowChainDefinition
-from core.events.models import EventTask, EventTick, EventActionType
-from core.events.hooks.registry import EventHookRegistry
+from auto_modules.core.events.follow_chain import FollowChainDefinition
+from auto_modules.core.events.models import EventTask, EventTick, EventActionType
+from auto_modules.core.events.hooks.registry import EventHookRegistry
 import pytest
 
 

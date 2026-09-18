@@ -1,6 +1,6 @@
 import numpy as np
-from core.localization.map_runtime import MapRuntime
-from core.localization.local_matcher import LocalMapMatcher
+from auto_modules.core.localization.map_runtime import MapRuntime
+from auto_modules.core.localization.local_matcher import LocalMapMatcher
 
 
 def test_bounded_chamfer_recovers_origin():

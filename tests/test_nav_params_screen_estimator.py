@@ -5,7 +5,7 @@ from pathlib import Path
 
 _MODULE_PATH = (
     Path(__file__).resolve().parents[1]
-    / "gui"
+    / "src" / "auto_modules" / "ui"
     / "dialogs"
     / "nav_params"
     / "screen_estimator.py"

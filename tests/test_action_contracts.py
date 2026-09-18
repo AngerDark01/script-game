@@ -1,6 +1,6 @@
 import unittest
 
-from core.actions import (
+from auto_modules.core.actions import (
     ActionCommand,
     ActionKind,
     GamepadStickTarget,
@@ -8,7 +8,7 @@ from core.actions import (
     PointerTarget,
     VirtualControllerRoute,
 )
-from core.spatial import physical_screen_point
+from auto_modules.core.spatial import physical_screen_point
 
 
 class ActionContractTests(unittest.TestCase):

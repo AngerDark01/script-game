@@ -3,9 +3,9 @@ from unittest import mock
 
 import numpy as np
 
-from core.perception.models import CoordinateSpace
-from core.platform.desktop_frame_source import DesktopFrameSource, WindowsPrimaryMonitorGeometryProvider
-from core.spatial import ScreenGeometry
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.adapters.platform.desktop_frame_source import DesktopFrameSource, WindowsPrimaryMonitorGeometryProvider
+from auto_modules.core.spatial import ScreenGeometry
 
 
 class _StaticGeometryProvider:
@@ -57,7 +57,7 @@ class DesktopFrameSourceTests(unittest.TestCase):
             return np.zeros((1440, 2560, 3), dtype=np.uint8)
 
         with mock.patch(
-            "core.platform.desktop_frame_source.WindowsPrimaryMonitorGeometryProvider"
+            "auto_modules.adapters.platform.desktop_frame_source.WindowsPrimaryMonitorGeometryProvider"
         ) as primary_provider_type:
             primary_provider_type.return_value.current_geometry.return_value = geometry
             source = DesktopFrameSource(capture_backend=capture_backend)

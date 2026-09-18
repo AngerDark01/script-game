@@ -5519,3 +5519,91 @@ remain disabled during migration verification.
 
 **Protected checkpoint:** annotated tag `pre-reorg/2026-09-18` points to
 `be698389ac3ab640fb5f2a1b4324236cc24e5cb1`.
+
+## [SYNC] 2026-09-18 - repository layout and adapter-boundary cleanup
+
+### A. SYNC scope declaration
+
+**Trigger:** continue the approved repository layout migration, correct remaining
+imports and physical paths, and make the bottom-up generalization rule true in
+the moved action/follow/Host code.
+
+**Directly changed files:**
+
+- `README.md`, `ARCHITECTURE_GUIDE.md`, `CODEBASE.md`
+- `packaging/distribution/README.md`, `packaging/distribution/verify_install.ps1`, `packaging/installer/README.md`
+- `services/virtual_gamepad/README.md`, `services/virtual_gamepad/docs/acceptance.md`, `services/lan_input_sync/README.md`
+- `services/virtual_gamepad/launcher/src/VirtualGamepadLauncher/LauncherPaths.cs` and its tests
+- `src/auto_modules/core/actions/keyboard.py`, `src/auto_modules/core/actions/__init__.py`
+- `src/auto_modules/core/lan_follow/`, `src/auto_modules/adapters/input/`, `src/auto_modules/adapters/host/`, `src/auto_modules/adapters/virtual_gamepad/`
+- `src/auto_modules/application/follow/`, `src/auto_modules/application/event_workbench/service.py`
+- affected Python tests and `tools/virtual_gamepad/run-demo.ps1` / `live_gamepad_probe.py`
+
+**Expected propagation:** production imports, C# launcher root calculations,
+installer verification data directories, action/follow adapter boundaries,
+CODEBASE current-path references, and current developer commands.
+
+**Safety boundary:** no real Host process, keyboard/mouse/virtual-controller
+input, or LAN synchronization was started.
+
+### C. SYNC result
+
+**Verified changes:**
+
+- The independent launcher now derives `AutoModulesRoot` from
+  `services/virtual_gamepad`, derives `SourceRoot` from that repository root,
+  and retains `.venv`/workspace .NET lookup under the parent workspace. This
+  removes the one-level path drift introduced by the service move.
+- `PyDirectInputKeyboardDevice`, `ProgramGamepadOutput`, Host-compatible clock,
+  and `FollowTransport` are concrete adapters. `core.actions` and
+  `core.lan_follow` now expose only device-neutral contracts and algorithms.
+- Follow service consumes `HotkeyTriggerSource`; it no longer reads Win32 key
+  state directly. Host/LAN wire translation remains in adapters.
+- Packaging docs and verification now use `packaging/...`, `services/...`, and
+  writable `data/maps`; current README and Architecture Guide describe the
+  actual `src/auto_modules` layout and import policy.
+- `CODEBASE.md` now includes the physical-path mapping, new modules/contracts,
+  startup/share/payload flows, external integration details, and migration
+  risks. Historical logical references remain explicitly mapped instead of
+  being mistaken for current root directories.
+
+**Verification:**
+
+- `python -m compileall -q src tests tools packaging`: passed.
+- Focused migration/adapter/UI/path/distribution suite: **27 passed**.
+- Full Python suite: **407 passed, 1 skipped, 10 subtests passed, 3 known
+  Pathfinder policy failures** (`tests/test_pathfinder.py`); the three failures
+  reproduce the pre-migration behavior and were not changed in this sync.
+- Active-source old-import scan: zero `from/import core`, `gui`, `workflows`,
+  or `logging_system` matches.
+- Core upward-dependency scan: zero imports from `application`, `adapters`,
+  `ui`, or `bootstrap`; concrete OS/device dependency scan: zero matches.
+- `git diff --check`: passed (only repository line-ending normalization
+  warnings).
+- C# build/test: not run because this machine has .NET runtime 6.0.23 but no
+  installed .NET SDK. Real input, Host, LAN, and game verification remain
+  opt-in and were not run.
+
+**Coverage update:**
+
+| File/group | Previous | Current | Evidence |
+|---|---|---|---|
+| `src/auto_modules/paths.py` | migrated | verified | focused runtime-path tests and payload smoke path assertions |
+| `src/auto_modules/core/actions/keyboard.py` | migrated | verified | generic adapter has no concrete PyDirectInput implementation |
+| `src/auto_modules/adapters/input/keyboard_device.py` | new | verified | fake-module contract and compile/import checks |
+| `src/auto_modules/adapters/virtual_gamepad/program_output.py` | new | verified | lease/TTL/slew tests pass without Host connection |
+| `src/auto_modules/core/lan_follow/models.py` | new | verified | immutable position/event contract imports and worker tests |
+| `src/auto_modules/adapters/host/follow_transport.py` | new | verified | TTL/IPC-delay/expired-event tests pass with fake client |
+| `src/auto_modules/application/follow/service.py` | migrated | verified | follow service suite and adapter hotkey injection |
+| `LauncherPaths.cs` + tests | migrated | static verified | source/test path assertions; SDK unavailable for compilation |
+| `README.md`, `ARCHITECTURE_GUIDE.md`, `CODEBASE.md` | stale | synchronized | current physical layout, contracts, flows and risks added |
+
+**Revised prior conclusion:** the initial migration audit treated all remaining
+`core` action/follow files as generic after their move. Re-reading their bodies
+showed that PyDirectInput, Win32 clock and Host/LAN wire calls were still concrete
+side effects; those implementations now live in adapter modules while core
+contracts remain reusable.
+
+**Next work:** run the C# test matrix in a machine with .NET 8 SDK, then handle
+the three independent Pathfinder policy failures in a separate behavior-focused
+task. Do not use the migration tag as a substitute for that diagnosis.

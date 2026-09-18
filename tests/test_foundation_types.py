@@ -1,7 +1,7 @@
 import time
 
-from core.foundation.clock import MonotonicClock
-from core.foundation.geometry import Point2, Transform2D, Vector2
+from auto_modules.core.foundation.clock import MonotonicClock
+from auto_modules.core.foundation.geometry import Point2, Transform2D, Vector2
 
 
 def test_point_vector_and_distance_operations():

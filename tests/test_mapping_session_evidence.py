@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from gui.modes.mapping.runtime.session import MappingSession
+from auto_modules.ui.modes.mapping.runtime.session import MappingSession
 
 
 class _ScreenCapture:

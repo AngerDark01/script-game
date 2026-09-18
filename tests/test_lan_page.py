@@ -1,7 +1,7 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import QApplication
-from gui.modes.lan import LanPage
+from auto_modules.ui.modes.lan import LanPage
 
 
 def test_lan_page_has_dedicated_sync_workspace():

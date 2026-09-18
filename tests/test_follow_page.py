@@ -1,8 +1,8 @@
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from PySide6.QtWidgets import QApplication
-from gui.modes.follow.page import FollowPage
-from gui.modes.follow.editors import ActorEditor,ChainEditor,ParallelGroupEditor
+from auto_modules.ui.modes.follow.page import FollowPage
+from auto_modules.ui.modes.follow.editors import ActorEditor,ChainEditor,ParallelGroupEditor
 
 
 def test_follow_page_opens_disarmed_and_saves_versions(tmp_path):
@@ -20,7 +20,7 @@ def test_follow_page_opens_disarmed_and_saves_versions(tmp_path):
 
 
 def test_actor_and_chain_editors_roundtrip():
-    from core.runtime.follow_config import FollowConfig
+    from auto_modules.application.follow.config import FollowConfig
     app=QApplication.instance() or QApplication([])
     dialog=ActorEditor(FollowConfig().actors[0])
     result=dialog.value()

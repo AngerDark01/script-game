@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from core.perception.algorithms.base import AlgorithmDescriptor
-from core.perception.models import CoordinateSpace, DetectionEvidence, FrameContext, PerceptionRunResult, TargetDetection
-from core.perception.pipeline import PerceptionPipeline
-from core.perception.profiles import AlgorithmProfile, TargetProfile
-from core.perception.registry import AlgorithmRegistry
+from auto_modules.core.perception.algorithms.base import AlgorithmDescriptor
+from auto_modules.core.perception.models import CoordinateSpace, DetectionEvidence, FrameContext, PerceptionRunResult, TargetDetection
+from auto_modules.core.perception.pipeline import PerceptionPipeline
+from auto_modules.core.perception.profiles import AlgorithmProfile, TargetProfile
+from auto_modules.core.perception.registry import AlgorithmRegistry
 
 
 class PerceptionPipelineTests(unittest.TestCase):

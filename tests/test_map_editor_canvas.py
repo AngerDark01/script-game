@@ -11,7 +11,7 @@ from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from gui.modes.map_editor.canvas import WallEditorCanvas
+from auto_modules.ui.modes.map_editor.canvas import WallEditorCanvas
 
 
 class WallEditorCanvasTests(unittest.TestCase):

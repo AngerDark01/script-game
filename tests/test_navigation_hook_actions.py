@@ -1,7 +1,7 @@
 import unittest
 
-from core.actions import ActionResult
-from gui.modes.navigation.hooks.registration import NavigationHookRuntime
+from auto_modules.core.actions import ActionResult
+from auto_modules.ui.modes.navigation.hooks.registration import NavigationHookRuntime
 
 
 class _MotionController:

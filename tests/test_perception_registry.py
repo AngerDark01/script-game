@@ -1,8 +1,8 @@
 import unittest
 
-from core.perception.algorithms.base import AlgorithmDescriptor, ParameterSpec
-from core.perception.models import CoordinateSpace
-from core.perception.registry import AlgorithmRegistry
+from auto_modules.core.perception.algorithms.base import AlgorithmDescriptor, ParameterSpec
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.perception.registry import AlgorithmRegistry
 
 
 class PerceptionRegistryTests(unittest.TestCase):

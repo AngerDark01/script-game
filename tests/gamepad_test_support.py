@@ -1,6 +1,6 @@
 """Inert Host doubles for workbench UI tests that do not exercise gamepad I/O."""
 
-from gui.gamepad.host_manager import HostShutdownResult, HostStartResult
+from auto_modules.ui.gamepad.host_manager import HostShutdownResult, HostStartResult
 
 
 class InertGamepadClient:

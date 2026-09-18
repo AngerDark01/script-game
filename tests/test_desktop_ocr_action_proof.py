@@ -2,10 +2,10 @@ import unittest
 
 import numpy as np
 
-from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
-from core.perception.providers import OcrSpan
-from core.spatial import Point2D, ScreenGeometry
-from workflows.desktop_ocr_action_proof import DesktopOcrActionProof
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, FrameContext
+from auto_modules.core.perception.providers import OcrSpan
+from auto_modules.core.spatial import Point2D, ScreenGeometry
+from auto_modules.application.workflows.desktop_ocr_action_proof import DesktopOcrActionProof
 
 
 class _StaticFrameSource:

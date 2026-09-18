@@ -8,8 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 from PySide6.QtWidgets import QApplication
 
-from core.perception.profile_store import load_target_profile, save_target_profile
-from gui.dialogs.perception import PerceptionWorkbenchDialog
+from auto_modules.core.perception.profile_store import load_target_profile, save_target_profile
+from auto_modules.ui.dialogs.perception import PerceptionWorkbenchDialog
 
 
 class PerceptionWorkbenchTests(unittest.TestCase):

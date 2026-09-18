@@ -1,24 +1,13 @@
-import importlib.util
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
 
-
-_MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "gui"
-    / "dialogs"
-    / "advanced_settings"
-    / "file_io.py"
+from auto_modules.ui.dialogs.advanced_settings.file_io import (
+    format_params_for_display,
+    load_params_snapshot,
+    save_params_snapshot,
 )
-_SPEC = importlib.util.spec_from_file_location("advanced_settings_file_io", _MODULE_PATH)
-_FILE_IO = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_FILE_IO)
-
-format_params_for_display = _FILE_IO.format_params_for_display
-load_params_snapshot = _FILE_IO.load_params_snapshot
-save_params_snapshot = _FILE_IO.save_params_snapshot
 
 
 class AdvancedSettingsFileIoTest(unittest.TestCase):

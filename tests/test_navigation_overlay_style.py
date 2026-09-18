@@ -6,9 +6,9 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from gui.modes.navigation.ui.components.map_view import build_navigation_map_view
-from gui.modes.navigation.presentation.map_presenter import cosmetic_pen
-from gui.modes.navigation.presentation.route_overlay import route_pen
+from auto_modules.ui.modes.navigation.ui.components.map_view import build_navigation_map_view
+from auto_modules.ui.modes.navigation.presentation.map_presenter import cosmetic_pen
+from auto_modules.ui.modes.navigation.presentation.route_overlay import route_pen
 
 
 class NavigationOverlayStyleTests(unittest.TestCase):

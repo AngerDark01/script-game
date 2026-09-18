@@ -1,4 +1,4 @@
-from core.events.action_tracks import ActionTrack, TrackMode
+from auto_modules.core.events.action_tracks import ActionTrack, TrackMode
 
 
 def test_parallel_single_and_continuous_tracks():

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from core.localization.map_runtime import MapRuntime
+from auto_modules.core.localization.map_runtime import MapRuntime
 
 
 def test_runtime_builds_distance_field_and_metadata():
@@ -22,7 +22,7 @@ def test_tile_is_clipped_and_returns_origin():
 
 
 def test_npz_uses_existing_active_version_catalog(tmp_path):
-    from core.map_editing.version_storage import save_new_wall_version
+    from auto_modules.core.map_editing.version_storage import save_new_wall_version
     walls = np.zeros((16, 16), np.uint8)
     np.savez(tmp_path / 'map_data.npz', wall_layer=walls)
     edited = walls.copy()

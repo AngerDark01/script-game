@@ -1,4 +1,4 @@
-from core.lan_follow.follow_transport import FollowTransport
+from auto_modules.adapters.host.follow_transport import FollowTransport
 
 
 def test_poll_counts_ipc_delay_and_discards_expired_events():

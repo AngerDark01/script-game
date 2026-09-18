@@ -1,6 +1,6 @@
 import unittest
 
-from core.navigation.projection import project_world_target
+from auto_modules.core.navigation.projection import project_world_target
 
 
 class NavigationProjectionTests(unittest.TestCase):

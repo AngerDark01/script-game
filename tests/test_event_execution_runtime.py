@@ -1,5 +1,5 @@
-from core.events.automation.definitions import parse_event_definition
-from core.events.automation.execution import EventExecutionRuntime
+from auto_modules.core.events.automation.definitions import parse_event_definition
+from auto_modules.core.events.automation.execution import EventExecutionRuntime
 
 
 def _definition(name, button, hold_ms=100):

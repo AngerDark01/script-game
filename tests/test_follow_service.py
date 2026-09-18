@@ -1,5 +1,5 @@
-from core.runtime.follow_service import FollowService
-from core.runtime.follow_config import FollowConfig
+from auto_modules.application.follow.service import FollowService
+from auto_modules.application.follow.config import FollowConfig
 
 
 def test_network_accepts_actual_nested_sync_status(tmp_path):

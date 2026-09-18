@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from core.events.action_tracks import ActionTrack, TrackMode
-from core.runtime.event_session import EventSession
+from auto_modules.core.events.action_tracks import ActionTrack, TrackMode
+from auto_modules.core.events.session import EventSession
 
 
 @dataclass(frozen=True)

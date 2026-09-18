@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from core.vision import estimate_phase_displacement
+from auto_modules.core.vision import estimate_phase_displacement
 
 
 class PhaseDisplacementTest(unittest.TestCase):

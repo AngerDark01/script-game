@@ -1,7 +1,7 @@
 import pytest
 
-from core.events.follow_chain import FollowChainDefinition, button_mask
-from core.events.models import EventTask, EventTick, EventActionType
+from auto_modules.core.events.follow_chain import FollowChainDefinition, button_mask
+from auto_modules.core.events.models import EventTask, EventTick, EventActionType
 
 
 def test_single_and_chord_use_existing_masks():

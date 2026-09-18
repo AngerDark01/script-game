@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from core.perception.models import FrameContext, CoordinateSpace
-from core.localization.minimap_frames import crop_minimap, LatestFrame
+from auto_modules.core.perception.models import FrameContext, CoordinateSpace
+from auto_modules.core.localization.minimap_frames import crop_minimap, LatestFrame
 
 
 def test_crop_keeps_capture_time_and_source_geometry():

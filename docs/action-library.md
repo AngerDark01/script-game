@@ -1,6 +1,6 @@
 # Composable Action Library
 
-`core.actions` is the device-neutral boundary between a workflow's decision
+`auto_modules.core.actions` is the device-neutral boundary between a workflow's decision
 and the physical or virtual device that carries it out.  It deliberately has
 no dependency on OCR, map coordinates, navigation rules, a game, or a GUI.
 
@@ -21,13 +21,13 @@ The production device is deliberately separate from the adapter, so a
 workbench can choose an alternative keyboard backend or use a fake in tests.
 
 ```python
-from core.actions import (
+from auto_modules.core.actions import (
     ActionCommand,
     ActionKind,
     KeyboardActionAdapter,
     KeyboardTarget,
-    PyDirectInputKeyboardDevice,
 )
+from auto_modules.adapters.input import PyDirectInputKeyboardDevice
 
 keyboard = KeyboardActionAdapter(device=PyDirectInputKeyboardDevice())
 keyboard.execute(ActionCommand(ActionKind.KEY_CHORD, KeyboardTarget(("ctrl", "shift", "p"))))
@@ -53,17 +53,17 @@ has reported the Host ready (or after another trusted launcher has started
 the Host).
 
 ```python
-from core.actions import (
+from auto_modules.core.actions import (
     ActionCommand,
     ActionKind,
     GamepadButtonTarget,
     GamepadResetTarget,
     GamepadStickTarget,
     VirtualControllerRoute,
-    VirtualGamepadActionAdapter,
 )
+from auto_modules.adapters.virtual_gamepad import connect_action_adapter
 
-gamepad = VirtualGamepadActionAdapter.connect()
+gamepad = connect_action_adapter()
 route = VirtualControllerRoute(
     controller=1,
     source="auto_mode.navigation",

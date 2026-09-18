@@ -3,10 +3,10 @@ import unittest
 import cv2
 import numpy as np
 
-from core.perception.algorithms import ShapeDetector as PublicShapeDetector
-from core.perception.algorithms.shape import ShapeDetector
-from core.perception.builtins import create_default_algorithm_registry
-from core.perception.models import CoordinateSpace, FrameContext
+from auto_modules.core.perception.algorithms import ShapeDetector as PublicShapeDetector
+from auto_modules.core.perception.algorithms.shape import ShapeDetector
+from auto_modules.core.perception.builtins import create_default_algorithm_registry
+from auto_modules.core.perception.models import CoordinateSpace, FrameContext
 
 
 class ShapeAlgorithmTests(unittest.TestCase):

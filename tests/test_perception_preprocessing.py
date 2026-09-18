@@ -2,9 +2,9 @@ import unittest
 
 import numpy as np
 
-from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
-from core.perception.preprocessing.geometry import crop, pad, resize
-from core.perception.preprocessing.image_ops import (
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, FrameContext
+from auto_modules.core.perception.preprocessing.geometry import crop, pad, resize
+from auto_modules.core.perception.preprocessing.image_ops import (
     canny_edges,
     gamma_correct,
     gaussian_blur,
@@ -15,8 +15,8 @@ from core.perception.preprocessing.image_ops import (
     to_hsv,
     top_hat,
 )
-from core.perception.preprocessing.models import ImageArtifact, ImageGeometry
-from core.perception.preprocessing.masks import (
+from auto_modules.core.perception.preprocessing.models import ImageArtifact, ImageGeometry
+from auto_modules.core.perception.preprocessing.masks import (
     circle_mask,
     filter_small_components,
     hsv_range_mask,

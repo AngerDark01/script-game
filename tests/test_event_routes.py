@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from core.events.automation.routes import (
+from auto_modules.core.events.automation.routes import (
     EventRoute,
     EventRouteRepository,
     EventRouter,

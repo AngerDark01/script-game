@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from core.localization.phase_tracker import track_scroll
+from auto_modules.core.localization.phase_tracker import track_scroll
 
 
 def test_reuses_displacement_with_correct_origin_sign():

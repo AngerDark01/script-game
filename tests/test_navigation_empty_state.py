@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QWidget
 
-from gui.modes.navigation.ui.components.map_view import NavigationMapGraphicsView, build_navigation_map_view
+from auto_modules.ui.modes.navigation.ui.components.map_view import NavigationMapGraphicsView, build_navigation_map_view
 
 
 class NavigationEmptyStateTests(unittest.TestCase):

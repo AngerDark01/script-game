@@ -1,7 +1,7 @@
 import json
 
-from core.events.action_tracks import TrackMode
-from core.events.automation.definitions import EventDefinitionRepository
+from auto_modules.core.events.action_tracks import TrackMode
+from auto_modules.core.events.automation.definitions import EventDefinitionRepository
 
 
 def _write(path, value):

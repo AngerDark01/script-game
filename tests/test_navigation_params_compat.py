@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "gui" / "navigation_params.py"
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "auto_modules" / "ui" / "navigation_params.py"
 _SPEC = importlib.util.spec_from_file_location("navigation_params_module", _MODULE_PATH)
 _NAV_PARAMS = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_NAV_PARAMS)

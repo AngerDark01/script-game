@@ -1,4 +1,4 @@
-from core.actions.program_gamepad import ProgramGamepadOutput
+from auto_modules.adapters.virtual_gamepad import ProgramGamepadOutput
 import pytest
 
 

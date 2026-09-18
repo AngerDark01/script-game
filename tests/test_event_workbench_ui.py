@@ -5,8 +5,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from core.runtime.event_service import EventWorkbenchStatus
-from gui.modes.events import EventWorkbenchPage
+from auto_modules.application.event_workbench import EventWorkbenchStatus
+from auto_modules.ui.modes.events import EventWorkbenchPage
 
 
 class FakeEventWorkbenchService:

@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from core.mapping import MapStitcher
-from core.mapping.evidence import MapFrameEvidence
-from core.perception.models import CoordinateSpace
+from auto_modules.core.mapping import MapStitcher
+from auto_modules.core.mapping.evidence import MapFrameEvidence
+from auto_modules.core.perception.models import CoordinateSpace
 
 
 class MapFrameEvidenceTests(unittest.TestCase):

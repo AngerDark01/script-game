@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QWidget
 
-from gui.modes.navigation.ui.components.status import build_status_label
+from auto_modules.ui.modes.navigation.ui.components.status import build_status_label
 
 
 class NavigationStatusHudTests(unittest.TestCase):

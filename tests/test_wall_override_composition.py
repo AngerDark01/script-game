@@ -4,8 +4,8 @@ import unittest
 
 import numpy as np
 
-from core.map_editing.composition import compose_effective_wall_layer
-from core.map_editing.models import WallOverrideDocument
+from auto_modules.core.map_editing.composition import compose_effective_wall_layer
+from auto_modules.core.map_editing.models import WallOverrideDocument
 
 
 class WallOverrideCompositionTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 import unittest
 
-from gui.theme import COLORS, app_stylesheet
+from auto_modules.ui.theme import COLORS, app_stylesheet
 
 
 class ThemeTests(unittest.TestCase):

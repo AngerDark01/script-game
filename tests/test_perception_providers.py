@@ -1,7 +1,7 @@
 import unittest
 
-from core.perception.models import BoundingBox, CoordinateSpace, FrameContext
-from core.perception.providers import (
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, FrameContext
+from auto_modules.core.perception.providers import (
     FeatureBackend,
     FeatureMatch,
     FrameSource,

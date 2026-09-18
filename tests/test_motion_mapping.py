@@ -1,6 +1,6 @@
 import unittest
 
-from core.input.motion_mapping import (
+from auto_modules.adapters.input.motion_mapping import (
     calculate_mapped_target_click,
     calculate_movement_click,
 )

@@ -1,6 +1,6 @@
 import unittest
 
-from core.perception.models import (
+from auto_modules.core.perception.models import (
     BoundingBox,
     CoordinateSpace,
     DetectionEvidence,

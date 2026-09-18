@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from core.localization import LocalizationResult
-from gui.modes.navigation.runtime.localization_tick import capture_navigation_localization_tick
+from auto_modules.core.localization import LocalizationResult
+from auto_modules.ui.modes.navigation.runtime.localization_tick import capture_navigation_localization_tick
 
 
 class _ScreenCapture:

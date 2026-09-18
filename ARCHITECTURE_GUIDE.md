@@ -1,228 +1,111 @@
 # Architecture Guide
 
-This guide is the top-level index for the engineering refactor reading pass. It is intentionally separate from `CODEBASE.md`: `CODEBASE.md` describes the current codebase, while this guide tracks reusable module boundaries, extension seams, large-file split candidates, and staged refactor plans.
+本文定义 Auto Modules 当前有效的分层边界和扩展规则。`CODEBASE.md` 描述代码当前实现，`ARCHITECTURE_ITERATION_LOG.md` 保留历史审计过程，`docs/architecture/` 保存迁移前后的专题材料。
 
-## Reading Direction
+## 核心哲学
 
-Start here, then drill into the module-owned documents near the code they describe:
+每一层都应在自己的稳定职责内达到最大“实用通用性”。先建设可复用能力，再在更高层组合业务；不能因为一个业务需要，就把它的术语和策略塞进共享底层。
 
-- [core/ARCHITECTURE.md](core/ARCHITECTURE.md) - Core systems overview: mapping, localization, route planning, movement input, and shared models.
-- [core/navigation_tasks/ARCHITECTURE.md](core/navigation_tasks/ARCHITECTURE.md) - Unified navigation task system and its interaction with events.
-- [core/events/ARCHITECTURE.md](core/events/ARCHITECTURE.md) - Event system lifecycle, reusable hooks, memory, scheduling, and runner seams.
-- [core/events/types/portal/ARCHITECTURE.md](core/events/types/portal/ARCHITECTURE.md) - Portal event package as the first concrete event adapter.
-- [gui/ARCHITECTURE.md](gui/ARCHITECTURE.md) - GUI shell, shared app context, dialogs, and mode ownership.
-- [gui/modes/ARCHITECTURE.md](gui/modes/ARCHITECTURE.md) - Mapping and navigation mode split strategy.
-- [gui/modes/navigation/ARCHITECTURE.md](gui/modes/navigation/ARCHITECTURE.md) - Detailed split map for `navigation_mode.py`.
-- [gui/dialogs/ARCHITECTURE.md](gui/dialogs/ARCHITECTURE.md) - Parameter, event, advanced settings, and color picker dialog responsibilities.
-- [utils/ARCHITECTURE.md](utils/ARCHITECTURE.md) - Probe scripts and diagnostics as reusable verification tools.
-- [tests/ARCHITECTURE.md](tests/ARCHITECTURE.md) - Existing test contracts and refactor safety net.
-
-Process and coverage live in [ARCHITECTURE_ITERATION_LOG.md](ARCHITECTURE_ITERATION_LOG.md).
-
-## Target Abstraction Levels
-
-The refactor plan will use these levels consistently:
-
-- System - a full runtime capability with ownership of a user-visible workflow or long-lived state.
-- Module - a package or file group with a stable interface and hidden implementation.
-- Component - a class/function group reused inside one or more modules.
-- Adapter - concrete integration with GUI, filesystem, Windows input, OpenCV, or a concrete event type.
-- Hook - lifecycle callback or extension point that lets new behavior join without editing the core loop.
-
-## First-Pass System Map
+“实用”意味着：只有语义稳定且已有真实或明确近期复用场景的能力才下沉。不要为假想需求建立框架。
 
 ```text
-┌──────────────────────────────┐
-│ PySide6 Desktop Application  │
-└──────────────┬───────────────┘
-               │ owns UI state and timers
-               ▼
-┌──────────────────────────────┐
-│ GUI Modes                    │
-│ Mapping / Navigation         │
-└───────┬──────────────┬───────┘
-        │              │
-        ▼              ▼
-┌──────────────┐   ┌─────────────────────┐
-│ Mapping Core │   │ Navigation Runtime  │
-│ stitch map   │   │ localize + schedule │
-└──────┬───────┘   └──────────┬──────────┘
-       │                      │
-       ▼                      ▼
-┌──────────────┐   ┌─────────────────────┐
-│ Map Package  │   │ Task / Event System │
-│ npz/config   │   │ route/event/exit    │
-└──────────────┘   └──────────┬──────────┘
-                              │
-                              ▼
-                       ┌──────────────┐
-                       │ Input System │
-                       │ click/key    │
-                       └──────────────┘
-
-┌──────────────────────┐   commands/status   ┌────────────────────────┐
-│ Event Workbench GUI  │ ─────────────────▶ │ EventWorkbenchService  │
-└──────────────────────┘                    └───────────┬────────────┘
-                                                       │
-                          ┌────────────────────────────┼─────────────────────┐
-                          ▼                            ▼                     ▼
-                  definitions/routes          shared execution      Host/LAN adapter
-                  pure + versioned             source × pad          only side effects
+基础能力
+识别、坐标、地图、路径、状态机、调度、控制器状态、协议契约
+        ↓
+通用领域运行时
+定位、导航任务、事件生命周期、状态合并、恢复
+        ↓
+组合与适配器
+应用用例、GUI、OCR 后端、Windows、Host、设备、配置、网络
+        ↓
+业务功能
+传送门、跟随策略、技能流程、游戏规则
 ```
 
-## Confirmed Refactor Themes
+例如传送门功能只定义目标证据、接近/交互策略和完成条件；识别、定位、路径规划、移动、控制器输出和结果观察都由下层通用模块提供。
 
-These themes are based on the current reading pass and should guide the first implementation plan.
+## 当前目录职责
 
-0. Startup should be split into process bootstrap and Qt application composition. `main.py` currently owns UTF-8/log redirection, console hiding, DPI awareness, UAC relaunch, single-instance locking, old-window detection, and QApplication startup.
-1. `gui/modes/navigation_mode.py` should become a thin coordinator. Runtime loop, route editing, event dialog wiring, overlay rendering, config application, and input execution should become separate modules with explicit interfaces.
-2. The event system should expose lifecycle hooks through a hook bus/listener, not by adding many optional methods to `EventDefinition`.
-3. `core/navigation_tasks` is close to a reusable orchestration system. It should keep producing intents and avoid owning click/key side effects.
-4. Movement input should stay behind `MotionController` and a future command-sink interface. Windows APIs, `pydirectinput`, focus behavior, and click diagnostics should not leak into navigation logic.
-5. Mapping and localization share image-recognition and displacement concepts, but their stateful runtime facades should stay separate.
-6. Probe scripts should remain verification adapters for production algorithms and integrations.
-7. Not every module needs splitting. Route/pathfinding modules are already cohesive; grouping them later under `core/routing/` is enough.
-8. The action-event workbench now follows the bottom-up rule: `core/events/automation` owns pure definitions, routes, and source/controller-scoped execution; `core/runtime/event_service` owns platform adapters and the single composition root; the PySide page is only a service adapter. The former local, remote, catalog, and direct-sender runtimes have been removed.
+| 路径 | 稳定职责 | 可以依赖 |
+| --- | --- | --- |
+| `src/auto_modules/core/` | 纯算法、领域契约、状态机、任务和意图 | 标准库、算法依赖、其他 core 模块 |
+| `src/auto_modules/application/` | 跨能力用例、应用级生命周期和业务编排 | core、显式注入的适配器接口 |
+| `src/auto_modules/adapters/` | Windows、输入、OCR、Host、文件和设备副作用 | core，必要时 application contract |
+| `src/auto_modules/ui/` | PySide6 展示、交互和页面协调 | core、application、adapters |
+| `src/auto_modules/bootstrap/` | 权限、单实例、日志和进程装配 | 所有运行时层，但不承载业务算法 |
+| `services/` | 可独立构建和测试的进程/协议服务 | 自身契约和明确的服务依赖 |
+| `resources/` | 随程序发布的不可变资源 | 无运行时写入 |
+| `data/` | 用户或运行时可写数据 | 由路径 API 定位 |
+| `tools/` | 显式执行的探针、诊断和维护工具 | 可组合生产模块，但不被生产模块反向依赖 |
+| `packaging/` | 离线 payload、安装器和发布验证 | 稳定入口、资源与服务产物 |
 
-## Composition Ownership
+## 强制边界
 
-Verified current startup chain:
+- `core` 不得导入 `application`、`adapters`、`ui` 或 `bootstrap`。
+- 共享模块不得按具体事件、游戏物体、技能、角色或页面名称分支。
+- 通用规划和事件模块只产出 observation、task、intent、action 或 command；真实输入和网络副作用由执行适配器承担。
+- 业务功能通过显式接口、typed data、配置、策略、hook 或 adapter 组合底层能力，不复制识别、定位、规划、调度、控制器或传输逻辑。
+- 可变状态必须由 controller、device、source 或 feature instance 明确持有；不同实例不能通过全局快捷状态互相覆盖。
+- 新功能不应要求修改多个无关业务。优先新增定义、策略、配置或适配器；只有真正通用的窄能力才允许修改共享层。
+- 生产 Python 导入统一使用 `auto_modules.*`，不创建旧顶层包兼容壳。
+
+## 运行时装配
 
 ```text
 main.py
-  ├── configure_runtime_output()
-  ├── hide_console_if_not_debugging()
-  ├── set_process_dpi_awareness()
-  ├── relaunch_as_admin()
-  ├── acquire_single_instance_lock()
-  ├── has_existing_main_window()
-  └── main()
-        ├── QApplication(sys.argv)
-        └── MainWindow()
-              ├── AppContext()
-              │     ├── ScreenCapture()
-              │     ├── HSVRecognizer()
-              │     ├── MapStitcher(canvas_size=5000)
-              │     ├── PlayerTracker()
-              │     └── PathFinder()
-              ├── MappingWidget(app_context, main_window)
-              └── NavigationModeWidget(app_context, main_window)
+  -> auto_modules.bootstrap.main
+       -> 进程输出 / DPI / UAC / 单实例
+       -> auto_modules.ui.main_window.MainWindow
+            -> UI composition
+            -> application runtimes
+            -> adapters
+            -> core capabilities
 ```
 
-Refactor direction:
-
-- `main.py` should become a short script that delegates process setup to a bootstrap module and GUI creation to an application module.
-- `AppContext` should become the explicit composition root for shared core modules, or be renamed/split if it remains only a passive object bag.
-- Mode widgets should receive only the interfaces they need over time, not the whole mutable context.
-
-Verified action-event composition:
+虚拟手柄和 LAN 链路：
 
 ```text
-MainWindow
-  └── EventWorkbenchPage
-        └── EventWorkbenchService
-              ├── EventDefinitionRepository -> EventStore
-              ├── EventRouteRepository / EventRouter
-              ├── EventExecutionRuntime -> EventSession
-              ├── HotkeyTriggerSource
-              └── HostEventBridge -> VirtualGamepadClient -> Host/LAN
+业务 intent/action
+  -> adapters.virtual_gamepad
+  -> Named Pipe
+  -> services/virtual_gamepad Host
+       -> 本机 ViGEm 输出
+       -> services/lan_input_sync（可选、显式启用）
 ```
 
-`EventWorkbenchPage` does not read or write JSON, create Host clients, interpret
-wire commands, or own parallel workers. Event identity/revision changes belong
-to `EventDefinitionRepository`; real controller and network effects belong to
-`HostEventBridge`.
-
-## Refactor Roadmap
-
-### Phase 0 - Test Guardrails
-
-Do this before large source edits.
-
-- Add `anchor_path.py` tests for ordered-anchor filtering, reached-anchor skipping, direct fallback, and probe fallback.
-- Add `EventCoordinator` tests with fake definition/detector/handler/memory timing.
-- Add `PortalEventHandler` phase/state tests with fake ticks and fake captures.
-- Add `MappingSession.tick()` tests using fake capture, recognizer, tracker, and stitcher.
-- Add `NavParametersDialog` binding tests only after field specs are extracted into non-widget data.
-- Add `ScalableMapWidget` click-coordinate test if mapping map clicks remain supported.
-
-### Phase 1 - Low-Risk Deep Modules
-
-These have existing tests or are mostly pure.
-
-- Shared `estimate_phase_displacement()` has been extracted to `core/phase_displacement.py`; next low-risk core extraction is `WeightedMapMerger`.
-- Extract `WeightedMapMerger` from `MapStitcher._merge_frame_weighted()`.
-- Group route modules into `core/routing/` only if imports are already being touched.
-- Extract `MotionController` movement mapping and bottom-click guard into pure helpers.
-- Done: `NavParametersDialog` click-radius math has been extracted to `gui/dialogs/nav_params/screen_estimator.py`.
-
-### Phase 2 - Runtime Facades
-
-These reduce the 1000+ line coordination files without changing algorithms.
-
-- Add idempotent `start_runtime()` / `stop_runtime()` to navigation mode.
-- Extract `NavigationIntentExecutor` from `NavigationModeWidget._execute_navigation_intent()`.
-- Extract `MappingSession` from `MappingWidget.capture_and_process()`.
-- Extract `NavigationConfigApplier` for applying `NavConfig` to `NavigationCore`, `PathFinder`, `MotionController`, and task controllers.
-- Extract `EventPanelAdapter` from navigation mode event dialog wiring.
-- Done for action events: `EventWorkbenchService` is the single lifecycle and
-  composition facade for local triggers, remote inbox, catalog exchange,
-  direct sends, and Host state output.
-
-### Phase 3 - Event Hooks and Packages
-
-Add extension points after lifecycle tests exist.
-
-- Introduce observational `EventHookBus`.
-- Emit hooks for observe start/end, detector candidates, task selected, handler action, task completed/failed/ignored.
-- Keep hooks out of portal-specific code unless a portal debug hook is explicitly needed.
-- Move portal defaults out of `core/events/config.py` toward event definitions/registry.
-- Convert `PortalEventHandler` string state into a phase enum and runtime dataclass.
-
-### Phase 4 - GUI Surface Cleanup
-
-These are valuable but should follow runtime extraction.
-
-- Convert navigation parameters to declarative field specs and generic config binding.
-- Keep `EventManagerDialog` mostly intact as the model for schema-driven forms.
-- Extract color picker preview mask/stats and path-controlled debug output.
-- Color picker debug output path is explicit through `gui/dialogs/color_picker/debug_output.py` and is now gated by `MINIMAP_COLOR_PICKER_DEBUG`.
-- Advanced-settings JSON snapshots now go through `gui/dialogs/advanced_settings/file_io.py` into `configs/advanced_settings/`, and preset values now live in `advanced_settings/presets.py`; direct parent mutation and tab extraction remain.
-- Stop `AdvancedSettingsDialog` from directly mutating parent recognizer/stitcher if it remains active.
-- Fix or remove mapping global-map click behavior depending on whether `ScalableMapWidget.pixel_clicked` is intended.
-
-### Phase 5 - Package Organization
-
-Only move files once interfaces are stable.
+事件工作台：
 
 ```text
-core/
-├── mapping/
-├── localization/
-├── recognition/
-├── routing/
-├── input/
-├── navigation_tasks/
-└── events/
-
-gui/
-├── app/
-├── modes/
-│   ├── mapping/
-│   └── navigation/
-└── dialogs/
+EventWorkbenchPage
+  -> application.event_workbench.EventWorkbenchService
+       -> core.events definitions/routes/session
+       -> adapters.windows.hotkeys
+       -> adapters.host.event_bridge
 ```
 
-## Cross-Module Rules
+## 路径与发布契约
 
-- Core modules must not import PySide widgets.
-- Event packages must not execute mouse/keyboard input directly; they return actions/intents.
-- Navigation task modules should emit `NavigationIntent`, not call `MotionController`.
-- GUI modules may adapt signals, timers, and widgets to core facades.
-- GUI event pages may hold editable drafts, but persisted identity, revision,
-  routing normalization, Host/LAN access, and execution state belong below the
-  GUI boundary.
-- Device effects must remain behind dedicated adapters. Pure action-event
-  modules may emit definitions, dispatches, or state frames, but must not
-  import PySide, Win32 APIs, Host clients, or LAN protocol commands.
-- Probes may write files and print diagnostics, but detector/planner/input algorithms should live in production modules.
+`src/auto_modules/paths.py` 是仓库和安装态的统一路径入口：
+
+- `repository_root()`：源码仓库或安装 payload 的 `app` 根目录。
+- `resource_root()`：默认 `<root>/resources`，支持 `AUTO_MODULES_RESOURCE_DIR`。
+- `data_root()`：默认 `<root>/data`，支持 `AUTO_MODULES_DATA_DIR`。
+
+安装 payload 保持 `app/main.py`、`app/src/auto_modules/` 和 `app/resources/`。安装器把默认配置、控制器 profile 和地图种子放在 `defaults/`，首次启动时只补缺失内容，不覆盖用户数据。
+
+## 验证规则
+
+1. 在最低可行层测试纯模块和算法。
+2. 在 adapter 层验证契约、超时、错误和副作用隔离。
+3. 在 application/UI 层验证组合关系，不用固定页面总数替代行为断言。
+4. 变更虚拟手柄、LAN、OCR 或桌面控制前先做调用链和影响面分析。
+5. 真实输入、真实 Host/LAN 同步和游戏内验证保持显式 opt-in；普通回归使用 fake、loopback 或 offscreen 环境。
+
+## 参考
+
+- [README.md](README.md)
+- [CODEBASE.md](CODEBASE.md)
+- [ITERATION_LOG.md](ITERATION_LOG.md)
+- [docs/plans/2026-09-18-repository-layout-design.md](docs/plans/2026-09-18-repository-layout-design.md)
+- [docs/plans/2026-09-18-repository-layout-implementation.md](docs/plans/2026-09-18-repository-layout-implementation.md)
+- [docs/architecture/zh-CN/ARCHITECTURE_GUIDE.md](docs/architecture/zh-CN/ARCHITECTURE_GUIDE.md)

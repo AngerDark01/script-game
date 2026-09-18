@@ -7,8 +7,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
-from gui.gamepad.host_manager import HostShutdownResult, HostStartResult
-from gui.main_window import MainWindow
+from auto_modules.ui.gamepad.host_manager import HostShutdownResult, HostStartResult
+from auto_modules.ui.main_window import MainWindow
 
 
 class _FakePage(QWidget):
@@ -50,11 +50,11 @@ class GamepadPageInMainWindowTests(unittest.TestCase):
 
     def test_main_window_exposes_gamepad_as_the_third_page_and_safely_shuts_it_down(self):
         manager = _FakeHostManager()
-        with patch("gui.main_window.GamepadPage", _FakePage):
+        with patch("auto_modules.ui.main_window.GamepadPage", _FakePage):
             window = MainWindow(gamepad_host_manager=manager)
             self.assertEqual(1, manager.start_calls)
-            self.assertEqual(5, window.stacked_widget.count())
-            self.assertEqual(5, len(window.mode_buttons))
+            self.assertEqual(2, window.stacked_widget.indexOf(window.gamepad_page))
+            self.assertIn(window.mode_btn_gamepad, window.mode_buttons)
 
             window.switch_mode(2)
             self.assertIs(window.gamepad_page, window.stacked_widget.currentWidget())

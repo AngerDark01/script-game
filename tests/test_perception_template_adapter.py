@@ -3,12 +3,12 @@ import unittest
 import cv2
 import numpy as np
 
-from core.perception.algorithms.template_adapter import ProviderBackedTemplateDetector
-from core.perception.algorithms import ProviderBackedTemplateDetector as PublicProviderBackedTemplateDetector
-from core.perception.builtins import create_template_detector
-from core.perception import AlgorithmProfile, FrameContext, PerceptionEngine, TargetProfile
-from core.perception.models import CoordinateSpace
-from core.perception.providers import TemplateResource, ProviderError
+from auto_modules.core.perception.algorithms.template_adapter import ProviderBackedTemplateDetector
+from auto_modules.core.perception.algorithms import ProviderBackedTemplateDetector as PublicProviderBackedTemplateDetector
+from auto_modules.core.perception.builtins import create_template_detector
+from auto_modules.core.perception import AlgorithmProfile, FrameContext, PerceptionEngine, TargetProfile
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.perception.providers import TemplateResource, ProviderError
 
 
 class MemoryTemplateProvider:

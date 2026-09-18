@@ -1,8 +1,8 @@
 import unittest
 
-from core.perception.models import CoordinateSpace
-from core.spatial.calibration import CoordinateMapper, fit_affine_transform
-from core.spatial.models import CoordinateAnchor, Point2D, WindowRect
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.spatial.calibration import CoordinateMapper, fit_affine_transform
+from auto_modules.core.spatial.models import CoordinateAnchor, Point2D, WindowRect
 
 
 class SpatialCalibrationTests(unittest.TestCase):

@@ -3,13 +3,13 @@ from unittest.mock import patch
 
 import numpy as np
 
-from core.perception import (
+from auto_modules.core.perception import (
     AlgorithmProfile,
     FrameContext,
     PerceptionEngine,
     TargetProfile,
 )
-from core.perception.pipeline import PerceptionPipeline
+from auto_modules.core.perception.pipeline import PerceptionPipeline
 
 
 class PerceptionEngineTests(unittest.TestCase):

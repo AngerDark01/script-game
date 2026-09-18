@@ -1,6 +1,6 @@
 import unittest
 
-from core.actions import (
+from auto_modules.core.actions import (
     ActionCommand,
     ActionKind,
     GamepadButtonTarget,
@@ -11,8 +11,8 @@ from core.actions import (
     VirtualControllerRoute,
     VirtualGamepadActionAdapter,
 )
-from virtual_gamepad.client.python import VirtualGamepadClient
-from virtual_gamepad.client.python.virtual_gamepad_client import JsonFileTransport
+from auto_modules.adapters.virtual_gamepad import VirtualGamepadClient
+from auto_modules.adapters.virtual_gamepad.virtual_gamepad_client import JsonFileTransport
 
 
 class _FakeGamepadDevice:

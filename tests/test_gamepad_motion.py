@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.actions import StickSlewLimiter
+from auto_modules.core.actions import StickSlewLimiter
 
 
 class StickSlewLimiterTests(unittest.TestCase):

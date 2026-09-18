@@ -1,16 +1,16 @@
 import unittest
 
-from core.events.coordinator import EventCoordinator
-from core.events.models import EventDetection, EventTick
-from core.events.monitor import EventMonitor
-from core.events.perception_adapter import (
+from auto_modules.core.events.coordinator import EventCoordinator
+from auto_modules.core.events.models import EventDetection, EventTick
+from auto_modules.core.events.monitor import EventMonitor
+from auto_modules.core.events.perception_adapter import (
     event_detection_to_target_detection,
     normalize_legacy_event_detections,
     target_detection_to_event_detection,
 )
-from core.events.registry import EventRegistry
-from core.perception.models import BoundingBox, CoordinateSpace, TargetDetection
-from core.shared.frame_registration import FrameRegistration
+from auto_modules.core.events.registry import EventRegistry
+from auto_modules.core.perception.models import BoundingBox, CoordinateSpace, TargetDetection
+from auto_modules.core.shared.frame_registration import FrameRegistration
 
 
 class _Config:

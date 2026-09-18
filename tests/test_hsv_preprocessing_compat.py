@@ -4,7 +4,7 @@ import unittest
 import cv2
 import numpy as np
 
-from core.vision.hsv_recognizer import HSVRecognizer
+from auto_modules.core.vision.hsv_recognizer import HSVRecognizer
 
 
 def fixture_image() -> np.ndarray:

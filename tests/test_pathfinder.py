@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from core.routing import PathFinder
+from auto_modules.core.routing import PathFinder
 
 
 class PathFinderTest(unittest.TestCase):

@@ -1,5 +1,5 @@
 import pytest
-from core.runtime.follow_config import FollowConfig,FollowConfigStore
+from auto_modules.application.follow.config import FollowConfig,FollowConfigStore
 
 
 def test_config_is_versioned_and_loading_never_starts_or_arms(tmp_path):

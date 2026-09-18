@@ -7,15 +7,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.perception.providers import ProviderUnavailableError
-from core.perception.providers.rapidocr_models import (
+from auto_modules.core.perception.providers import ProviderUnavailableError
+from auto_modules.adapters.perception.rapidocr_models import (
     RAPIDOCR_PPOCR_V6_MULTILINGUAL_SMALL,
     RapidOcrModelSpec,
     get_rapidocr_model_spec,
     list_rapidocr_model_specs,
     resolve_rapidocr_engine_options,
 )
-from utils.install_perception_ocr_model import install_rapidocr_model
+from tools.probes.install_perception_ocr_model import install_rapidocr_model
 
 
 class _BytesResponse(io.BytesIO):
@@ -63,7 +63,7 @@ class RapidOcrModelRegistryTests(unittest.TestCase):
             model_path.write_bytes(content)
             supplied_overrides = {"intra_op_num_threads": 7, "det_limit_side_len": 1280}
 
-            with patch("core.perception.providers.rapidocr_models.get_rapidocr_model_spec", return_value=spec):
+            with patch("auto_modules.adapters.perception.rapidocr_models.get_rapidocr_model_spec", return_value=spec):
                 options = resolve_rapidocr_engine_options(spec.model_id, temporary_directory, overrides=supplied_overrides)
 
             supplied_overrides["intra_op_num_threads"] = 99
@@ -72,7 +72,7 @@ class RapidOcrModelRegistryTests(unittest.TestCase):
             self.assertEqual(1, options["inter_op_num_threads"])
             self.assertEqual(1280, options["det_limit_side_len"])
 
-            with patch("core.perception.providers.rapidocr_models.get_rapidocr_model_spec", return_value=spec):
+            with patch("auto_modules.adapters.perception.rapidocr_models.get_rapidocr_model_spec", return_value=spec):
                 with self.assertRaisesRegex(ValueError, "rec_model_path"):
                     resolve_rapidocr_engine_options(
                         spec.model_id,
@@ -86,7 +86,7 @@ class RapidOcrModelInstallerTests(unittest.TestCase):
         project_root = Path(__file__).resolve().parents[1]
 
         completed = subprocess.run(
-            [sys.executable, "utils/install_perception_ocr_model.py", "--help"],
+            [sys.executable, "tools/probes/install_perception_ocr_model.py", "--help"],
             cwd=project_root,
             capture_output=True,
             text=True,
@@ -105,7 +105,7 @@ class RapidOcrModelInstallerTests(unittest.TestCase):
             final_path = destination / spec.file_name
             final_path.write_bytes(b"old invalid model")
 
-            with patch("utils.install_perception_ocr_model.get_rapidocr_model_spec", return_value=spec):
+            with patch("tools.probes.install_perception_ocr_model.get_rapidocr_model_spec", return_value=spec):
                 installed = install_rapidocr_model(
                     spec.model_id,
                     destination,
@@ -126,7 +126,7 @@ class RapidOcrModelInstallerTests(unittest.TestCase):
             original_content = b"keep this old file until a verified replacement exists"
             final_path.write_bytes(original_content)
 
-            with patch("utils.install_perception_ocr_model.get_rapidocr_model_spec", return_value=spec):
+            with patch("tools.probes.install_perception_ocr_model.get_rapidocr_model_spec", return_value=spec):
                 with self.assertRaisesRegex(ProviderUnavailableError, "checksum"):
                     install_rapidocr_model(
                         spec.model_id,

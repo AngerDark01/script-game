@@ -5,7 +5,7 @@ import unittest
 
 class ActionPublicApiTests(unittest.TestCase):
     def test_keyboard_and_virtual_gamepad_adapters_are_publicly_available(self):
-        from core.actions import (
+        from auto_modules.core.actions import (
             ActionAdapter,
             ActionCommand,
             KeyboardActionAdapter,

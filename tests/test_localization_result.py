@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from core.localization import LocalizationResult, NavigationCore
-from core.perception.models import CoordinateSpace
-from core.shared.frame_registration import FrameRegistration
+from auto_modules.core.localization import LocalizationResult, NavigationCore
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.shared.frame_registration import FrameRegistration
 
 
 class LocalizationResultFacadeTests(unittest.TestCase):

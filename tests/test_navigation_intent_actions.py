@@ -1,13 +1,13 @@
 import unittest
 
-from core.actions import ActionCommand, ActionKind, ActionResult, KeyboardTarget, PointerTarget
-from core.navigation_tasks.models import NavigationIntent, NavigationIntentType
-from gui.modes.navigation.input.actions import (
+from auto_modules.core.actions import ActionCommand, ActionKind, ActionResult, KeyboardTarget, PointerTarget
+from auto_modules.core.navigation_tasks.models import NavigationIntent, NavigationIntentType
+from auto_modules.ui.modes.navigation.input.actions import (
     MapMovementAction,
     PrimitiveNavigationAction,
     translate_navigation_intent,
 )
-from gui.modes.navigation.input.intent_executor import execute_navigation_intent
+from auto_modules.ui.modes.navigation.input.intent_executor import execute_navigation_intent
 
 
 class _MotionController:

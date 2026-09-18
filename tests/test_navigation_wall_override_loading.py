@@ -6,9 +6,9 @@ import unittest
 
 import numpy as np
 
-from core.localization import NavigationCore
-from core.map_editing.models import WallOverrideDocument
-from core.map_editing.storage import save_wall_overrides
+from auto_modules.core.localization import NavigationCore
+from auto_modules.core.map_editing.models import WallOverrideDocument
+from auto_modules.core.map_editing.storage import save_wall_overrides
 
 
 class NavigationWallOverrideLoadingTests(unittest.TestCase):

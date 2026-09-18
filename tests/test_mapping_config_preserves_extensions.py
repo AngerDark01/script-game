@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from gui.modes.mapping.io.config_store import save_map_config
+from auto_modules.ui.modes.mapping.io.config_store import save_map_config
 
 
 class MappingConfigPreservationTests(unittest.TestCase):

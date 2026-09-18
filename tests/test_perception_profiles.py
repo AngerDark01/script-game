@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.perception.profile_store import load_target_profile, save_target_profile
-from core.perception.profiles import AlgorithmProfile, TargetProfile
+from auto_modules.core.perception.profile_store import load_target_profile, save_target_profile
+from auto_modules.core.perception.profiles import AlgorithmProfile, TargetProfile
 
 
 class PerceptionProfilesTests(unittest.TestCase):

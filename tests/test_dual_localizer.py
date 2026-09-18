@@ -1,8 +1,8 @@
 import numpy as np
-from core.perception.models import FrameContext, CoordinateSpace, TargetDetection
-from core.localization.local_matcher import LocalMapMatcher
-from core.localization.map_runtime import MapRuntime
-from core.localization.dual_localizer import MultiMarkerLocalizer
+from auto_modules.core.perception.models import FrameContext, CoordinateSpace, TargetDetection
+from auto_modules.core.localization.local_matcher import LocalMapMatcher
+from auto_modules.core.localization.map_runtime import MapRuntime
+from auto_modules.core.localization.dual_localizer import MultiMarkerLocalizer
 
 
 class Marks:

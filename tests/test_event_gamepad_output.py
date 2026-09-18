@@ -1,6 +1,6 @@
 import unittest
 
-from core.events.gamepad_output import state_from_inputs
+from auto_modules.core.events.gamepad_output import state_from_inputs
 
 
 class EventGamepadOutputTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 import pytest
 
-from core.events.action_tracks import ActionTrack, TrackMode
-from core.events.event_lifecycle import EventLifecycle, validate_parallel_step
+from auto_modules.core.events.action_tracks import ActionTrack, TrackMode
+from auto_modules.core.events.event_lifecycle import EventLifecycle, validate_parallel_step
 
 
 def test_event_stops_at_first_limit_and_clears_tracks():

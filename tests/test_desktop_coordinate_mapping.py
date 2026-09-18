@@ -1,8 +1,8 @@
 import unittest
 
-from core.perception.models import CoordinateSpace
-from core.spatial import Point2D
-from core.spatial.desktop_mapping import DesktopCoordinateMapper, ScreenGeometry, physical_screen_point
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.spatial import Point2D
+from auto_modules.core.spatial.desktop_mapping import DesktopCoordinateMapper, ScreenGeometry, physical_screen_point
 
 
 class DesktopCoordinateMapperTests(unittest.TestCase):

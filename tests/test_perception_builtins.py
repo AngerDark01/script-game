@@ -1,7 +1,7 @@
 import unittest
 
-from core.perception.algorithms.color import ColorRegionDetector
-from core.perception.builtins import create_default_algorithm_registry
+from auto_modules.core.perception.algorithms.color import ColorRegionDetector
+from auto_modules.core.perception.builtins import create_default_algorithm_registry
 
 
 class PerceptionBuiltinsTests(unittest.TestCase):

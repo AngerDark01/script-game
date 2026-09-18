@@ -1,9 +1,9 @@
 import numpy as np
-from core.runtime.dual_follow_session import DualFollowSession
-from core.runtime.follower_controller import FollowerController
-from core.events.registry import EventRegistry
-from core.events.follow_chain import FollowChainDefinition
-from core.lan_follow.follow_transport import SharedEvent,SharedPosition
+from auto_modules.application.follow.dual_session import DualFollowSession
+from auto_modules.application.follow.controller import FollowerController
+from auto_modules.core.events.registry import EventRegistry
+from auto_modules.core.events.follow_chain import FollowChainDefinition
+from auto_modules.core.lan_follow import SharedEvent,SharedPosition
 
 
 class Output:

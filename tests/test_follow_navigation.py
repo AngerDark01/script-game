@@ -1,8 +1,8 @@
 import numpy as np
-from core.routing.follow_target import FollowTargetGenerator
-from core.routing.follower_planner import FollowerPlanner
-from core.routing.vector_tracker import VectorPathTracker
-from core.routing.stuck_recovery import ProgressWatchdog
+from auto_modules.core.routing.follow_target import FollowTargetGenerator
+from auto_modules.core.routing.follower_planner import FollowerPlanner
+from auto_modules.core.routing.vector_tracker import VectorPathTracker
+from auto_modules.core.routing.stuck_recovery import ProgressWatchdog
 
 
 def test_target_follows_leader_trail_instead_of_cutting_corner():
@@ -46,7 +46,7 @@ def test_stuck_requires_fresh_elapsed_progress_and_resets_on_pause():
 
 
 def test_follow_smoothing_does_not_cut_diagonal_wall_corner():
-    from core.routing.geometry import line_is_walkable
+    from auto_modules.core.routing.geometry import line_is_walkable
     walls = np.zeros((6, 6), np.uint8)
     walls[1, 2] = 255
     planner = FollowerPlanner(walls, downsample_factor=1)

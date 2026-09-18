@@ -1,8 +1,8 @@
 import unittest
 
-from core.actions import ActionCommand, ActionKind, ActionRequest, MouseActionAdapter, PointerTarget
-from core.perception.models import CoordinateSpace
-from core.spatial import MappedPoint, Point2D
+from auto_modules.core.actions import ActionCommand, ActionKind, ActionRequest, MouseActionAdapter, PointerTarget
+from auto_modules.core.perception.models import CoordinateSpace
+from auto_modules.core.spatial import MappedPoint, Point2D
 
 
 class _FakeMouseDevice:

@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from gui.gamepad.host_manager import GamepadHostManager
+from auto_modules.ui.gamepad.host_manager import GamepadHostManager
 
 
 class _FakeClient:

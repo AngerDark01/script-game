@@ -16,7 +16,7 @@ sys.modules["pydirectinput"] = types.SimpleNamespace(
     position=lambda: (11, 22),
 )
 
-from core.input import MotionController
+from auto_modules.adapters.input import MotionController
 
 
 class FakeInputDriver:

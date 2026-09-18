@@ -1,6 +1,6 @@
 import pytest
 
-from core.events.periodic_schedule import PeriodicSchedule
+from auto_modules.core.events.periodic_schedule import PeriodicSchedule
 
 
 def test_fixed_cadence_skips_missed_ticks_and_busy_cycles():

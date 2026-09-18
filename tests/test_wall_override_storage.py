@@ -7,8 +7,8 @@ import unittest
 
 import numpy as np
 
-from core.map_editing.models import WallOverrideDocument
-from core.map_editing.storage import load_wall_overrides, save_wall_overrides
+from auto_modules.core.map_editing.models import WallOverrideDocument
+from auto_modules.core.map_editing.storage import load_wall_overrides, save_wall_overrides
 
 
 class WallOverrideStorageTests(unittest.TestCase):

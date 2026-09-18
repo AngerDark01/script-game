@@ -1,7 +1,7 @@
 import numpy as np
-from core.perception.models import CoordinateSpace, FrameContext
-from core.perception.algorithms.color import ColorRegionDetector
-from core.localization.marker_detector import MarkerSetDetector
+from auto_modules.core.perception.models import CoordinateSpace, FrameContext
+from auto_modules.core.perception.algorithms.color import ColorRegionDetector
+from auto_modules.core.localization.marker_detector import MarkerSetDetector
 
 
 def detectors():

@@ -3,9 +3,9 @@ import unittest
 import cv2
 import numpy as np
 
-from core.perception.algorithms.color import ColorRegionDetector
-from core.perception.algorithms.template import TemplateDetector
-from core.perception.models import CoordinateSpace, FrameContext
+from auto_modules.core.perception.algorithms.color import ColorRegionDetector
+from auto_modules.core.perception.algorithms.template import TemplateDetector
+from auto_modules.core.perception.models import CoordinateSpace, FrameContext
 
 
 class PerceptionAlgorithmsTests(unittest.TestCase):

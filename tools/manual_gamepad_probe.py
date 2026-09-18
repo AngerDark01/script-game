@@ -1,5 +1,5 @@
 import time
-from virtual_gamepad.client.python.virtual_gamepad_client import VirtualGamepadClient
+from auto_modules.adapters.virtual_gamepad.virtual_gamepad_client import VirtualGamepadClient
 
 client = VirtualGamepadClient()
 client.connect()

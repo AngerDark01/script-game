@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from core.map_editing.snapshot_operations import WallLayerPatch, apply_wall_brush
+from auto_modules.core.map_editing.snapshot_operations import WallLayerPatch, apply_wall_brush
 
 
 class WallSnapshotOperationTests(unittest.TestCase):

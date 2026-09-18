@@ -4,11 +4,11 @@ from functools import partial
 from queue import Empty
 import time
 import numpy as np
-from core.runtime.follow_config import FollowConfig
-from core.runtime.follow_resources import load_follow_maps
-from core.runtime.follow_workers import actor_worker,clock_ms,put_latest,latest
-from core.actions.program_gamepad import host_clock_ms
-from core.lan_follow.follow_transport import SharedPosition
+from auto_modules.application.follow.config import FollowConfig
+from auto_modules.application.follow.resources import load_follow_maps
+from auto_modules.application.follow.workers import actor_worker,clock_ms,put_latest,latest
+from auto_modules.adapters.virtual_gamepad import host_clock_ms
+from auto_modules.core.lan_follow import SharedPosition
 
 
 class RecordingClient:

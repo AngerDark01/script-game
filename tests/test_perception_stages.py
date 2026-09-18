@@ -1,13 +1,13 @@
 import unittest
 
-from core.perception.algorithms.base import AlgorithmDescriptor
-from core.perception.models import CoordinateSpace, DetectionEvidence, TargetDetection
-from core.perception.profiles import AlgorithmProfile, TargetProfile
-from core.perception.registry import AlgorithmRegistry
-from core.perception.stages.confirmation import ConfirmationTracker
-from core.perception.stages.fusion import fuse_candidates
-from core.perception.stages.runner import DetectorRunner
-from core.perception.stages.selection import select_candidate
+from auto_modules.core.perception.algorithms.base import AlgorithmDescriptor
+from auto_modules.core.perception.models import CoordinateSpace, DetectionEvidence, TargetDetection
+from auto_modules.core.perception.profiles import AlgorithmProfile, TargetProfile
+from auto_modules.core.perception.registry import AlgorithmRegistry
+from auto_modules.core.perception.stages.confirmation import ConfirmationTracker
+from auto_modules.core.perception.stages.fusion import fuse_candidates
+from auto_modules.core.perception.stages.runner import DetectorRunner
+from auto_modules.core.perception.stages.selection import select_candidate
 
 
 class PerceptionStageTests(unittest.TestCase):
