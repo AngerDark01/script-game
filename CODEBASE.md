@@ -177,6 +177,8 @@ gui/modes/mapping/io/__init__.py - 绘图模式 IO helper 包入口。
 gui/modes/mapping/io/config_store.py - 绘图模式项目路径、map_data 目录、config.json 读写和 mapping config payload 构造 helper。
 gui/modes/mapping/io/config_restore.py - 绘图模式启动配置恢复编排，负责根配置读取、AppContext 写回、capture selection 恢复和 Qt 控件同步。
 gui/modes/mapping/io/map_save.py - 绘图模式保存地图包和地图级 config 的 IO 编排 helper。
+gui/modes/events/__init__.py - 事件工作台 GUI 包入口，导出 `EventWorkbenchPage`。
+gui/modes/events/workbench.py - 事件定义、路由、运行状态和远程发送的 Qt 展示/编辑适配器；仅依赖 `EventWorkbenchService`，不直接读写 JSON 或访问 Host/LAN。
 core/routing/__init__.py - 路径规划系统包入口，聚合 obstacles/pathfinder/geometry/anchors/route_repository。
 core/routing/obstacles.py - 从原始 wall_layer 派生 A* 专用的宽容障碍层，不改变定位用墙图。
 core/routing/pathfinder/__init__.py - A* pathfinder package 入口，导出 `PathFinder`。
@@ -306,6 +308,15 @@ core/navigation_tasks/debug.py - 将导航任务日志写入事件运行日志�
 architecture_docs/zh-CN/core/FACADE_EXTRACTION_METHOD.md - core facade 逐步抽取方法论，说明旧入口保留、分类 helper、pipeline helper 和每轮验证流程。
 core/input/controller.py - `MotionController` 正式类入口，拥有输入控制运行态并委托 motion_controller helper 包。
 core/input/action_adapter.py - 通用 primitive `ActionCommand` 到现有 `MotionController` 点击/按键策略的兼容 backend adapter。
+core/events/automation/__init__.py - 通用动作事件定义、路由和执行能力的稳定导出入口。
+core/events/automation/definitions.py - 本机/远程共用的事件定义解析、稳定身份、revision、owner、tombstone 和目录解析仓库。
+core/events/automation/routes.py - 中英文旧路由值规范化、路由文件仓库和无副作用 trigger-to-dispatch 决策。
+core/events/automation/execution.py - 按 `(source, controller)` 隔离的本机/远程共享事件执行器，输出完整 XInput 状态帧。
+core/runtime/event_service/__init__.py - 事件工作台服务与平台适配器的公共入口。
+core/runtime/event_service/models.py - 热键来源、Host bridge Protocol 与不可变工作台状态契约。
+core/runtime/event_service/host_bridge.py - 唯一 `event.*` / `sync.share.*` Host/LAN 命令适配器。
+core/runtime/event_service/hotkeys.py - 可注入读取器的 Win32 热键按下边沿适配器。
+core/runtime/event_service/service.py - 本机触发、A->B/C 广播、远程接收、目录同步、状态输出和生命周期的单一组合根。
 core/events/models.py - 事件系统通用数据结构和动作类型。
 core/events/config.py - 事件配置兼容 facade，re-export 配置模型、IO 和 TUI 事件选项输出。
 core/events/config_model.py - `EventSystemConfig`、默认事件配置、deep merge 和 legacy detector mode 兼容。
@@ -393,6 +404,8 @@ docs/plans/2026-05-23-portal-event-case-study.md - 以传送门为案例固化�
 docs/plans/2026-05-24-navigation-route-progress-option-b-design.md - 导航冲突方案 B 设计：保留现有普通导航和事件移动执行器，新增统一路线进度/锚点消费模型。
 docs/plans/2026-05-24-navigation-task-queue-option-c-design.md - 导航冲突方案 C 设计：把必经点、出口和事件抽象成统一 NavigationTask，由统一任务队列状态机调度。
 docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md - 用户选定方案 C 后的详细实施计划，按 RouteContext、MovementExecutor、EventCoordinator 拆分、TaskBuilder/Scheduler/Controller、UI 接入和旧逻辑清理分阶段执行。
+docs/plans/2026-09-18-unified-event-runtime-design.md - 统一动作事件定义、路由、执行、Host/LAN 适配与 GUI 边界的批准设计。
+docs/plans/2026-09-18-unified-event-runtime-implementation.md - 统一事件运行时的 TDD 实施与删除旧平行实现计划。
 architecture_docs/zh-CN/core/CORE_MODULARIZATION_PLAN.md - core 专项模块化迁移计划，记录对外接口冻结、compatibility wrapper、目标包结构、逐文件迁移映射和阶段实施顺序。
 architecture_docs/zh-CN/core/ARCHITECTURE_OPTIMIZATION_RULES.md - core 后续优化判断准则，明确不按固定行数拆分，而按模块深度、依赖方向、复用价值和状态局部性判断。
 architecture_docs/zh-CN/core/CORE_OPTIMIZATION_PLAN_V2.md - core 下一阶段优化方案，按规则规划 route progress、localization evidence、diagnostics formatting 和 EventAction/NavigationIntent seam。
@@ -402,6 +415,13 @@ tests/test_navigation_params_compat.py - 导航旧 `nav_preferences` 字段读�
 tests/test_nav_params_screen_estimator.py - 导航参数点击半径估算 helper 边界测试。
 tests/test_color_picker_debug_output.py - 颜色选择器预览 debug 输出开关测试。
 tests/test_motion_controller.py - 点击半径夹紧逻辑测试。
+tests/test_event_definition_repository.py - 统一定义解析、稳定身份、revision、设备 owner、草稿复制和 tombstone 传播测试。
+tests/test_event_routes.py - 路由旧值规范化、持久化和纯 dispatch 测试。
+tests/test_event_execution_runtime.py - source/controller 隔离、定义快照与 neutral frame 测试。
+tests/test_event_workbench_ui.py - 注入假服务的事件工作台 Qt 边界测试。
+core/runtime/tests/test_event_host_bridge.py - Host/LAN 精确命令与 payload 测试。
+core/runtime/tests/test_event_hotkeys.py - 热键边沿、支持键名和未知键忽略测试。
+core/runtime/tests/test_event_workbench_service.py - 本机/远程统一编排、目录同步、fanout、deadline 和幂等关闭测试。
 ```
 
 ## 3. 架构全景
@@ -447,6 +467,35 @@ Level 3: navigation click path
 ┌──────────────────────┐
 │ Win32 mouse_event    │
 └──────────────────────┘
+```
+
+```text
+Level 3: unified action-event path
+┌───────────────────────┐
+│ EventWorkbenchPage    │
+│ edit / render / toggle│
+└───────────┬───────────┘
+            ▼ service contract
+┌──────────────────────────────┐
+│ EventWorkbenchService        │
+│ definitions + routes + loop  │
+└──────┬──────────┬────────────┘
+       │          │
+       ▼          ▼
+┌────────────┐  ┌─────────────────────┐
+│ Hotkey edge│  │ catalog/event inbox │
+└──────┬─────┘  └──────────┬──────────┘
+       └──────────┬────────┘
+                  ▼
+       ┌────────────────────────┐
+       │ EventExecutionRuntime  │
+       │ source × controller    │
+       └───────────┬────────────┘
+                   ▼ EventStateFrame
+       ┌────────────────────────┐
+       │ HostEventBridge        │
+       │ event.* / sync.share.* │
+       └────────────────────────┘
 ```
 
 ## 4. 模块与文件详解
@@ -1250,6 +1299,114 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 关键导出：`PortalEventDefinition`。
 对外依赖：`core.events.detectors.template_matcher`、`core.events.types.portal.minimap_feature_matcher`、`core.events.types.portal.minimap_shape_color`、`core.events.types.portal.main_view_confirmer`。
 注意事项：小地图 detector 的识别算法由 `PortalEventConfig.detector_mode` 选择：`template` 只走旧灰度/边缘整块模板；`feature` 只走蓝色本体特征；`feature_then_template` 先走蓝色本体特征、无命中再回退整块模板；`shape_color` 走形状+颜色联合匹配，当前默认使用它压低蓝色相似物误识别。旧配置只含 `feature_detector_enabled` 且没有 `detector_mode` 时仍会兼容映射为旧 feature/template 行为。`PortalMinimapDetector` 现在只保留模板缓存、feature signature 和日志节流状态，mode 选择/命中调用在 `minimap_detection/modes.py`，no-hit/rejected/best-hit 日志在 `minimap_detection/diagnostics.py`，hit 颜色过滤、`minimap_nms_radius` 局部重复合并和 `EventDetection` metadata 构造在 `minimap_detection/conversion.py`。`minimap_feature_matcher/` 当前是同名算法 package：models/masks/templates/response/pipeline 分别承接 DTO、HSV 蓝色 mask、模板准备、响应图峰值提取和主匹配/合并流程。shape+color 同时要求蓝色核心、白/灰外环、组合轮廓、边缘和 HSV 颜色一致，适合压住“蓝色相似但不是传送门”的误报。命中后仍必须通过 `minimap_hit_filter.portal_color_check()`，避免白色墙体、圆形地形细节被识别成传送门。2026-06-04 日志审计发现最近运行仍使用 `feature_then_template` 内存配置，而当前 `map_data/A/event_config.json` 已保存为 `shape_color`；同一轮日志中重复 portal task 的稳定坐标相距约 70-85px，旧 `localization_cluster_radius=56`、`dedupe_radius=32` 无法合并，已改为默认 96 并暴露到事件参数面板。当前传送门主流程是靠近后点击映射传送门点、短暂等待、再按 `D`；即使配置残留 `interaction="click"`，`PortalEventHandler` 也会强制按键交互并记录日志，不再要求主画面蓝紫实体确认。按键/点击后 handler 等待位置变化或小地图周边环境变化才判定传送完成，避免固定等待导致误完成；完成动作会携带入口和出口坐标，runner 将出口附近的传送门任务也标记 completed，防止双门来回触发。`PortalEventHandler` 当前是 `handler/` package：`runtime.py` 保留 handler 状态和 public API，movement/interaction/completion/diagnostics helper 分别承接状态机阶段。
+
+### `core/events/automation/__init__.py`
+职责：作为动作事件纯能力包的稳定入口，聚合定义、路由、dispatch、执行器和状态帧类型。
+关键导出：`EventDefinitionRepository`、`ExecutableEventDefinition`、`parse_event_definition`、`EventRoute`、`EventDispatch`、`EventRouteRepository`、`EventRouter`、`EventExecutionRuntime`、`EventStateFrame`。
+对外依赖：`core.events.automation.definitions`、`routes`、`execution`。
+注意事项：入口不导出平台适配器，调用方需要真实热键或 Host/LAN 时应显式依赖 `core.runtime.event_service`。
+
+### `core/events/automation/definitions.py`
+职责：提供本机和远程事件记录的唯一可执行解析路径，并集中管理稳定 ID、owner、revision、草稿身份剥离、目录 payload 与远程身份解析。
+关键导出：`ExecutableEventDefinition`、`parse_event_definition()`、`new_event_draft()`、`EventDefinitionRepository`。
+对外依赖：`core.events.action_tracks`、`core.events.event_catalog.EventRecord`、`core.events.event_store.EventStore`。
+注意事项：`save_local()` 只在定义内容变化时增加 revision；缺失的旧活动记录被写成同 ID、revision+1 的 tombstone。`set_device_id()` 只重绑本机记录 owner，不改变 ID/revision。返回的执行定义和草稿均深拷贝，避免 GUI 或运行中 session 反向修改持久化记录。
+
+### `core/events/automation/routes.py`
+职责：把 `routes.json` 的中英文历史值规范化为类型化路由，并把 trigger 纯转换为本机或远程 `EventDispatch`。
+关键导出：`EventRoute`、`EventDispatch`、`EventRouteRepository`、`EventRouter`。
+对外依赖：仅标准库 `json`、`dataclasses`、`pathlib`、`typing`。
+注意事项：只接受 controller 1/2/1+2 与 local/paired 端点；未知值立即 `ValueError`。该文件不轮询按键、不访问 Host/LAN、也不执行事件。
+
+### `core/events/automation/execution.py`
+职责：用现有 `EventSession` 执行规范化定义，并把每个来源和手柄的输出转换为完整 XInput 状态帧。
+关键导出：`EventStateFrame`、`EventExecutionRuntime`。
+对外依赖：`core.runtime.event_session.EventSession`、`core.events.gamepad_output.state_from_inputs`、`core.events.automation.definitions`。
+注意事项：session key 是 `(normalized_source, controller)`；本机/远程互不覆盖。定义替换只更新 session 的 definitions 映射，`EventSession` 已启动 lifecycle 仍持有启动时快照。该模块没有线程循环、文件、GUI、Host 或 LAN 依赖。
+
+### `core/events/event_store.py`
+职责：持久化本机可编辑事件和远程只读目录，完成 legacy 记录迁移、revision 比较和 tombstone 可见性过滤。
+关键导出：`EventStore`；新增 `local_catalog()` 返回含 tombstone 的完整 owner catalog，`local()` 只返回活动记录。
+对外依赖：`core.events.event_catalog.EventRecord`、`migrate_events`。
+注意事项：`apply_remote()` 只接受 revision 更高的记录；远程 tombstone 保留在文件中但被 `remote()` 隐藏。目录发布必须调用含 tombstone 的路径，否则删除无法传播。
+
+### `core/runtime/event_service/__init__.py`
+职责：作为事件工作台平台服务的公共导出入口。
+关键导出：`EventWorkbenchService`、`EventWorkbenchStatus`、`HostEventBridge`、`HotkeyTriggerSource`。
+对外依赖：同包 `service`、`models`、`host_bridge`、`hotkeys`。
+注意事项：GUI 应从此入口依赖组合服务；纯 core 算法不应从这里反向导入平台能力。
+
+### `core/runtime/event_service/models.py`
+职责：定义服务所需的可注入 trigger/Host Protocol 与不可变 UI 状态快照。
+关键导出：`EventTriggerSource`、`EventHostBridge`、`EventWorkbenchStatus`。
+对外依赖：`core.events.automation.execution.EventStateFrame`。
+注意事项：Protocol 使服务测试不需要真实 Windows、Host 或网络；`peer_errors` 独立保存 fanout 的单 peer 错误，不把它升级为整条服务失败。
+
+### `core/runtime/event_service/host_bridge.py`
+职责：把类型化服务调用翻译为现有虚拟手柄 Host/LAN JSON-lines 命令，是事件路径唯一协议字符串所有者。
+关键导出：`HostEventBridge`。
+对外依赖：`core.events.automation.execution.EventStateFrame`；默认运行时延迟导入 `virtual_gamepad.client.python.VirtualGamepadClient`。
+注意事项：事件 inbox 使用 `sync.share.drain`，目录 inbox 单独使用 `sync.share.catalog_drain`，两者不能互相消费；`write_state()` 保留 source/controller/TTL，`close()` 幂等。
+
+### `core/runtime/event_service/hotkeys.py`
+职责：把 Windows key state 转换为一次按下只发一个 trigger 的边沿事件。
+关键导出：`HotkeyTriggerSource`。
+对外依赖：默认读取器在 Windows 上延迟导入 `ctypes`；测试可注入 `Callable[[int], bool]`。
+注意事项：支持 F1-F12、A-Z、SPACE 和方向键；未知键不调用平台读取器。模块可在非 Windows 环境导入，只有使用默认读取器时才抛 `RuntimeError`。
+
+### `core/runtime/event_service/service.py`
+职责：动作事件工作台的唯一组合根和长期 worker owner，统一本机触发、远程 inbox、目录交换、A->B/C fanout、直接发送、执行帧写入与 shutdown 清理。
+关键导出：`EventWorkbenchService`、`LOCAL_SOURCE="event:local"`、`REMOTE_SOURCE="event:remote"`。
+对外依赖：纯 `core.events.automation` 模块、`HostEventBridge`、`HotkeyTriggerSource`、`EventWorkbenchStatus` 与 Host deadline clock。
+注意事项：服务对 UI 暴露深拷贝记录和不可变状态，不暴露 client/runtime 实例。worker 是长期 bridge 的唯一 owner；直接发送使用独立短连接。原 `LocalEventRuntime`、`RemoteEventRuntime`、`EventCatalogRuntime`、`RemoteEventSender` 已删除，不保留兼容壳。
+
+### `gui/modes/events/workbench.py`
+职责：渲染事件库、路由表、运行状态、最近日志和直接发送表单，并把用户命令转交注入的 `EventWorkbenchService`。
+关键导出：`EventWorkbenchPage`、`KEY_OPTIONS`、`CONTROLLER_SELECTIONS`。
+对外依赖：PySide6、`core.runtime_paths.data_root`、`core.runtime.event_service.EventWorkbenchService`、`ChainEditor`。
+注意事项：页面不理解事件 ID/revision/owner 的生成规则，不读写事件/路由/日志文件，不创建 Host client。复制事件通过 `service.new_event_draft()` 去除持久化身份；`shutdown()` 停 Qt timer 后只关闭统一服务且可重复调用。
+
+### `tests/test_event_definition_repository.py`
+职责：验证本机/远程统一解析、稳定身份、版本变更、owner 重绑、草稿复制、legacy fallback 与 tombstone 删除传播。
+关键导出：pytest 测试函数，无生产导出。
+对外依赖：`EventDefinitionRepository`、临时目录 JSON fixture。
+注意事项：全程离线，不创建 Host/client；用文件内容验证持久化契约。
+
+### `tests/test_event_routes.py`
+职责：验证中英文 route 兼容、controller 组合、纯 dispatch 和非法记录拒绝。
+关键导出：pytest 测试函数，无生产导出。
+对外依赖：`EventRoute`、`EventRouteRepository`、`EventRouter`。
+注意事项：测试明确要求 router 不做 IO side effect。
+
+### `tests/test_event_execution_runtime.py`
+职责：验证本机/远程共享执行器、source/controller 隔离、定义快照、neutral cancel frame 和非法 controller 拒绝。
+关键导出：pytest 测试函数，无生产导出。
+对外依赖：`parse_event_definition`、`EventExecutionRuntime`。
+注意事项：使用注入时钟，不发送真实 XInput report。
+
+### `core/runtime/tests/test_event_host_bridge.py`
+职责：以假 client 固定 Host/LAN 命令名、payload、数据 peer 过滤、独立 drain 与幂等关闭契约。
+关键导出：`FakeClient` 和 pytest 测试函数。
+对外依赖：`HostEventBridge`、`EventStateFrame`。
+注意事项：不连接命名管道；命令序列断言防止目录 drain 再次偷取消费事件 inbox。
+
+### `core/runtime/tests/test_event_hotkeys.py`
+职责：验证按下边沿、松开重装、UI 全部键名和未知键忽略。
+关键导出：pytest 测试函数，无生产导出。
+对外依赖：`HotkeyTriggerSource`。
+注意事项：注入内存 key-state 函数，不调用 Win32。
+
+### `core/runtime/tests/test_event_workbench_service.py`
+职责：在假 bridge/trigger 上验证统一服务的本机执行、远程接收、目录更新、fanout 故障隔离、source 清理、直接发送 deadline 与幂等 shutdown。
+关键导出：`TriggerSource`、`FakeBridge` 和 pytest 测试函数。
+对外依赖：`EventWorkbenchService`。
+注意事项：不会启动 service thread 或真实同步；测试直接调用 `tick_once()` 获得确定性。
+
+### `tests/test_event_workbench_ui.py`
+职责：验证事件页面是纯服务 adapter，覆盖加载、保存、复制、启停、发送、日志和关闭。
+关键导出：`FakeEventWorkbenchService` 和 offscreen Qt 测试。
+对外依赖：`EventWorkbenchPage`、`EventWorkbenchStatus`、PySide6 offscreen backend。
+注意事项：断言页面没有在临时 root 创建文件，因此 JSON 持久化不能重新泄漏到 GUI。
 
 ## 5. 函数索引与算法实现
 ### `memory.merge.merge_event_observations(memory, observations: Iterable[EventObservation], config, now_ms: int) -> None`
@@ -3620,6 +3777,142 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 5. `ProviderBackedOcrDetector.detect()` applies exact/contains/regex, case, and OCR-confidence rules. Each surviving span becomes `TargetDetection(target_type, center, bbox, coordinate_space, text, evidence)`, which can enter generic selection/fusion without knowing it came from OCR.
 6. `PerceptionEngine._run_stages()` applies existing confidence filtering, geometry fusion, temporal confirmation, and selection, then returns `PerceptionRunResult`. A future `CoordinateMapper` and workflow consume the same standard detection contract used by template, shape, and color algorithms.
 
+### `definitions.new_event_draft(source: Mapping | None = None) -> dict`
+```python
+def new_event_draft(source: Mapping | None = None) -> dict
+```
+行为：深拷贝事件定义并移除 catalog 身份字段，供新建/复制使用。
+算法：1. 把空 source 规范为 `{}`。2. 遍历键值。3. 跳过 `id/owner_device_id/revision/updated_at/deleted/content_hash`。4. 深拷贝其余 definition 字段并返回。
+副作用：无。
+失败行为：source 无法转换为 dict 时传播 `TypeError`/`ValueError`。
+调用关系：called by `EventDefinitionRepository.new_draft()`；经 `EventWorkbenchService.new_event_draft()` 被 GUI 调用。
+
+### `definitions.parse_event_definition(record: Mapping) -> ExecutableEventDefinition`
+```python
+def parse_event_definition(record: Mapping) -> ExecutableEventDefinition
+```
+行为：把本机或远程 catalog record 转为唯一可执行快照。
+算法：1. 规范化并校验非空名称。2. 逐条调用 `_parse_track()`，把 mode、buttons、hold/interval/end 转成不可变 `ActionTrack`。3. 深拷贝 steps。4. 把可选 max_runs/end_ms 转成 int。5. 复制稳定 ID、owner、revision 和 loop，构造 frozen dataclass。
+副作用：无。
+失败行为：空名称抛 `ValueError`；未知 `TrackMode` 或非法数值传播 `ValueError`/`TypeError`。
+调用关系：called by `EventDefinitionRepository.definitions()`；calls `_parse_track()`。
+
+### `EventDefinitionRepository.set_device_id(self, device_id: str) -> None`
+```python
+def set_device_id(self, device_id: str) -> None
+```
+行为：Host 身份可用后，把所有本机 catalog 记录（含 tombstone）绑定到真实设备 owner。
+算法：1. 空 ID 规范为 `local`；未变化直接返回。2. 从旧 store 读取含 tombstone 的 `local_catalog()`。3. 用新 device ID 重建 `EventStore`。4. 深拷贝每条记录并替换 owner。5. 覆盖写回，不变更 ID、revision 或 definition。
+副作用：设备 ID 变化且存在记录时重写 `<root>/events.json`。
+失败行为：文件写入 `OSError` 向上传播；无记录时只切换 store。
+调用关系：called by `EventWorkbenchService.tick_once()` after `sync.status`; calls `EventStore.local_catalog()` / `save_local()`。
+
+### `EventDefinitionRepository.save_local(self, records: Iterable[Mapping]) -> list[dict]`
+```python
+def save_local(self, records: Iterable[Mapping]) -> list[dict]
+```
+行为：保存本机可见事件，集中分配身份/revision，并为被移除记录生成 tombstone。
+算法：1. 从完整本机 catalog 构建 `id -> EventRecord`。2. 对每个 draft 深拷贝并解析 candidate。3. 新 ID 保存 candidate；定义未变保存 previous；定义变化调用 `previous.updated()` 使 revision+1。4. 收集本轮保留 ID 和返回给 GUI 的活动记录。5. 对旧 catalog 中未保留的活动记录调用 `tombstone()`；已有 tombstone 原样保留。6. 将活动记录+tombstone 一次写回。
+副作用：覆盖 `<root>/events.json`；新事件生成 UUID/时间戳/hash，修改或删除增加 revision。
+失败行为：已删除 ID 被尝试更新时 `EventRecord.updated()` 抛 `ValueError`；非法 revision/字段类型传播转换异常；文件错误传播。
+调用关系：called by `EventWorkbenchService.save()`；calls `EventRecord.from_dict()/updated()/tombstone()` and `EventStore.save_local()`。
+
+### `EventDefinitionRepository.resolve_shared_key(self, item: Mapping) -> str | None`
+```python
+def resolve_shared_key(self, item: Mapping) -> str | None
+```
+行为：把远程 inbox 的 eventId/name/revision 解析为本机执行器使用的稳定 definition key。
+算法：1. 无 eventId 时按 name 做 legacy fallback。2. eventId 可直接命中时返回该 ID。3. 否则按 name 找 fallback。4. 仅当 fallback revision 不低于消息 revision 时返回其 ID。5. 无安全匹配时返回 `None`。
+副作用：读取本机+远程目录；legacy 本机读取可能触发 EventStore 一次迁移持久化。
+失败行为：非法 revision 的 `int()` 转换异常向上传播；未命中正常返回 `None`。
+调用关系：called by `EventWorkbenchService._receive_remote_events()`；calls `by_id()` / `by_name()`。
+
+### `EventRouteRepository.load/save` 与 `EventRouter.dispatches`
+```python
+def EventRouteRepository.load(self) -> tuple[EventRoute, ...]
+def EventRouteRepository.save(self, routes: Iterable[EventRoute | Mapping]) -> None
+def EventRouter.dispatches(self, trigger: str, source: str = "local") -> tuple[EventDispatch, ...]
+```
+行为：负责 route 文件边界和无副作用 dispatch 决策。
+算法：1. `load()` 读取 JSON；缺失/无效 JSON 返回空，非 list 抛错；每项经 `EventRoute.from_record()` 规范 source/target/trigger/controller。2. `save()` 先把所有 mapping 规范成 typed route，确保整体有效，再创建目录并写中文兼容 record。3. `dispatches()` 规范 trigger/source，筛选相同 source+trigger 的 route，并把 target 是否 paired 转成 `remote: bool`。
+副作用：只有 `save()` 写 `<root>/routes.json`；router 无副作用。
+失败行为：未知端点/controller、空 trigger/event 抛 `ValueError`；文件错误传播，读取缺失降级为空。
+调用关系：called by `EventWorkbenchService.__init__/save/_reload_configuration/_dispatch_local_triggers()`。
+
+### `EventExecutionRuntime.start/cancel_source/tick`
+```python
+def start(self, source: str, event_name: str, controllers: Iterable[int], *, instance_id: str | None = None) -> bool
+def cancel_source(self, source: str) -> tuple[EventStateFrame, ...]
+def tick(self) -> tuple[EventStateFrame, ...]
+```
+行为：按来源和 controller 隔离执行 `EventSession`，产生完整状态帧。
+算法：1. `start()` 规范 source 和 controller 1/2；未知 definition 返回 False；为每个 `(source, controller)` 延迟创建 session 并启动同一 definition。2. `cancel_source()` 删除该 source 的全部 session，并为每个受影响 controller 构造 neutral frame。3. `tick()` 以稳定 key 顺序推进所有 session，将输入集合经 `state_from_inputs()` 转为完整 state dict。
+副作用：更新 `_sessions` 和各 `EventSession` 生命周期状态；无设备 IO。
+失败行为：空 source 或非法 controller 抛 `ValueError`；未知 definition 返回 False。
+调用关系：called by `EventWorkbenchService` dispatch/receive/tick/stop；calls `EventSession.start/tick()` and `state_from_inputs()`。
+
+### `HotkeyTriggerSource.poll(self, keys: Iterable[str]) -> tuple[str, ...]`
+```python
+def poll(self, keys: Iterable[str]) -> tuple[str, ...]
+```
+行为：把当前 key state 转为去重的按下边沿 trigger。
+算法：1. 大写、去空白并按首次出现顺序去重。2. 跳过未知键。3. 对每个已知 VK 读取 pressed。4. pressed 且不在 `_pressed` 时 emit。5. pressed 加入集合；松开则移除以允许下一次边沿。
+副作用：在锁内更新 `_pressed`；默认 Windows 读取器调用 `GetAsyncKeyState`。
+失败行为：非 Windows 使用默认读取器抛 `RuntimeError`；注入读取器异常向上传播。
+调用关系：called by `EventWorkbenchService._dispatch_local_triggers()`。
+
+### `HostEventBridge.write_state/send_event/publish_catalog/drain_*`
+```python
+def write_state(self, frame: EventStateFrame, ttl_ms: int = 120) -> dict
+def send_event(self, peer_id: str, payload: dict) -> dict
+def publish_catalog(self, peer_id: str, catalog: dict) -> dict
+def drain_events(self) -> tuple[dict, ...]
+def drain_catalogs(self) -> tuple[dict, ...]
+```
+行为：把服务调用一对一翻译为现有 Host/LAN 协议。
+算法：1. 所有方法先经 `_request()` 校验已连接。2. `write_state()` 发送 controller/source/state/ttlMs 到 `event.state`。3. 事件/目录发送分别给 payload 增加 deviceId，调用 `sync.share.event` / `sync.share.catalog`。4. 事件/目录 drain 严格分别调用 `sync.share.drain` / `sync.share.catalog_drain`，只返回 dict 项。
+副作用：命名管道请求；Host 可能更新 controller source state 或 LAN inbox/outbox。
+失败行为：未连接抛 `RuntimeError`；client 连接/请求异常向上传播；bridge 不重试。
+调用关系：called only by `EventWorkbenchService`; calls injected/default client `request()`。
+
+### `EventWorkbenchService.save/send_remote_event/tick_once`
+```python
+def save(self, events: Iterable[dict], routes: Iterable[dict]) -> list[dict]
+def send_remote_event(self, device_id: str, event_name: str, controllers: Iterable[int]) -> dict
+def tick_once(self) -> None
+```
+行为：提供 GUI 命令边界，并推进一次统一目录/触发/远程/输出循环。
+算法：1. `save()` 在服务锁内保存 definitions/routes、重建 router、替换执行定义并返回深拷贝版本记录。2. `send_remote_event()` 校验目标/名称/controller，创建独立 bridge，以 2 秒连接 timeout 读取 peer 状态，选择匹配记录，构造 Host-clock `+250ms` payload，发送后必定关闭。3. `tick_once()` 获取长期 bridge 和 status，更新 peer/device owner，依次同步目录、本机触发、远程 inbox、pending clear，最后把所有 execution frame 以 120ms TTL 写入 Host。
+副作用：JSON 持久化、命名管道/LAN 请求、服务状态/计数/日志更新和 controller source state 写入。
+失败行为：直接发送参数错误抛 `ValueError`，目标不可用抛 `RuntimeError`；bridge 异常由直接调用者接收，worker `_run()` 捕获后写 error、清 bridge 并等待 0.5 秒再试。
+调用关系：`save/send_remote_event` called by GUI；`tick_once()` called by worker or deterministic tests；calls repository/router/execution/bridge methods。
+
+### `EventWorkbenchService._sync_catalogs/_dispatch_local_triggers/_broadcast/_receive_remote_events`
+```python
+def _sync_catalogs(self, bridge: EventHostBridge, peers: tuple[dict, ...]) -> None
+def _dispatch_local_triggers(self, bridge: EventHostBridge, peers: tuple[dict, ...]) -> None
+def _broadcast(self, bridge: EventHostBridge, peers: tuple[dict, ...], dispatch) -> bool
+def _receive_remote_events(self, bridge: EventHostBridge) -> None
+```
+行为：完成目录交换和本机/远程两条触发路径的统一编排。
+算法：1. `_sync_catalogs()` 到 interval 时向每个 data peer 独立发布含 tombstone 目录，随后单独 drain catalogs，按 revision 应用并热替换 definitions。2. `_dispatch_local_triggers()` 轮询 router keys，逐个取得 dispatch；本机目标按 stable local ID 启动 execution，paired 目标进入 `_broadcast()`。3. `_broadcast()` 构造 eventId/revision/targets/Host-clock `+500ms` payload，对每个 peer 先确保 catalog 再发 event；单 peer 异常只写 `peer_errors`，继续后续 peer。4. `_receive_remote_events()` 丢弃 deadline 已过消息，解析 stable key 和 target controllers，以 `event:remote` 启动同一 execution runtime。
+副作用：目录/事件 LAN 请求、remote_events.json 更新、execution session 更新、计数/最近事件/peer errors 更新。
+失败行为：catalog fanout 单 peer 异常隔离；目录 drain/apply 或 receiver 的非隔离异常传播到 worker 顶层并触发 bridge cleanup/retry。
+调用关系：called by `tick_once()`；calls `EventDefinitionRepository`、`EventRouter`、`HotkeyTriggerSource`、`EventExecutionRuntime`、`HostEventBridge`。
+
+### `EventWorkbenchPage._save/_toggle_runtime/_toggle_remote_runtime/shutdown`
+```python
+def _save(self)
+def _toggle_runtime(self)
+def _toggle_remote_runtime(self)
+def shutdown(self)
+```
+行为：把 Qt widget 值转换为服务命令，不拥有持久化/线程/协议实现。
+算法：1. `_save()` 遍历 route rows，从 combo 读取 source/trigger/event/target/controller，调用 `service.save()` 并用返回的权威版本记录刷新列表。2. toggle 方法读取 `service.status()` 计算目标状态；启用前保存草稿，再调用对应 set 方法并刷新 UI。3. `shutdown()` 用 `_shutdown` 保证幂等，停止两个 Qt timer，只调用 `service.shutdown()`。
+副作用：更新 widgets；通过 service 间接保存/启停。页面自身不写文件、不发送协议。
+失败行为：service 异常由 Qt 调用栈传播（直接发送单独捕获并显示）；重复 shutdown 静默返回。
+调用关系：called by Qt signals and `MainWindow.closeEvent()`；calls only `EventWorkbenchService` public methods。
+
 ## 6. 完整数据流链路
 ### Flow: 自动导航移动点击
 1. `NavigationRuntimeFrameLoop.run()` 调用 `capture_navigation_localization_tick()` 获取 `capture_rect`、屏幕截图帧、玩家局部坐标和 `localized_pos=(global_x, global_y)`；副作用是更新定位核心状态，后续再更新地图上的玩家点、绿色定位框、橙色真实可见框和事件 marker。
@@ -3707,6 +4000,39 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 12. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；当前 path/subgoal 复用路线 overlay 绘制。
 13. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
 
+### Flow: 事件工作台保存与版本化
+1. `gui/modes/events/workbench.py::EventWorkbenchPage._save()` 输入 Qt route cells 与 `events: list[dict]`，输出 `routes_data: list[dict]`；副作用仅更新页面 buffer/status。
+2. `core/runtime/event_service/service.py::EventWorkbenchService.save(events, routes)` 输入两个 iterable，在 `RLock` 内调用仓库并返回 `list[dict]` 权威版本；副作用写服务日志并热重载 router/definitions。
+3. `core/events/automation/definitions.py::EventDefinitionRepository.save_local(records)` 输入 definition drafts，输出活动 versioned records；副作用写 `events.json`，内容变化/删除 revision+1，新记录生成 ID，缺失旧记录写 tombstone。
+4. `core/events/automation/routes.py::EventRouteRepository.save(routes)` 输入 mapping/typed routes，输出 `None`；副作用规范化后写 `routes.json`。
+5. `service.py::_reload_configuration()` 重新加载 typed routes/definitions；`execution.py::replace_definitions()` 输入 `dict[event_id, ExecutableEventDefinition]`，使下一次启动使用新定义但不改运行中 lifecycle 快照。
+6. `EventWorkbenchPage._save()` 接收保存后的 records，替换页面 `events` 并重新渲染版本号。
+
+### Flow: 本机热键到 Host controller state
+1. `EventWorkbenchPage._toggle_runtime()` 输入用户按钮命令，保存配置后调用 `service.set_local_running(True)`；输出仅为 UI 状态刷新。
+2. worker `EventWorkbenchService._run()` 调用 `tick_once()`；`HostEventBridge.status()` 经 `sync.status` 返回 `{deviceId, peers}`，必要时 `set_device_id()` 重绑本机 owner。
+3. `_dispatch_local_triggers()` 把 `EventRouter.triggers(): tuple[str]` 传入 `HotkeyTriggerSource.poll()`；输出一次按下边沿 trigger tuple，副作用仅更新热键 pressed set。
+4. `EventRouter.dispatches(trigger)` 输入 normalized trigger，输出 `EventDispatch(event_name, controllers, remote=False)`，无 IO。
+5. `EventDefinitionRepository.local_key(event_name)` 输出 stable event ID；`EventExecutionRuntime.start("event:local", id, controllers)` 创建/启动每个 `(source, controller)` session。
+6. `EventExecutionRuntime.tick()` 输出 `EventStateFrame(source, controller, state)`；state 包含 buttons、triggers、left/right stick 的完整 neutral-safe 字段。
+7. `HostEventBridge.write_state(frame, ttl_ms=120)` 发送 `event.state`；Host 按 controller+source 保存 TTL 状态并合并到 XInput report。
+
+### Flow: A -> B/C 事件目录与广播
+1. A 的本机 trigger 经 `EventRouter` 输出 `remote=True` dispatch，进入 `EventWorkbenchService._broadcast()`。
+2. `EventDefinitionRepository.local_by_name()` 输出含 `id/revision/owner` 的本机记录；`catalog_payload()` 输出 `{deviceId,catalogRevision,catalogHash,events,definitions}`，definitions 含活动记录和 tombstone。
+3. `_broadcast()` 为每个 data-only peer 独立调用 `HostEventBridge.publish_catalog(peer_id, catalog)` -> `sync.share.catalog`，再调用 `send_event(peer_id, payload)` -> `sync.share.event`；payload 字段为 `name,eventId,eventRevision,targets,deadlineMs,deviceId`，deadline 使用 Host 时钟 +500ms。
+4. 某个 peer 抛异常时记录 `peer_errors` 并继续后续 peer；至少一个成功则本次 dispatch 返回 True。这个隔离保证 B 失败不阻断 C。
+5. B/C 的 `HostEventBridge.drain_catalogs()` 单独调用 `sync.share.catalog_drain`；`EventStore.apply_remote()` 只接受更高 revision，写 `remote_events.json`，tombstone 使旧远程事件不可见。
+6. B/C 的 `HostEventBridge.drain_events()` 调用 `sync.share.drain`；`_receive_remote_events()` 校验 `remainingMs>0`，经 `resolve_shared_key()` 获得 stable ID，并以 `event:remote` 启动目标 controller session。
+7. 远程 session 与本机 session 汇入同一个 `EventExecutionRuntime.tick()`，但 key 含 source/controller；随后 `event.state` 写 Host，游戏输入效果由既有 Host/XInput 链完成。
+
+### Flow: 事件工作台直接远程发送
+1. `EventWorkbenchPage._send_remote_event()` 输入 device text、event text、controller combo，将 combo 转为 `(1,)` / `(2,)` / `(1,2)`。
+2. `EventWorkbenchService.send_remote_event()` 校验非空目标/名称和 controller 范围，创建独立 bridge 并以 2 秒 timeout 连接。
+3. `HostEventBridge.status()` 返回 peers；服务只接受 connected+syncing+dataOnly 的目标 device ID。
+4. 服务从目标 owner 的 remote records、本机同名记录或 visible fallback 中选择 event ID/revision，构造 Host 时钟 +250ms payload。
+5. `HostEventBridge.send_event()` 发送 `sync.share.event` 并返回 reply；`finally` 无条件关闭短连接。GUI 捕获异常并渲染成功/失败，不理解协议。
+
 ## 7. 外部集成详情
 `main.py` Windows 启动前置条件：先配置 UTF-8 输出和 `logs/runtime.log`，随后默认立即 `FreeConsole()` 释放控制台，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动当前脚本并退出原进程。管理员进程启动后会获取基于项目路径的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口；如果已有实例存在，新实例直接退出，防止多个 GUI 同时识别事件并向游戏发送移动/按键。默认 GUI 启动不保留控制台，诊断输出写入 `logs/runtime.log`；如需实时控制台，启动前设置 `MINIMAP_DEBUG_CONSOLE=1`，此时不会释放控制台，提权会继续使用 `python.exe` 并把输出同时写入控制台和日志文件。真实游戏输入依赖管理员完整性级别。
 `logs/runtime.log` 每次进程启动都会重建，不再把旧会话定位刷屏追加到新会话后面；事件系统另有专用 `logs/event_runtime.log`，用于测试传送门时只看事件链路。
@@ -3728,6 +4054,22 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 `core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the runtime integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. Recognition models are separate explicit resources: `rapidocr_models.resolve_rapidocr_engine_options()` verifies a named local ONNX file and produces construction options, while `utils/install_perception_ocr_model.py` owns the only download path. Therefore the provider itself has no network request, fixed timeout, retry loop, screen capture, or background service. A missing package, missing `RapidOCR` export, uninstalled/corrupt selected model, or engine initialization failure becomes `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output becomes `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
 
 The provider's supported call settings come from one OCR profile instance's `provider_parameters`: optional `roi`, result `language` label, and `backend_options` passed to RapidOCR. `language` is not a model-selection command. UI/application composition must intentionally resolve a named model, instantiate `RapidOcrProvider`, and inject it; the catalog descriptor `ocr.rapidocr_onnxruntime` remains `unavailable` by default even if both package and model exist, so importing the generic perception core can never start a model unexpectedly.
+
+### Event Host / LAN integration
+连接配置来源：默认 `HostEventBridge` 延迟构造 `VirtualGamepadClient`，使用现有命名管道默认 endpoint；测试/其他组合根可注入 `client_factory`。服务从 `sync.status.status.deviceId` 获得真实 owner，从 `peers` 只选择 `connected && syncing && dataOnly` 会话。
+超时与时序：bridge 默认连接 timeout 为 2.0 秒；worker loop 默认 0.02 秒；catalog publish interval 默认 2.0 秒；`event.state` TTL 为 120ms；路由 fanout deadline 为 Host clock +500ms；直接发送为 Host clock +250ms。
+命令契约：状态 `sync.status`；目录发送/接收 `sync.share.catalog` / `sync.share.catalog_drain`；事件发送/接收 `sync.share.event` / `sync.share.drain`；controller source 输出/清理 `event.state` / `event.clear`。事件和目录 drain 必须分离。
+失败行为：未连接 bridge 抛 `RuntimeError`；client connect/request 异常向上传播。worker 捕获任意 `Exception`，写 `EventWorkbenchStatus.error`，清理 bridge/source，等待 0.5 秒后重试；shutdown 或 stop wait 会中断等待。A->B/C publish/send 单 peer 失败被 `_broadcast()` 捕获并追加 `peer_errors`，不重试该 peer、不阻断后续 peer。直接发送不重试，`finally` 关闭短连接。
+
+### Event configuration persistence
+配置来源：`<event-root>/events.json`、`remote_events.json`、`routes.json`；GUI 默认 root 为 workspace data root 下 `configs/events`，测试注入临时 root。
+失败行为：events/remote legacy JSON 缺失或解析失败由 `EventStore` 降级为空；`routes.json` 缺失/非法 JSON 降级为空，但顶层不是 list 或 record 字段非法抛 `ValueError`。保存时目录自动创建，写入 `OSError` 向上传播。
+版本策略：本机新事件生成 UUID/revision 1；定义内容变化 revision+1；未变化保持原 revision；删除写 tombstone revision+1；远程只应用同 ID 的更高 revision。Host device ID 可用时 owner 重绑不增加 revision。
+
+### Windows hotkey integration
+配置来源：route trigger names；支持 F1-F12、A-Z、SPACE、UP/DOWN/LEFT/RIGHT。
+失败行为：未知名字忽略且不调用平台；非 Windows 使用默认读取器时抛 `RuntimeError`，worker 捕获后进入 0.5 秒连接/运行重试。测试通过注入 reader 完全绕过 Win32。
+重试策略：热键读取本身无独立重试；由 service worker 顶层统一重试。按住只 emit 一次，松开后重新武装。
 
 ## 8. 数据模型与契约
 ### `RapidOcrProvider` provider contract
@@ -3803,6 +4145,43 @@ Each output `OcrSpan` uses `frame.coordinate_space` and has a positive-area `Bou
 `teleport_min_distance: int` - 用地图坐标判断传送成功的最小位置变化距离。
 `environment_change_threshold: float` - 用玩家周边小地图截图签名判断传送成功的变化阈值。
 
+### `ExecutableEventDefinition`
+`event_id: str` - 稳定 catalog ID，也是 execution definition key。
+`name: str` - 用户显示/legacy fallback 名称，必须非空。
+`owner_device_id: str` - 定义所有者设备。
+`revision: int` - 单 ID 单调版本；内容修改/删除增加，owner 重绑不增加。
+`tracks: tuple[ActionTrack, ...]` - 不可变轨道快照。
+`steps: tuple[dict, ...]` - 深拷贝的复合步骤快照。
+`max_runs: int | None`、`loop: bool`、`end_ms: int | None` - lifecycle 限制。
+
+### Catalog record contract
+`id: str`、`name: str`、`owner_device_id: str`、`revision: int>=1`、`updated_at: str`、`deleted: bool`、`content_hash: str` 加 definition 字段。活动读取过滤 `deleted=True`；catalog transport 保留 tombstone 以传播删除。owner 是设备元数据，不属于 definition hash。
+
+### `EventRoute` / `EventDispatch`
+`EventRoute.source/target: str` - 规范值仅 `local|paired`。
+`trigger: str` - 大写非空边沿名字。
+`event_name: str` - 非空业务事件名称。
+`controllers: tuple[int, ...]` - 只允许 `(1,)`、`(2,)`、`(1,2)`。
+`EventDispatch` 只保留 `event_name/controllers/remote`，不携带 client、peer 或 widget。
+
+### `EventStateFrame`
+`source: str` - 规范为 `event:<name>`，当前服务使用 `event:local` / `event:remote`。
+`controller: int` - 1 或 2。
+`state: dict` - `state_from_inputs()` 生成的完整 XInput 状态，至少包括 buttons、left/right trigger、left/right stick axes；neutral frame 所有值为 0。
+
+### `EventWorkbenchStatus`
+`local_running: bool`、`remote_running: bool` - 两个触发入口开关，不代表 service thread 是否存在。
+`connected: bool` - 长期 Host bridge 最近一次 tick 是否连接成功。
+`peer_count: int` - 当前 connected+syncing+dataOnly peer 数。
+`trigger_count: int`、`receive_count: int` - 本机路由成功次数和远程 inbox 成功启动次数。
+`last_event: str`、`error: str`、`peer_errors: tuple[str, ...]` - UI 只读状态；单 peer fanout 失败与服务级 error 分离。
+
+### Host event payload contract
+`sync.share.event` payload：`deviceId: str`、`name: str`、`eventId: str`、`eventRevision: int`、`targets: list[str]`、`deadlineMs: int`。
+`event.state` payload：`controller: int`、`source: str`、`state: dict`、`ttlMs: int`。
+`event.clear` payload：`controller: int`、`source: str`。
+`sync.share.catalog` payload：`deviceId: str`、`catalog: {deviceId,catalogRevision,catalogHash,events,definitions}`。
+
 ## 9. 风险与隐患登记
 P1 - `MotionController._calculate_target_screen_position()` 默认半径未校准。触发条件：游戏实际点击触发距离大于 180px 或可交互范围小于 360px。复现方式：自动导航状态栏显示 `click r`，但人物不移动或点击到不可达点。建议：在参数面板调整最小/最大点击半径，并用橙色框观察真实可见范围。
 
@@ -3812,11 +4191,9 @@ P2 - `NavigationModeWidget._render_route_overlay()` 在自动导航每帧清空�
 
 P2 - `portal_screen_probe.detect_portal_candidates()` 依赖蓝紫发光外观。触发条件：其他事件或怪物使用大面积蓝紫特效，或传送门被怪物/场景遮挡。复现方式：debug 图中橙色候选很多但绿色 accepted 为 0，或绿色框落在非传送门实体。建议：正式事件系统中把它作为“小地图事件已发现后的二阶段确认”，并要求连续多帧稳定后再点击。
 
-P1 - `core/runtime/local_event_runtime.py::LocalEventRuntime._load()` 与 `core/runtime/remote_event_runtime.py::RemoteEventRuntime._definitions()` 各自把 `events.json` 解析为平行的 `ActionTrack`/`SimpleNamespace` 事件定义；`LocalEventRuntime._catalog_payload()`、`_data_only_peers()` 也与 `EventCatalogRuntime` 重复。触发条件：新增事件字段、变更动作语义或扩展目录同步时只更新其中一条链路。复现方式：本机触发、远程接收和目录同步对同一事件配置得出不同定义或行为。建议：以 `EventStore` 为入口提取一个规范化事件定义/目录服务和一个共享执行运行时；本机、远程和目录同步仅保留各自的触发或传输适配器。
+Resolved 2026-09-18 - 旧的平行定义解析、混合 runtime 和 GUI-owned persistence 三项风险已消除。`EventDefinitionRepository`/`EventRouter`/`EventExecutionRuntime` 现在是唯一通用能力，`EventWorkbenchService` 是唯一组合根，`EventWorkbenchPage` 只依赖服务；`LocalEventRuntime`、`RemoteEventRuntime`、`EventCatalogRuntime`、`RemoteEventSender` 及其绑定测试已删除。删除事件也通过 versioned tombstone 传播，不再在远端目录残留旧活动记录。
 
-P2 - `core/runtime/local_event_runtime.py::LocalEventRuntime._run()` 同时承担 Win32 热键轮询、路由文件解释、会话调度、LAN 广播、目录发布和 Host `event.state`/`event.clear` 输出。触发条件：增加一个触发来源、路由策略、输出目的地或事件执行语义。复现方式：一个需求必须修改同一循环的多个无关分支，或无法在不连接 Host 的情况下单独测试路由/执行策略。建议：拆分 `TriggerSource`、规范化 `RouteRepository/Router`、`EventExecutionRuntime` 与 Host/LAN 输出适配器，并只在组合根装配它们。
-
-P2 - `gui/modes/events/workbench.py::EventWorkbenchPage` 直接读写事件/路由 JSON、修改其内存模型、发送远程事件并创建/启动 `LocalEventRuntime`、`RemoteEventRuntime`、`EventCatalogRuntime`。触发条件：打开页面、保存事件或增加新的运行时能力。复现方式：GUI 逻辑需要知晓持久化格式和后台运行时生命周期，导致其他 UI/CLI 无法复用同一工作台服务。建议：将这些职责移到注入式 workbench service；页面仅绑定表单、显示状态并调用服务命令。
+P2 - `core/runtime/event_service/service.py::EventWorkbenchService.tick_once()` 在持有 `_lock` 时执行 `sync.status`、catalog drain/publish、event drain/send 和 `event.state` 命名管道 IO。触发条件：Host 请求阻塞或 LAN 背压，同时 GUI timer 调用 `status()`、用户保存配置或关闭页面。复现方式：假 bridge 的 request 人为阻塞后，GUI 的 `service.status()`/`save()` 等待同一 `RLock`，页面短时无响应。建议：后续把 bridge IO 移到锁外，以不可变 tick snapshot/command queue 提交配置变更，只在短临界区交换 router/definition/status；在改变 worker ownership 前先增加阻塞 bridge 并发测试。
 
 P2 - `RapidOcrProvider.recognize()` serializes one cached RapidOCR model and performs CPU ONNX inference. Trigger condition: a full-resolution frame is requested every navigation tick, or many OCR profile instances use the same provider with expensive detector settings. Reproduction: provider metadata timings dominate a frame budget or recognition becomes delayed while other algorithms continue. Mitigation: use an instance-specific ROI for fixed text zones, set conservative RapidOCR `backend_options`/confidence thresholds, reuse one provider, and measure the recorded `elapsed_seconds` before adding parallel provider instances. Do not move OCR retries or actions into this module.
 

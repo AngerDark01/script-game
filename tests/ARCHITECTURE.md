@@ -21,6 +21,13 @@
 | `test_recognizer_optimized.py` | Recognition filtering behavior. | Protect recognizer pipeline split. |
 | `test_route_manager.py` | Route persistence and mutation. | Protect route repository split. |
 | `test_stitcher_core.py` | Visibility/merge behavior. | Protect stitching split. |
+| `test_event_definition_repository.py` | Shared local/remote parsing, stable IDs, revision ownership, active-device ownership, and draft cloning. | Protect the canonical event-definition boundary. |
+| `test_event_routes.py` | Legacy route normalization and pure dispatch decisions. | Protect route policy from platform adapters. |
+| `test_event_execution_runtime.py` | Source/controller isolation and complete state frames. | Protect the shared local/remote execution runtime. |
+| `core/runtime/tests/test_event_host_bridge.py` | Exact Host/LAN commands and payloads. | Protect the protocol adapter while core automation remains protocol-free. |
+| `core/runtime/tests/test_event_hotkeys.py` | Edge-trigger semantics and supported key names. | Protect the injectable Win32 trigger adapter. |
+| `core/runtime/tests/test_event_workbench_service.py` | Local/remote composition, catalog exchange, fanout isolation, direct-send deadline, and shutdown. | Protect the single service composition root. |
+| `test_event_workbench_ui.py` | Injected service-only Qt adapter contract. | Prevent JSON, Host, or old-runtime ownership from returning to the page. |
 
 ## Verified Contracts
 
@@ -191,6 +198,32 @@ Refactor safety:
 - Good enough to extract route repository logic.
 - Add schema migration/default tests if route format expands.
 
+### Unified action-event runtime tests
+
+Protected behavior:
+
+- One repository parses both local and remote definitions, gives each event a
+  stable ID, increments revision only when content changes, and rebinds local
+  ownership to the active Host device without changing ID/revision.
+- Route parsing accepts the existing Chinese/English values and emits pure
+  `EventDispatch` objects for controller 1, 2, or both.
+- Local and remote dispatch share one execution implementation while sessions
+  remain isolated by source and controller; cancellation emits neutral state
+  only for the canceled source.
+- The Host adapter keeps event drain and catalog drain separate and preserves
+  exact `event.state`, `event.clear`, `sync.share.event`, and catalog payloads.
+- A failed peer does not prevent A -> B/C fanout to later connected peers.
+- The Qt page is testable with a fake service and performs no direct filesystem
+  writes, Host access, or legacy-runtime construction.
+
+Refactor safety:
+
+- The deleted local, remote, catalog, and direct-sender runtime tests were
+  replaced by lower-level contracts and service-level integration tests rather
+  than retained as compatibility shells.
+- Real controller input and real LAN synchronization remain opt-in; these tests
+  use fake trigger sources, fake bridges, temporary files, and offscreen Qt.
+
 ## Needed Test Additions
 
 Before splitting large files, add tests for:
@@ -207,4 +240,7 @@ Before splitting large files, add tests for:
 
 ## Round Status
 
-Status: partial. All current test files have been read. The suite protects several low-level algorithms but does not yet protect event lifecycle, portal handler state, mapping session orchestration, or navigation GUI extraction.
+Status: partial for the full repository. The unified action-event workbench is
+covered at pure-module, adapter, service, and GUI boundaries. Visual event
+lifecycle, portal handler state, mapping session orchestration, and remaining
+navigation GUI extraction still have their own coverage work.

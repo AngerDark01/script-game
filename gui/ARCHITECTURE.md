@@ -15,6 +15,7 @@
 | `dialogs/` | Parameter and tool dialogs. | Several large files need extraction into form sections and adapters. |
 | `selection/` | Overlay tools for region/center selection. | GUI adapter components. |
 | `widgets/` | Reusable PySide widgets. | Consolidated active widget package; old `widgets_fixed.py` backup has been removed. |
+| `modes/events/workbench.py` | Action-event editor, route form, status monitor, and direct-send presentation. | Thin adapter over injected `EventWorkbenchService`; no persistence or Host/LAN policy. |
 
 ## Target GUI Split
 
@@ -26,7 +27,8 @@ gui
 │   └── main window and mode switching
 ├── modes
 │   ├── mapping mode
-│   └── navigation mode
+│   ├── navigation mode
+│   └── event workbench adapter
 ├── dialogs
 │   ├── parameter forms
 │   ├── event manager
@@ -42,6 +44,30 @@ gui
 ## Main Refactor Principle
 
 GUI modules should translate user actions and render state. Core modules should own decisions. If a PySide method contains route selection, event scheduling, path planning, or input policy, that behavior is probably in the wrong place.
+
+The event workbench is the reference implementation of this rule. It keeps
+editable widget buffers, converts controller combo choices to controller IDs,
+and renders `EventWorkbenchStatus`. It delegates definition loading/saving,
+revision ownership, route normalization, local/remote execution, catalog sync,
+direct sending, and shutdown to one injected service.
+
+## Verified Event Workbench Ownership
+
+```text
+EventWorkbenchPage
+  ├── load/render/edit local and read-only remote records through service APIs
+  ├── collect route form values -> service.save(...)
+  ├── toggle local/remote flags -> service.set_*_running(...)
+  ├── render service.status() and service.recent_log_lines()
+  └── service.shutdown()
+
+EventWorkbenchService
+  └── persistence + routes + worker + Host/LAN adapters
+```
+
+The page never reads `events.json`, `remote_events.json`, `routes.json`, or a
+runtime log path. Copying an event asks the service for an identity-free draft,
+so Qt code does not know which persisted metadata fields must be stripped.
 
 ## Verified Startup Ownership
 
@@ -92,7 +118,9 @@ This lets `MainWindow.closeEvent()` stop workflows without knowing timers or whe
 
 ## Round Status
 
-Status: partial. Startup ownership files were read; mode internals are still pending.
+Status: partial for the overall GUI. The event workbench ownership boundary is
+verified and covered by an injected fake-service test; other mode internals
+remain in their module-specific refactor tracks.
 
 Next read targets:
 

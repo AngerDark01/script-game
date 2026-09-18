@@ -59,6 +59,15 @@ The refactor plan will use these levels consistently:
                        │ Input System │
                        │ click/key    │
                        └──────────────┘
+
+┌──────────────────────┐   commands/status   ┌────────────────────────┐
+│ Event Workbench GUI  │ ─────────────────▶ │ EventWorkbenchService  │
+└──────────────────────┘                    └───────────┬────────────┘
+                                                       │
+                          ┌────────────────────────────┼─────────────────────┐
+                          ▼                            ▼                     ▼
+                  definitions/routes          shared execution      Host/LAN adapter
+                  pure + versioned             source × pad          only side effects
 ```
 
 ## Confirmed Refactor Themes
@@ -73,6 +82,7 @@ These themes are based on the current reading pass and should guide the first im
 5. Mapping and localization share image-recognition and displacement concepts, but their stateful runtime facades should stay separate.
 6. Probe scripts should remain verification adapters for production algorithms and integrations.
 7. Not every module needs splitting. Route/pathfinding modules are already cohesive; grouping them later under `core/routing/` is enough.
+8. The action-event workbench now follows the bottom-up rule: `core/events/automation` owns pure definitions, routes, and source/controller-scoped execution; `core/runtime/event_service` owns platform adapters and the single composition root; the PySide page is only a service adapter. The former local, remote, catalog, and direct-sender runtimes have been removed.
 
 ## Composition Ownership
 
@@ -104,6 +114,24 @@ Refactor direction:
 - `main.py` should become a short script that delegates process setup to a bootstrap module and GUI creation to an application module.
 - `AppContext` should become the explicit composition root for shared core modules, or be renamed/split if it remains only a passive object bag.
 - Mode widgets should receive only the interfaces they need over time, not the whole mutable context.
+
+Verified action-event composition:
+
+```text
+MainWindow
+  └── EventWorkbenchPage
+        └── EventWorkbenchService
+              ├── EventDefinitionRepository -> EventStore
+              ├── EventRouteRepository / EventRouter
+              ├── EventExecutionRuntime -> EventSession
+              ├── HotkeyTriggerSource
+              └── HostEventBridge -> VirtualGamepadClient -> Host/LAN
+```
+
+`EventWorkbenchPage` does not read or write JSON, create Host clients, interpret
+wire commands, or own parallel workers. Event identity/revision changes belong
+to `EventDefinitionRepository`; real controller and network effects belong to
+`HostEventBridge`.
 
 ## Refactor Roadmap
 
@@ -137,6 +165,9 @@ These reduce the 1000+ line coordination files without changing algorithms.
 - Extract `MappingSession` from `MappingWidget.capture_and_process()`.
 - Extract `NavigationConfigApplier` for applying `NavConfig` to `NavigationCore`, `PathFinder`, `MotionController`, and task controllers.
 - Extract `EventPanelAdapter` from navigation mode event dialog wiring.
+- Done for action events: `EventWorkbenchService` is the single lifecycle and
+  composition facade for local triggers, remote inbox, catalog exchange,
+  direct sends, and Host state output.
 
 ### Phase 3 - Event Hooks and Packages
 
@@ -188,4 +219,10 @@ gui/
 - Event packages must not execute mouse/keyboard input directly; they return actions/intents.
 - Navigation task modules should emit `NavigationIntent`, not call `MotionController`.
 - GUI modules may adapt signals, timers, and widgets to core facades.
+- GUI event pages may hold editable drafts, but persisted identity, revision,
+  routing normalization, Host/LAN access, and execution state belong below the
+  GUI boundary.
+- Device effects must remain behind dedicated adapters. Pure action-event
+  modules may emit definitions, dispatches, or state frames, but must not
+  import PySide, Win32 APIs, Host clients, or LAN protocol commands.
 - Probes may write files and print diagnostics, but detector/planner/input algorithms should live in production modules.

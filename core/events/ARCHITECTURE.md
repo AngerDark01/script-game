@@ -2,7 +2,12 @@
 
 ## System Role
 
-`core/events` should be a reusable event runtime. It observes frames, stabilizes detections, stores event tasks, selects runnable tasks, runs event handlers, and reports generic actions back to navigation.
+`core/events` contains two reusable, GUI-free event capability families. The
+navigation event runtime observes frames, stabilizes detections, stores event
+tasks, selects runnable tasks, runs event handlers, and reports generic actions
+back to navigation. `core/events/automation` normalizes configured action-event
+definitions and routes, then advances controller-state sessions without knowing
+about hotkeys, Host clients, LAN peers, or Qt.
 
 The event system should not know GUI widgets, route editing, or concrete mouse/key execution. It should emit generic actions and lifecycle state.
 
@@ -60,6 +65,43 @@ Important detail: `EventCoordinator.observe()` does not execute handlers. It onl
 | `window_finder.py` | Windows game-window discovery. | Platform adapter. |
 | `debug.py` | Event runtime logging. | Diagnostics adapter. |
 | `overlay_models.py` | Converts event task state to overlay data. | UI-facing DTO adapter, still core-safe if it has no PySide dependency. |
+| `automation/definitions.py` | Canonical versioned action-event records and the only record-to-`ActionTrack` parser. | Stable repository/definition boundary. |
+| `automation/routes.py` | Route normalization and pure trigger-to-dispatch decisions. | Stable policy boundary with no platform IO. |
+| `automation/execution.py` | Shared local/remote execution keyed by source and controller. | Stable source-scoped state-machine runtime. |
+
+## Action Event Automation Boundary
+
+```text
+EventDefinitionRepository
+  ├── local/remote records from EventStore
+  ├── ExecutableEventDefinition snapshots
+  ├── stable id + revision ownership
+  └── catalog identity resolution
+
+EventRouteRepository -> EventRouter -> EventDispatch
+                                         │
+                                         ▼
+EventExecutionRuntime(source, controller) -> EventStateFrame
+```
+
+Rules verified in the implementation:
+
+- Local and remote records use the same `parse_event_definition()` path.
+- Active `EventSession` instances keep their definition snapshot; a later save
+  only affects the next start.
+- Mutable sessions are isolated by `(source, controller)`, so stopping remote
+  execution cannot clear local execution on the same controller.
+- `EventRouter` emits only domain-neutral dispatches. It does not poll keys,
+  inspect peers, or send controller state.
+- `EventExecutionRuntime.tick()` emits complete neutral-safe XInput state
+  dictionaries through `EventStateFrame`; only an upper adapter may write them.
+- When the Host reveals the active device ID, local records are rebound to that
+  owner without changing stable IDs or revisions.
+
+Platform composition is deliberately outside this package in
+`core/runtime/event_service`: `HotkeyTriggerSource` reads Win32 key state,
+`HostEventBridge` owns exact Host/LAN commands, and `EventWorkbenchService`
+assembles those adapters with the pure modules.
 
 ## Current Public Event Package Interface
 
@@ -192,6 +234,9 @@ Keep these as adapters, not core policy:
 - `window_finder.py`: Windows-specific window lookup.
 - `overlay_models.py`: core-safe DTO for GUI overlay, but PySide rendering remains in GUI.
 - `debug.py`: logging hook candidate.
+- `core/runtime/event_service/hotkeys.py`: Win32 key-edge adapter for action events.
+- `core/runtime/event_service/host_bridge.py`: virtual-gamepad Host and LAN protocol adapter.
+- `gui/modes/events/workbench.py`: Qt editing/status adapter over `EventWorkbenchService`.
 
 Potential split:
 
@@ -259,7 +304,9 @@ This would let new event packages register their own defaults without editing ev
 
 ## Round Status
 
-Status: partial. Core event model, coordinator, monitor, memory, scheduler, runner, registry, config, base interfaces, overlay DTO, and capture provider were read.
+Status: partial for the visual/navigation event family. The action-event family
+is now split into pure automation modules plus a platform service and is covered
+by focused repository, routing, execution, adapter, service, and GUI tests.
 
 Next read target:
 

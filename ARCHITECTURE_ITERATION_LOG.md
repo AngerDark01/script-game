@@ -1,5 +1,78 @@
 # Architecture Iteration Log
 
+## [SYNC] 2026-09-18 20:39 - 统一事件运行时与工作台边界收口
+
+### A. SYNC 范围声明
+**触发任务：** 以已实机验证的 `known-good/event-runtime-2026-09-18` 为基线，将本机事件、远程事件、目录同步与直接发送合并到统一服务，迁移 GUI 后删除四套平行旧实现。
+
+**直接变更文件：**
+- `core/events/automation/{__init__,definitions,routes,execution}.py`
+- `core/runtime/event_service/{__init__,models,host_bridge,hotkeys,service}.py`
+- `gui/modes/events/workbench.py`
+- `tests/test_event_{definition_repository,routes,execution_runtime,workbench_ui}.py`
+- `core/runtime/tests/test_event_{host_bridge,hotkeys,workbench_service}.py`
+- 删除 `core/runtime/{local_event_runtime,remote_event_runtime,event_catalog_runtime,remote_event_sender}.py`
+- 删除 `core/runtime/tests/{test_remote_event_delivery,test_event_catalog_runtime}.py`
+- `docs/plans/2026-09-18-unified-event-runtime-{design,implementation}.md`
+
+**预计连带影响：** `EventStore` / `EventRecord` 的版本身份契约、`EventSession` 与 XInput 状态输出链、Host/LAN 的 `event.*` 和 `sync.share.*` 协议、GUI 关闭流程、事件模块架构图与相关测试覆盖说明。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- (verified) 本机和远程事件现在只通过 `EventDefinitionRepository` 解析，执行只通过按 `(source, controller)` 隔离的 `EventExecutionRuntime`；纯 automation 模块没有 PySide、ctypes、Host client 或协议命令依赖。
+- (verified) `EventWorkbenchService` 是唯一长期 worker/composition owner；目录 drain 与事件 drain 独立，A -> B/C fanout 隔离单 peer 失败，直接发送使用 Host clock deadline。
+- (verified) `EventWorkbenchPage` 只保存 widget 草稿并调用服务，不再读写 JSON/日志、创建 client 或管理三套后台 runtime。
+- (verified) Host 揭示真实 device ID 后，本机 catalog owner 会重绑而不改变 ID/revision；删除本机事件会产生同 ID、revision+1 的 tombstone，并在远端应用后隐藏旧记录。
+- (verified) 四个旧 runtime/sender 文件和两个绑定旧实现的测试已删除；源码和测试中旧类名/模块名引用为零。
+- (verified, P2) `EventWorkbenchService.tick_once()` 当前仍在服务锁内执行同步 bridge IO；Host 阻塞时 GUI status/save 可能等待该锁，已登记为后续并发优化风险。
+
+**修订的旧结论：** 2026-09-17 review 记录的三个事件工作台边界风险已解决，不再是“建议提取统一仓库/执行器/服务”；当前事实是统一模块已经落地，旧平行实现已删除。
+
+**连带重读文件：** `core/events/event_store.py`、`core/events/event_catalog.py`、`core/runtime/event_session.py`、`core/events/gamepad_output.py`、`gui/main_window.py` 以及 Host bridge/service 的调用方与测试。
+
+**CODEBASE.md 更新内容：** §2 新增逐文件目录说明；§3 新增 action-event Level 3 图；§4 新增纯模块、平台服务、GUI 与测试独立小节；§5 补齐关键函数签名/算法/失败行为；§6 新增保存、本机触发、A->B/C、直接发送四条完整 Flow；§7 记录 Host/LAN/文件/热键集成；§8 补齐 DTO 和 wire payload；§9 将三个旧风险标记 resolved，并登记锁内 IO 风险。
+
+**同步文档：** `ARCHITECTURE_GUIDE.md`、`core/ARCHITECTURE.md`、`core/events/ARCHITECTURE.md`、`gui/ARCHITECTURE.md`、`tests/ARCHITECTURE.md`、`CODEBASE.md`。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+| --- | --- | --- | ---: | --- |
+| `core/events/automation/__init__.py` | 新增 | 深度完整 | 1 | 确认只聚合纯定义/路由/执行类型，不导出平台 adapter。 |
+| `core/events/automation/definitions.py` | 新增 | 深度完整 | 4 | 逐分支核对 parse、版本判定、owner 重绑、legacy identity fallback 与 tombstone 发布。 |
+| `core/events/automation/routes.py` | 新增 | 深度完整 | 2 | 核对中英文 endpoint/controller 规范化、文件失败行为和纯 dispatch 过滤。 |
+| `core/events/automation/execution.py` | 新增 | 深度完整 | 2 | 核对 session key、定义替换、source cancel neutral frame 与完整 tick state。 |
+| `core/events/event_store.py` | 深度完整 | 深度完整 | 2 | 新增 `local_catalog()`，确认活动视图和含 tombstone catalog 视图分离。 |
+| `core/runtime/event_service/__init__.py` | 新增 | 深度完整 | 1 | 确认 public service/adapter/status 导出。 |
+| `core/runtime/event_service/models.py` | 新增 | 深度完整 | 2 | 核对 trigger/bridge Protocol 全方法和 immutable status 字段。 |
+| `core/runtime/event_service/host_bridge.py` | 新增 | 深度完整 | 2 | 核对七个 wire command、payload 字段、独立 drain 和幂等 close。 |
+| `core/runtime/event_service/hotkeys.py` | 新增 | 深度完整 | 2 | 核对 VK 表、按下边沿、松开重装、未知键与非 Windows failure。 |
+| `core/runtime/event_service/service.py` | 新增 | 深度完整 | 4 | 沿 save/direct send/tick/catalog/local dispatch/fanout/receive/cleanup 完整调用链复核。 |
+| `gui/modes/events/workbench.py` | 浅读 | 深度完整 | 3 | 核对所有数据加载/保存/启停/发送/日志/关闭只通过注入服务。 |
+| `tests/test_event_definition_repository.py` | 新增 | 深度完整 | 4 | 覆盖 identity、revision、owner、draft、fallback、tombstone 和远端隐藏。 |
+| `tests/test_event_routes.py` | 新增 | 深度完整 | 1 | 覆盖 round-trip、dispatch 与非法 route 参数表。 |
+| `tests/test_event_execution_runtime.py` | 新增 | 深度完整 | 1 | 覆盖 source/controller、snapshot、cancel 和 validation。 |
+| `tests/test_event_workbench_ui.py` | 浅读 | 深度完整 | 2 | 假服务覆盖 UI-only boundary，并断言临时 root 无文件写入。 |
+| `core/runtime/tests/test_event_host_bridge.py` | 新增 | 深度完整 | 1 | 精确断言命令序列与 payload。 |
+| `core/runtime/tests/test_event_hotkeys.py` | 新增 | 深度完整 | 1 | 覆盖全部 UI key names 和 edge 行为。 |
+| `core/runtime/tests/test_event_workbench_service.py` | 新增 | 深度完整 | 3 | 覆盖共享执行、catalog、fanout、source clear、deadline、draft/log/shutdown。 |
+
+**新增 Finding：** P2 - service worker 在锁内执行同步 Host/LAN IO，后续应以不可变 tick snapshot 或 command queue 缩短临界区，并先增加阻塞 fake bridge 的并发测试。
+
+**验证结果：**
+
+- `python -m pytest core/events/tests core/runtime/tests tests/test_action_tracks.py tests/test_event_session.py tests/test_event_lifecycle.py tests/test_event_gamepad_output.py tests/test_event_button_chords.py tests/test_event_definition_repository.py tests/test_event_routes.py tests/test_event_execution_runtime.py tests/test_event_workbench_ui.py -q` -> `67 passed in 0.99s`。
+- 旧 runtime/sender 名称搜索 -> 生产源码和测试零命中；架构文档只保留“已删除”说明。
+- `core/events/automation` 平台/协议依赖搜索 -> 零命中。
+- `gui/modes/events/workbench.py` JSON/Host/旧 runtime/文件 IO 搜索 -> 零命中。
+- `python -m compileall -q core/events/automation core/runtime/event_service gui/modes/events ...` -> 成功。
+- `git diff --check` -> 无 whitespace error，仅显示 Windows checkout 的 LF->CRLF 提示。
+- `dotnet test virtual_gamepad/host/tests/VirtualGamepadHost.Tests/VirtualGamepadHost.Tests.csproj --no-restore` -> 未执行测试：本机 `dotnet --info` 显示只有 .NET 6 runtime，`No SDKs were found`；未安装 SDK，亦未启动真实 Host/LAN。
+
+**下一轮计划：** 在具备 .NET SDK 的环境补跑 Host/LAN C# 回归；如处理新增并发风险，先加入阻塞 fake bridge 测试再缩短 service 锁临界区。本轮未发送真实输入、未启动真实同步。
+
 This log follows the iterative reading discipline from the codebase workflow: declare scope before reading, read a small set of files, then record findings and the next round.
 
 ## [Round 1] 2026-05-26 - Structure, Scale, and Documentation Skeleton

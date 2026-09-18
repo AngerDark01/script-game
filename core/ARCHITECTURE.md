@@ -40,6 +40,8 @@ Refactor implication: as more systems become explicit packages, `core/__init__.p
 | `anchor_path.py` | Optional soft-anchor path planning. | Candidate reusable route shaping module used by movement executor. |
 | `motion_controller.py` | Map target to screen click/key actions. | Should be an input-system facade, with Windows/pydirectinput details hidden behind `input_driver.py`. |
 | `input_driver.py` | Win32 input adapter. | Concrete adapter for real input side effects. |
+| `events/automation/` | Pure action-event definitions, route decisions, and source/controller-scoped execution. | Reusable capability layer; no GUI, Win32, Host, or LAN dependency. |
+| `runtime/event_service/` | Action-event composition root plus hotkey and Host/LAN adapters. | Platform/runtime boundary consumed by GUI or another application adapter. |
 
 ## Target System Split
 
@@ -59,11 +61,39 @@ core
 │   ├── A* pathfinder
 │   ├── route geometry
 │   └── anchor corridor planner
-└── input system
-    ├── movement target mapper
-    ├── click/key command executor
-    └── platform adapters
+├── input system
+│   ├── movement target mapper
+│   ├── click/key command executor
+│   └── platform adapters
+└── action-event automation
+    ├── definition repository and version identity
+    ├── route normalization and dispatch decisions
+    ├── source/controller-scoped execution
+    └── runtime adapters for triggers and Host/LAN effects
 ```
+
+## Action Event Workbench Boundary
+
+`core/events/automation` is the lower reusable layer. It may depend on the
+existing `EventStore`, `EventSession`, action tracks, and XInput state mapping,
+but it does not import Qt, ctypes, `VirtualGamepadClient`, or protocol command
+strings. `core/runtime/event_service` is the upper composition layer:
+
+```text
+definitions + routes + execution
+              ▲
+              │ composed by
+EventWorkbenchService
+  ├── HotkeyTriggerSource        # Win32 edge input
+  ├── HostEventBridge            # event.* / sync.share.* protocol
+  └── worker lifecycle/status    # one owner for local + remote paths
+```
+
+The former `LocalEventRuntime`, `RemoteEventRuntime`, `EventCatalogRuntime`,
+and `RemoteEventSender` implementations were deleted after their behavior was
+moved behind these contracts. Both local and remote execution now pass through
+one `EventExecutionRuntime` and preserve independent state by source and
+controller.
 
 ## Immediate Split Candidates
 
