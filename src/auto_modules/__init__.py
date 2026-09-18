@@ -1,0 +1,1 @@
+"""Auto Modules application package."""

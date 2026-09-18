@@ -4,18 +4,27 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.runtime_paths import data_root
+from auto_modules.paths import data_root, package_root, repository_root, resource_root
 
 
 class RuntimePathTests(unittest.TestCase):
-    def test_development_root_is_unchanged(self):
+    def test_development_paths_use_repository_layout(self):
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(data_root(Path('.')), Path('.').resolve())
+            root = Path(__file__).resolve().parents[1]
+            self.assertEqual(repository_root(), root)
+            self.assertEqual(package_root(), root / "src" / "auto_modules")
+            self.assertEqual(resource_root(), root / "resources")
+            self.assertEqual(data_root(), root / "data")
 
     def test_packaged_data_root_handles_spaces_and_unicode(self):
         with tempfile.TemporaryDirectory(prefix='运行 数据 ') as temporary:
             with patch.dict(os.environ, {'AUTO_MODULES_DATA_DIR': temporary}):
-                self.assertEqual(data_root(Path('irrelevant')), Path(temporary).resolve())
+                self.assertEqual(data_root(), Path(temporary).resolve())
+
+    def test_packaged_resource_root_handles_spaces_and_unicode(self):
+        with tempfile.TemporaryDirectory(prefix='资源 数据 ') as temporary:
+            with patch.dict(os.environ, {'AUTO_MODULES_RESOURCE_DIR': temporary}):
+                self.assertEqual(resource_root(), Path(temporary).resolve())
 
     def test_installed_paths_use_data_root_but_assets_keep_source_root(self):
         from gui.composition.paths import map_data_dir_from_file, root_config_path_from_file, advanced_settings_dir_from_file, project_root_from_file

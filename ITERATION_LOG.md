@@ -5496,3 +5496,26 @@ and then with the bounded full loop. The formal core and GUI remain unchanged.
 - Full discovery still reports the existing baseline issues: three Pathfinder
   policy assertion failures and one advanced-settings loose-import error; no
   failure imports the new motion module.
+
+## [SYNC] 2026-09-18 - repository layout migration
+
+### A. SYNC scope declaration
+
+**Trigger:** reorganize the repository around bottom-up reusable layers, separating
+Python source, UI, external adapters, independent services, resources, writable
+data, tools, documentation, and packaging while preserving the verified runtime
+behavior.
+
+**Directly changed areas:** root `core/`, `gui/`, `virtual_gamepad/`,
+`lan_input_sync/`, `distribution/`, `installer/`, `assets/`, `configs/`,
+`map_data/`, `debug/`, `utils/`, `workflows/`, scattered root documentation,
+tests that import moved modules, and the root bootstrap entry point.
+
+**Expected propagation:** all Python imports must use the `auto_modules` package;
+runtime resource/data lookup must use one path API; C# `ProjectReference` values,
+launcher paths, installer payload paths, packaging manifests, test discovery, and
+developer commands must follow the new layout. Real input and LAN synchronization
+remain disabled during migration verification.
+
+**Protected checkpoint:** annotated tag `pre-reorg/2026-09-18` points to
+`be698389ac3ab640fb5f2a1b4324236cc24e5cb1`.
