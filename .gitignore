@@ -57,3 +57,10 @@ assets/perception_models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Codex analysis and managed-skill state.
+.codegraph/
+.agents/
+.serena/cache/
+.serena/memories/
+.serena/project.local.yml

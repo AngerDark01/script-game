@@ -952,3 +952,71 @@ Validation:
 Next round plan:
 
 - Continue with another low-risk pure/helper extraction only after current docs and regression tests are clean.
+
+## [Review] 2026-09-17 - Generic-Layer Boundary Compliance
+
+### A. Review Scope (declared before source inspection)
+
+**Goal:** Review the current implementation against the workspace rule that
+lower layers provide reusable, business-neutral capabilities and upper business
+features compose them without polluting their contracts.
+
+**Initial target paths:**
+
+- `core/events/`, including the portal event package and its runtime boundary
+- `core/navigation_tasks/` and `core/input`/movement ownership boundaries
+- GUI, virtual-gamepad, and LAN adapters that may bypass common execution paths
+
+**Questions to answer:**
+
+1. Do shared modules contain portal-, game-, role-, or feature-specific policy?
+2. Do business features duplicate or bypass recognition, localization,
+   navigation, scheduling, controller-output, or transport capabilities?
+3. Are real side effects confined to explicit execution adapters?
+4. Is mutable state correctly scoped per controller/device/source/feature
+   instance, rather than shared by unrelated work?
+
+**Method:** CodeGraph call-path and blast-radius inspection first, followed by
+symbol-reference checks and focused source confirmation only where needed. This
+is a review-only round: no source-code change is authorized.
+
+### C. Review Findings
+
+**Key findings:**
+
+- (verified) The navigation/event pathway honors the intended effect boundary:
+  `PortalEventHandler.update()` returns `EventAction`; `EventRunner` and
+  `NavigationTaskController` pass actions/intents onward; device IO is owned by
+  dedicated action adapters and the virtual-gamepad Host.
+- (verified) Host controller state is separated by controller and event source:
+  `ControllerRegistry.SetEventState()` writes to a per-controller `StateStore`
+  under a normalized source, then merges sources at submission time. This is
+  consistent with independent controller/device/source state ownership.
+- (verified, P1) `LocalEventRuntime._load()` and
+  `RemoteEventRuntime._definitions()` both parse `events.json` into parallel
+  `ActionTrack`/`SimpleNamespace` definitions. The local runtime also duplicates
+  catalog-payload and live-peer selection concerns that exist in
+  `EventCatalogRuntime`. A new event-schema or execution semantic can therefore
+  require edits in multiple runtime implementations instead of one shared
+  definition/execution contract.
+- (verified, P2) `LocalEventRuntime._run()` mixes Windows trigger polling,
+  route-file interpretation, event-session scheduling, LAN fanout, catalog
+  publication, and Host `event.state`/`event.clear` output. It is an adapter
+  with several independent ownership domains rather than a composition of
+  reusable trigger, route, execution, and output modules.
+- (verified, P2) `EventWorkbenchPage` owns JSON loading/saving, route-model
+  mutation, direct remote sending, and construction/lifecycle of three
+  background runtimes. The UI is therefore a second composition root with
+  persistence and execution policy, instead of a thin adapter over a shared
+  event-workbench service.
+
+**Non-findings:** `PortalEventHandler` does not access mouse, keyboard,
+virtual-gamepad, Host, or network APIs directly; `FollowChainHandler` likewise
+emits declarative event metadata without a device dependency. Do not refactor
+these as though they were effect-boundary violations.
+
+**Recommended next round:** Extract one normalized event-definition repository
+and one reusable execution runtime. Put keyboard polling behind a trigger
+source adapter, route normalization behind a route repository/router, and Host
+or LAN delivery behind output adapters. Then make `EventWorkbenchPage` depend
+on a composed workbench service rather than constructing/parsing runtimes.
