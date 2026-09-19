@@ -14,6 +14,7 @@ from .rendering import render_navigation_map
 from .result import LocalizationResult
 from .observations import ObservationCandidate, ObservationFrame
 from .map_localizer import LocalizationMode, MapLocalizer
+from .trajectory import TrajectoryBuffer, TrajectorySample
 from .visual_check import visual_check_position
 
 __all__ = [
@@ -23,6 +24,8 @@ __all__ = [
     "ObservationFrame",
     "LocalizationMode",
     "MapLocalizer",
+    "TrajectoryBuffer",
+    "TrajectorySample",
     "build_frame_registration",
     "clear_frame_registration",
     "load_navigation_map_package",
