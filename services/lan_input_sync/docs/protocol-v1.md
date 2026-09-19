@@ -39,6 +39,16 @@ events (and retains its legacy catalog field for older clients). The Python
 Host adapter performs the one drain read and fans envelopes to multiple
 business subscribers.
 
+An existing session changes capabilities with
+`{type:"capability-update",requestId,capabilities:[...],controllers:[1,2]}`.
+The receiver checks its local permissions and exclusive slot ownership before
+returning `{type:"capability-ack",requestId,capabilities:[...],controllers:[...],grants:[g1,g2]}`.
+An unauthorized upgrade returns `{type:"capability-reject",requestId,error}`
+and leaves the previous data session active. An input-free update uses an empty
+controller scope, revokes input grants and resets received input to neutral;
+late input datagrams are discarded while the ack is in flight. Changing one
+nonempty controller scope to another still requires a new session.
+
 The `map.publish` and `map.subscribe` capabilities are reserved for a future
 versioned-resource lane. This version defines no map storage, chunk commit,
 merge, or UI behavior; unknown map topics must be ignored without closing an
@@ -78,6 +88,6 @@ Default report rate is 125Hz, optional 60Hz. Analog snapshots overwrite previous
 
 Independent monotonic checks cover last valid state, source host report freshness, oldest queued receiver button, unresolved revision gap, oldest unacknowledged sender change and challenge turnaround. Probes run every 50ms. TCP liveliness or authenticated probes cannot substitute for fresh controller state. Output-side checks also run during `Consume`/status, so a stalled network worker cannot keep output alive.
 
-Local F9/stop marks sessions inactive and resets outputs synchronously before scheduling socket disposal. Late control/UDP cannot reactivate them. Config listener generation is separate from session generation: an emergency stop cancels control authority without canceling the listener configuration. Reconnect creates a new session; both receiver permission and sender start must be explicitly requested again after loss/F9.
+Local F9/stop marks sessions inactive and resets outputs synchronously before scheduling socket disposal. Late control/UDP cannot reactivate them. Config listener generation is separate from session generation: an emergency stop cancels control authority without canceling the listener configuration. Ordinary disconnect neutralizes current input immediately, but a trusted peer may reconnect using the persisted mode, receiver authorization and sender capability preference. Normal process shutdown retains those preferences; manual stop/reset/forget and emergency stop clear automatic recovery. Reconnect creates a new session with fresh keys and grants. The authoritative runtime trust records remain `trusted.json` and `preferences.json`; `PeerTrustStore` is not wired into the active service.
 
 The limits bound normal application queues and authorization. OS thread scheduling is not real-time, and a whole-host crash is handled by the host/driver lifecycle rather than an in-process watchdog.

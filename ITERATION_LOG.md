@@ -21,6 +21,18 @@ session、多 capability 复用、持久信任/自动恢复 fence、旧命令兼
 **新增 Finding：** P1 风险已记录在 CODEBASE.md：Host drain 字段兼容和 C# lane 前缀复用
 需要后续协议版本收敛。
 
+**本轮收尾复核（2026-09-19）：** 补读 `LanSyncService.Control.cs::RunControlsAsync`、
+`LanSyncService.cs::Handle/ConfigureLocked/CloseLocked/Dispose`、`LanSyncService.Transport.cs::ReceivePacket`、
+`IdentityStore.cs::Preferences`、`communication_adapter.py::pump/ensure_connected` 和对应 loopback/fake tests。
+已修订“无 .NET SDK”的旧结论：系统默认 `dotnet` 不可用，但 `D:\ACloud\dotnet-sdk2\dotnet.exe`
+可用，LAN 30 项和 Host 57 项全部通过。数据会话可在不换 sessionId 的情况下增加/移除输入；
+无接收授权时返回拒绝并保留数据会话。正常进程重启恢复已信任 session，手动 stop 不恢复；
+旧输入 watchdog 断线中立化契约仍由全套 LAN 测试验证。权威 LAN 信任文件为
+`trusted.json`/`preferences.json`，不是尚未接入运行时的 `PeerTrustStore`。
+通信 Python 聚焦测试通过；全量 pytest 492 passed、2 skipped、4 failed，失败为缺少
+`pydirectinput` 发布依赖和 3 项独立 Pathfinder 测试，不纳入本轮通信变更。
+**覆盖状态：** 本轮上述函数体和失败分支已深读；未重读的项目其余文件仍保持原有覆盖状态。
+
 
 ## [Round 1] 2026-05-19
 

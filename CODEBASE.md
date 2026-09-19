@@ -103,7 +103,8 @@ generation 拦截旧 reconnect/message，并提供 1/2/5/15/30 秒退避。
 `src/auto_modules/adapters/host/communication_adapter.py::HostCommunicationAdapter` 只持有
 一个 `VirtualGamepadClient`，通过 `HostPeerTransport` 将 generic envelope 转成旧的
 `sync.share.position/event/catalog` 命令。`CommunicationManager.pump()` 调用适配器一次
-`sync.share.drain`，把事件、位置、目录同时放入本地 topic 队列并通知 dispatcher。旧的
+`sync.share.drain`，把事件、位置、目录同时放入本地 topic 队列并通知 dispatcher；失效
+peer 的消息被隔离，业务订阅回调异常不再由适配器静默吞掉。旧的
 `HostEventBridge` 和 `FollowTransport` 在未注入 manager 时保留兼容 client 路径；注入 manager
 后只申请能力 lease，不创建或关闭独立 LAN session。
 
@@ -131,9 +132,13 @@ FollowService._network_shared()
 
 `services/lan_input_sync/src/LanInputSync/SessionCapabilities.cs` 将旧 `DataOnly` 映射为
 `input.*`、`position.*`、`event.*`、`catalog.*` 和预留的 `map.*` flags；旧 `start`/
-`start-data` 命令仍可用，status 额外返回 `capabilities`。`PeerTrustStore` 保存非敏感信任
-元数据并拒绝静默证书替换，`ReconnectBackoff` 提供有界退避。普通 session close 会按恢复
-偏好调度重连，手动 stop/reset/forget/emergency 会设置 block fence。
+`start-data` 命令仍可用，status 额外返回 `capabilities`。会话内 `capability-update`
+携带 `controllers`，接收端校验授权/独占并回 `capability-ack` 的新 grants；拒绝输入升级
+返回 `capability-reject`，原数据会话继续运行。当前运行时的权威持久层是 `IdentityStore`
+管理的 `trusted.json` 和 `preferences.json`；独立 `PeerTrustStore` 尚未接入 `LanSyncService`。
+`ReconnectBackoff` 提供有界退避。正常进程退出保留 mode、接收许可及恢复偏好；普通断线
+立刻中立化输入，已信任 peer 重连时才恢复保存的许可；手动 stop/reset/forget/emergency
+清除恢复资格。
 
 风险登记：
 
@@ -144,6 +149,8 @@ FollowService._network_shared()
   输入二进制，若未来输入编码允许 `{` 开头会误判。建议后续协议版本分配独立 data lane。
 - P2 `FileTrustStore._read_mapping()`：JSON 损坏会 fail closed 并阻断启动；部署层应提供
   诊断提示和人工恢复入口，不能自动删除信任文件。
+- P2 `LanSyncService.RunControlsAsync()`：旧版 peer 不理解会话内 capability-update，升级前
+  应确认两端协议版本；当前仅首轮 `start/start-data` 保留旧兼容，不能跨版本热增能力。
 
 `calibration.py::Poe2Calibration.local_to_reference(local_position)` 对局部点做有限值校验，
 按显式 scale、axis_direction、offset 和可选 Y 翻转映射到参考坐标；禁止零比例、非法轴向、
@@ -4379,6 +4386,19 @@ def shutdown(self)
 调用关系：called by Qt signals and `MainWindow.closeEvent()`；calls only `EventWorkbenchService` public methods。
 
 ## 6. 完整数据流链路
+### Flow: 已信任 LAN 会话内热增/停用输入（verified）
+1. `LanSyncService.Handle("sync.start", payload)` 输入 `deviceId:string`、`capabilities:string[]`、`controllers:int[]`；若同 peer 已有发送会话，写入 `Session.Controls` 的 `capability-update(requestId:Guid, capabilities:string[], controllers:int[])`，不另建 TCP/UDP；不改变当前授权或恢复偏好。
+2. `LanSyncService.RunControlsAsync(receiver)` 从 TLS 读请求，`SessionCapabilities.Reverse()` 得到接收端 flags；用 `ValidateIncomingCapabilitiesLocked()` 检查 mode/位置/事件许可，再检查 controller 本地保存授权和其他会话占用。失败写 `capability-reject(requestId,error)`，原会话和共享能力不变。
+3. 校验成功时接收端为新增输入生成 `grants:uint[2]`，或在移除输入时清零 grants、重置 `_remote[slot]`；更新 `Session.Controllers/Capabilities`，经 TLS 写 `capability-ack(requestId,capabilities,controllers,grants)`。
+4. `LanSyncService.RunControlsAsync(sender)` 比对 requestId、flags、controllers、grants；匹配后更换本地授权和 baseline 状态，把 peer scope/恢复能力写入内存并由 `SavePreferencesLater()` 持久化到 `trusted.json`、`preferences.json`。拒绝响应只清除 pending 并写 peer error。
+5. `CollectPackets()` 仅对 `InputSend` 的 controllers 发加密输入，对 `PositionPublish` 独立节拍发位置；`ReceivePacket()` 对输入撤销后的旧 datagram 直接丢弃，已认证数据共享仍可继续。最终 `status.peers[].sessionId` 不变，接收侧被撤销输入为 Neutral。
+
+### Flow: 正常退出、重启恢复和手动停止（verified）
+1. `LanSyncService.Dispose()` 输入无；先标记进程关闭、关闭活动 socket/中立化内存输入，不调用 `EmergencyStop()`，磁盘上的信任、mode、接收许可及恢复能力保持原状。
+2. 新实例 `LanSyncService(dataDirectory)` 读取 `IdentityStore` 的 `preferences.json` 与 `trusted.json`，恢复 `Mode/ReceivePositions/ReceiveEvents/EnabledControllers/RecoveryCapabilities`；`NetworkLoop()` 建立本地监听，`ConfigureNetwork()` 为恢复 peer 排程退避连接。
+3. `ScheduleAutoReconnectLocked()` 在 generation、手动 block、可信 peer 和当前模式许可均成立时，取保存的 capability flags 及 controller scope 调用 `StartOutgoingAsync()`；新 TLS/UDP 会话生成全新 sessionId、密钥和 grants。
+4. `CloseLocked()` 对普通断线先重置接收输入并撤销当前输出，再允许信任设备重新协商已保存授权；`Handle("sync.stop"/"sync.reset"/"sync.forget")` 或 `EmergencyStop()` 清除目标的恢复资格并写偏好，后续旧任务受 generation/startVersion 栅栏阻止。
+
 ### Flow: 应用注入 Torchlight 事件组合
 1. `ui/main_window.py::MainWindow.setup_ui()` 调用 `build_torchlight_navigation_composition()`，取得 registry 工厂、游戏窗口查找器和 Loot overlay provider；不在通用导航包中导入游戏事件类。
 2. `ui/modes/navigation/widget.py::NavigationModeWidget.__init__(..., event_registry_factory, game_window_finder, event_overlay_providers)` 保存三个显式注入点；未注入时分别使用空 registry、无窗口和无附加 overlay。
@@ -4545,7 +4565,7 @@ def shutdown(self)
 - OCR backend：`adapters/perception/rapidocr.py` 与 `rapidocr_models.py`；core perception 不导入具体 provider。
 - 开发资源：`resources/`；开发可写数据：`data/`；安装态资源/data 由 `AUTO_MODULES_RESOURCE_DIR`、`AUTO_MODULES_DATA_DIR` 明确覆盖。
 - C# Launcher path：`LauncherPaths` 以 `services/virtual_gamepad` 为 ModuleRoot，以 repository parent 为 WorkspaceRoot；`.venv`、workspace-local .NET、`src` 三者不得混用根层级。
-- C# build/test 当前机器只有 .NET runtime 6.0.23、没有 SDK，因此本轮不能执行 `dotnet build/test`；Python 和静态路径验证不能替代 C# 编译验证。
+- C# build/test：系统默认 `dotnet` 未配置 SDK；`D:\ACloud\dotnet-sdk2\dotnet.exe` 提供 .NET 8.0.424。LAN/Host 测试用该绝对路径运行，未启动真实 Host 或设备；Launcher/Installer 仍需另行验证。
 
 `src/auto_modules/bootstrap/main.py` 拥有 Windows 启动前置：先配置 UTF-8 输出和 `data_root()/logs/runtime.log`，随后默认 `FreeConsole()`，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动根 `main.py` 并退出原进程。管理员进程获取基于 repository path 的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口。默认 GUI 启动不保留控制台；设置 `MINIMAP_DEBUG_CONSOLE=1` 时保留控制台。真实游戏输入依赖管理员完整性级别。
 `data/logs/runtime.log` 每次进程启动都会重建；事件系统另有 `data/logs/event_runtime.log` 和 per-run logs。安装态两者位于 `AUTO_MODULES_DATA_DIR/logs`。
@@ -4585,6 +4605,10 @@ The provider's supported call settings come from one OCR profile instance's `pro
 重试策略：热键读取本身无独立重试；由 service worker 顶层统一重试。按住只 emit 一次，松开后重新武装。
 
 ## 8. 数据模型与契约
+### LAN persisted preferences and capability update
+
+`Preferences` 除 `Name/BindAddress/Port/Controllers/RateHz` 外保存 `RecoveryPeers:string[]?`、`RecoveryCapabilities:Dictionary<string,string[]>?`、`Mode:string`、`ReceivePositions:bool`、`ReceiveEvents:bool`、`EnabledControllers:int[]?`。旧文件缺省 mode 为 off。配对证书指纹由 `trusted.json` 的 `TrustedPeer.DeviceId` 固定；活跃密钥和 grant 不持久化。`capability-update` 的 `controllers` 与 flags 一起协商，`capability-ack` 必须匹配 requestId/flags/scope 并含两个 grants；`capability-reject` 只保留错误，不改变已授能力。
+
 ### Repository path contract
 
 `package_root() -> Path` 固定为 imported `auto_modules` package directory。`repository_root() -> Path` 返回源码仓库或安装态 `app` 根。`resource_root()` 优先 `AUTO_MODULES_RESOURCE_DIR`，否则 `<repository>/resources`；`data_root()` 优先 `AUTO_MODULES_DATA_DIR`，否则 `<repository>/data`。环境变量值统一 `resolve()`；业务模块不自行拼用户 profile 或向 resources 写入。
