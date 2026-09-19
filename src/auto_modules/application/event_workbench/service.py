@@ -63,13 +63,23 @@ class EventWorkbenchService:
         clock_ms: Callable[[], int] | None = None,
         monotonic: Callable[[], float] | None = None,
         host_clock_ms_func: Callable[[], int] | None = None,
+        communication_manager=None,
+        communication_adapter=None,
         loop_interval: float = 0.02,
         catalog_interval: float = 2.0,
     ) -> None:
         self.root = Path(root)
-        self._bridge_factory = bridge_factory or (
-            lambda: HostEventBridge(client_factory=client_factory)
-        )
+        self._communication_manager = communication_manager
+        self._communication_adapter = communication_adapter
+        if bridge_factory is not None:
+            self._bridge_factory = bridge_factory
+        elif communication_manager is not None:
+            self._bridge_factory = lambda: HostEventBridge(
+                manager=communication_manager,
+                communication=communication_adapter,
+            )
+        else:
+            self._bridge_factory = lambda: HostEventBridge(client_factory=client_factory)
         self._trigger_source = trigger_source or HotkeyTriggerSource()
         self._clock_ms = clock_ms or (lambda: int(time.monotonic() * 1000))
         self._monotonic = monotonic or time.monotonic
@@ -224,6 +234,8 @@ class EventWorkbenchService:
 
     def tick_once(self) -> None:
         with self._lock:
+            if self._communication_manager is not None:
+                self._communication_manager.pump()
             bridge = self._ensure_bridge()
             host_status = bridge.status()
             peers = _data_peers(host_status)
