@@ -147,6 +147,39 @@ class CommunicationManager:
         for peer_id in tuple(self._sessions):
             self.disconnect(peer_id, manual=True)
 
+    def pump(self) -> int:
+        """Let a transport perform its single inbound read and fan-out pass."""
+
+        pump = getattr(self.transport, "pump", None)
+        return int(pump(self) or 0) if pump is not None else 0
+
+    def active_peers(self) -> tuple[PeerId, ...]:
+        return tuple(peer_id for peer_id, session in self._sessions.items() if session.active)
+
+    def recover(self) -> dict[PeerId, tuple[CapabilityLease, ...]]:
+        """Reconnect trusted peers and restore only their persisted capabilities."""
+
+        recovered: dict[PeerId, tuple[CapabilityLease, ...]] = {}
+        if self.trust_store is None:
+            return recovered
+        for record in self.trust_store.list_trusted():
+            if self.trust_store.is_revoked(record.peer_id):
+                continue
+            leases: list[CapabilityLease] = []
+            try:
+                for capability in sorted(
+                    self.trust_store.get_recovery_capabilities(record.peer_id),
+                    key=lambda item: item.value,
+                ):
+                    leases.append(self.acquire(record.peer_id, capability))
+            except Exception:
+                for lease in leases:
+                    lease.close()
+                continue
+            if leases:
+                recovered[record.peer_id] = tuple(leases)
+        return recovered
+
     def _require_lease_session(self, lease: CapabilityLease) -> PeerSession:
         session = self._sessions.get(lease.peer_id)
         if (

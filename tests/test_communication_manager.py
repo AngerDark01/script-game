@@ -12,6 +12,7 @@ from auto_modules.application.communication.manager import (
 from auto_modules.core.communication.contracts import Capability, PeerId, Topic
 from auto_modules.core.communication.messages import MessageEnvelope
 from auto_modules.core.communication.contracts import DeliveryMode
+from auto_modules.application.communication.trust_store import FileTrustStore, TrustRecord
 
 
 @dataclass
@@ -97,3 +98,15 @@ def test_stale_generation_cannot_dispatch_after_manual_disconnect() -> None:
     with pytest.raises(StaleSessionError):
         manager.dispatch_incoming(peer, message(Topic.EVENT, 4), generation=generation)
     assert received == []
+
+
+def test_recover_restores_persisted_capabilities_but_skips_revoked_peers(tmp_path) -> None:
+    store = FileTrustStore(tmp_path)
+    store.save(TrustRecord(PeerId("peer-a"), "device-a", "fp", "127.0.0.1", 45873))
+    store.set_recovery_capabilities(PeerId("peer-a"), [Capability.EVENT_SUBSCRIBE])
+    manager = CommunicationManager(FakeTransport(), trust_store=store)
+    recovered = manager.recover()
+    assert list(recovered) == [PeerId("peer-a")]
+    assert manager.transport.connect_calls == ["peer-a"]
+    manager.disconnect(PeerId("peer-a"), manual=True)
+    assert store.get_recovery_capabilities(PeerId("peer-a")) == set()
