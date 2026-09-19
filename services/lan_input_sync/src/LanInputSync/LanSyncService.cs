@@ -48,6 +48,7 @@ public sealed partial class LanSyncService : ILanSyncService
     private readonly Dictionary<string, Guid> _startVersions = new();
     private readonly Dictionary<string, Guid> _pairVersions = new();
     private readonly HashSet<string> _recoveryPeers = new();
+    private readonly Dictionary<string, SessionCapability> _recoveryCapabilities = new();
     private readonly HashSet<string> _autoReconnectBlocked = new();
     private readonly HashSet<string> _reconnectPending = new();
     private readonly ReconnectBackoff _reconnectBackoff = new();
@@ -77,7 +78,18 @@ public sealed partial class LanSyncService : ILanSyncService
         _identity = new IdentityStore(dataDirectory);
         _addresses = LocalAddresses();
         _preferences = _identity.Read<Preferences>("preferences.json") ?? new(Environment.MachineName, _addresses.FirstOrDefault() ?? "127.0.0.1", 45873, [1, 2]);
+        if (_preferences.Mode is "send" or "receive" or "share")
+        {
+            _mode = _preferences.Mode;
+            _receivePositions = _preferences.ReceivePositions;
+            _receiveEvents = _preferences.ReceiveEvents;
+            if (_mode == "receive")
+                foreach (int controller in _preferences.EnabledControllers ?? [])
+                    if (controller is 1 or 2 && _preferences.Controllers.Contains(controller)) _remoteEnabled[controller - 1] = true;
+        }
         foreach (var peer in _preferences.RecoveryPeers ?? []) _recoveryPeers.Add(peer);
+        foreach (var (peer, names) in _preferences.RecoveryCapabilities ?? new())
+            _recoveryCapabilities[peer] = SessionCapabilities.Parse(names);
         foreach (var peer in _identity.Read<TrustedPeer[]>("trusted.json") ?? []) _trusted[peer.DeviceId] = peer;
         _persistenceWorker = Task.Factory.StartNew(() =>
         {
@@ -85,6 +97,7 @@ public sealed partial class LanSyncService : ILanSyncService
                 try { save(); } catch (Exception ex) { lock (_gate) _error = "保存同步配置失败: " + ex.Message; }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
         _worker = Task.Factory.StartNew(NetworkLoop, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        if (_mode != "off") _work.Enqueue(() => ConfigureNetwork(_configurationVersion));
     }
 
     public void Publish(int controller, PadState state, bool enabled)
@@ -153,6 +166,7 @@ public sealed partial class LanSyncService : ILanSyncService
                 session.Grants[controller - 1] = enabled ? NewGrant() : 0;
                 if (!session.Controls.Writer.TryWrite(new { type = "permissions", grants = session.Grants.ToArray() })) CloseLocked(session, "control_queue_overflow");
             }
+            SavePreferencesLater();
         }
     }
     public void EmergencyStop()
@@ -164,12 +178,14 @@ public sealed partial class LanSyncService : ILanSyncService
             _receivePositions = false; _receiveEvents = false;
             _autoReconnectBlocked.UnionWith(_trusted.Keys);
             _recoveryPeers.Clear();
+            _recoveryCapabilities.Clear();
             foreach (var slot in _remote) slot.Reset();
             foreach (var session in _sessions.Values.ToArray()) CloseLocked(session, "emergency_stop");
             foreach (var slot in _local) { slot.Changes.Clear(); slot.State = PadState.Neutral; slot.Enabled = false; slot.Epoch++; }
             _generation++;
             _startVersions.Clear();
             foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId);
+            SavePreferencesLater();
         }
     }
 
@@ -230,7 +246,11 @@ public sealed partial class LanSyncService : ILanSyncService
                             bool dataOnly = _mode == "share";
                             SessionCapability requestedCapabilities = payload.TryGetProperty("capabilities", out var capabilityValue)
                                 ? SessionCapabilities.Parse(capabilityValue.EnumerateArray().Select(value => value.GetString() ?? ""))
-                                : SessionCapabilities.Legacy(dataOnly, true);
+                                : SessionCapabilities.Legacy(dataOnly, false);
+                            if (requestedCapabilities == SessionCapability.None)
+                                throw new ArgumentException("至少需要一项会话能力。");
+                            if ((requestedCapabilities & SessionCapability.InputReceive) != 0)
+                                throw new ArgumentException("发送端不能申请 input.receive。");
                             if (_mode == "share" && (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) != 0)
                                 throw new InvalidOperationException("共享数据会话不能申请手柄输入能力。");
                             dataOnly = (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
@@ -243,12 +263,37 @@ public sealed partial class LanSyncService : ILanSyncService
                             foreach (var peerId in peerIds)
                             {
                                 if (!_trusted.TryGetValue(peerId, out var peer)) throw new InvalidOperationException("设备尚未配对。");
-                                if (_sessions.TryGetValue(peerId, out var existing)) CloseLocked(existing, "restart");
+                                if (_sessions.TryGetValue(peerId, out var existing) && existing.Active)
+                                {
+                                    int[] requestedControllers = dataOnly ? [] : controllers;
+                                    if (existing.Incoming || (existing.Controllers.Length > 0 && requestedControllers.Length > 0
+                                        && !existing.Controllers.SequenceEqual(requestedControllers)))
+                                        throw new InvalidOperationException("该连接的手柄范围已固定，请先停止后重新启动。");
+                                    if (existing.PendingCapabilityRequest != Guid.Empty)
+                                        throw new InvalidOperationException("能力更新正在协商，请稍后重试。");
+                                    if (existing.Capabilities != requestedCapabilities || !existing.Controllers.SequenceEqual(requestedControllers))
+                                    {
+                                        var requestId = Guid.NewGuid();
+                                        if (!existing.Controls.Writer.TryWrite(new { type = "capability-update", requestId, capabilities = SessionCapabilities.ToWire(requestedCapabilities), controllers = requestedControllers }))
+                                            throw new InvalidOperationException("能力更新队列已满。");
+                                        existing.PendingCapabilityRequest = requestId;
+                                        existing.PendingCapabilities = requestedCapabilities;
+                                        existing.PendingControllers = requestedControllers;
+                                    }
+                                    else
+                                    {
+                                        _autoReconnectBlocked.Remove(peerId);
+                                        _recoveryPeers.Add(peerId);
+                                        _recoveryCapabilities[peerId] = requestedCapabilities;
+                                    }
+                                    continue;
+                                }
                                 peer = peer with { Controllers = controllers }; _trusted[peerId] = peer;
                                 var capturedPeer = peer; var startVersion = Guid.NewGuid();
                                 _shareBlockedPeers.Remove(peerId);
                                 _autoReconnectBlocked.Remove(peerId);
                                 _recoveryPeers.Add(peerId);
+                                _recoveryCapabilities[peerId] = requestedCapabilities;
                                 _startVersions[peerId] = startVersion;
                                 // Publish the fencing version before starting
                                 // the worker. Task.Run may execute immediately;
@@ -271,14 +316,16 @@ public sealed partial class LanSyncService : ILanSyncService
                         {
                             _autoReconnectBlocked.UnionWith(_trusted.Keys);
                             _recoveryPeers.Clear();
+                            _recoveryCapabilities.Clear();
                         }
                         else
                         {
                             _autoReconnectBlocked.Add(selected);
                             _recoveryPeers.Remove(selected);
+                            _recoveryCapabilities.Remove(selected);
                         }
-                        SavePreferencesLater();
                         if (_mode == "receive") { Array.Fill(_remoteEnabled, false); foreach (var slot in _remote) slot.Reset(); }
+                        SavePreferencesLater();
                         if (selected is null) { _generation++; _startVersions.Clear(); foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId); }
                         else { _startVersions.Remove(selected); _connecting.Remove(selected); }
                         break;
@@ -291,23 +338,24 @@ public sealed partial class LanSyncService : ILanSyncService
                         if (resetDevice is null)
                         {
                             _connecting.Clear(); _startVersions.Clear(); _shareBlockedPeers.Clear(); _peerErrors.Clear();
-                            _autoReconnectBlocked.UnionWith(_trusted.Keys); _recoveryPeers.Clear();
+                            _autoReconnectBlocked.UnionWith(_trusted.Keys); _recoveryPeers.Clear(); _recoveryCapabilities.Clear();
                         }
                         else
                         {
                             _connecting.Remove(resetDevice); _startVersions.Remove(resetDevice);
                             _shareBlockedPeers.Remove(resetDevice); _peerErrors.Remove(resetDevice);
-                            _autoReconnectBlocked.Add(resetDevice); _recoveryPeers.Remove(resetDevice);
+                            _autoReconnectBlocked.Add(resetDevice); _recoveryPeers.Remove(resetDevice); _recoveryCapabilities.Remove(resetDevice);
                         }
                         _error = null;
                         _pairingState = "idle";
                         _pairingTarget = null;
+                        SavePreferencesLater();
                         break;
                     case "sync.forget":
                         var forgotten = RequiredString(payload, "deviceId");
                         if (_sessions.TryGetValue(forgotten, out var active)) CloseLocked(active, "forgotten");
                         _trusted.Remove(forgotten); _startVersions.Remove(forgotten); _pairVersions.Remove(forgotten); _connecting.Remove(forgotten);
-                        _autoReconnectBlocked.Add(forgotten); _recoveryPeers.Remove(forgotten);
+                        _autoReconnectBlocked.Add(forgotten); _recoveryPeers.Remove(forgotten); _recoveryCapabilities.Remove(forgotten);
                         foreach (var pending in _pending.Values.Where(p => p.DeviceId == forgotten)) pending.Answer.TrySetResult(false);
                         SavePreferencesLater(); break;
                     default: throw new ArgumentException("Unknown LAN sync command: " + command);
@@ -339,12 +387,14 @@ public sealed partial class LanSyncService : ILanSyncService
             ? Controllers(value, _preferences.Controllers, allowEmpty: true)
             : Controllers(value, _preferences.Controllers);
         var configuredRecoveryPeers = _recoveryPeers.ToHashSet();
+        var configuredCapabilities = _recoveryCapabilities.ToDictionary(pair => pair.Key, pair => pair.Value);
         EmergencyStop();
         _recoveryPeers.UnionWith(configuredRecoveryPeers);
+        foreach (var (peer, capabilities) in configuredCapabilities) _recoveryCapabilities[peer] = capabilities;
         _autoReconnectBlocked.ExceptWith(configuredRecoveryPeers);
         _shareBlockedPeers.Clear();
-        _receivePositions = mode == "share" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
-        _receiveEvents = mode == "share" && value.TryGetProperty("receiveEvents", out var re) && re.GetBoolean();
+        _receivePositions = mode is "share" or "receive" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
+        _receiveEvents = mode is "share" or "receive" && value.TryGetProperty("receiveEvents", out var re) && re.GetBoolean();
         _mode = mode; _preferences = new(name, address, port, controllers, rate); _error = null;
         _pairingCode = null;
         foreach (var p in _pending.Values) p.Answer.TrySetResult(false);
@@ -357,7 +407,10 @@ public sealed partial class LanSyncService : ILanSyncService
     }
     private void SavePreferencesLater()
     {
-        _preferences = _preferences with { RecoveryPeers = _recoveryPeers.ToArray() };
+        _preferences = _preferences with { RecoveryPeers = _recoveryPeers.ToArray(),
+            RecoveryCapabilities = _recoveryCapabilities.ToDictionary(pair => pair.Key, pair => SessionCapabilities.ToWire(pair.Value)),
+            Mode = _mode, ReceivePositions = _receivePositions, ReceiveEvents = _receiveEvents,
+            EnabledControllers = Enumerable.Range(1, 2).Where(c => _remoteEnabled[c - 1]).ToArray() };
         var preferences = _preferences; var trusted = _trusted.Values.ToArray();
         if (!_persistence.TryAdd(() => { _identity.Write("preferences.json", preferences); _identity.Write("trusted.json", trusted); }))
             _error = "配置保存队列繁忙，请稍后重试。";
@@ -395,7 +448,9 @@ public sealed partial class LanSyncService : ILanSyncService
                 _reconnectPending.Remove(peerId);
                 if (_disposed || generation != _generation || _autoReconnectBlocked.Contains(peerId)
                     || !_recoveryPeers.Contains(peerId) || !_trusted.ContainsKey(peerId)) return;
-                ScheduleConnection(peerId, () => StartOutgoingAsync(peer, generation, startVersion, _run.Token, dataOnly));
+                var capabilities = _recoveryCapabilities.GetValueOrDefault(peerId, SessionCapabilities.Legacy(dataOnly, false));
+                dataOnly = (capabilities & SessionCapability.InputSend) == 0;
+                ScheduleConnection(peerId, () => StartOutgoingAsync(peer, generation, startVersion, _run.Token, dataOnly, capabilities));
             }
         });
     }
@@ -420,6 +475,7 @@ public sealed partial class LanSyncService : ILanSyncService
                 _sessions.TryGetValue(p.DeviceId, out var s);
                 return new { deviceId = p.DeviceId, name = p.Name, address = p.Address, port = p.Port,
                     connected = s?.Peer?.ConnectionState == ConnectionState.Connected, syncing = s?.Active == true,
+                    sessionId = s?.Id,
                     connecting = _connecting.ContainsKey(p.DeviceId), dataOnly = s?.DataOnly == true,
                     capabilities = s is null ? Array.Empty<string>() : SessionCapabilities.ToWire(s.Capabilities),
                     controllers = s?.Controllers ?? p.Controllers,
@@ -455,11 +511,16 @@ public sealed partial class LanSyncService : ILanSyncService
         _peerErrors[s.DeviceId] = reason;
         foreach (var key in _sharePositions.Keys.Where(k => k.Peer == s.DeviceId).ToArray()) _sharePositions.Remove(key);
         if (s.Incoming)
-            foreach (int c in s.Controllers) { _remote[c - 1].Reset(); _remoteEnabled[c - 1] = false; }
+            foreach (int c in s.Controllers)
+            {
+                _remote[c - 1].Reset();
+                _remoteEnabled[c - 1] = false;
+            }
         if (reason is "stopped" or "forgotten" or "emergency_stop" or "reset_by_user" or "manual_disconnect")
         {
             _autoReconnectBlocked.Add(s.DeviceId);
             _recoveryPeers.Remove(s.DeviceId);
+            _recoveryCapabilities.Remove(s.DeviceId);
         }
         else
         {
@@ -501,7 +562,11 @@ public sealed partial class LanSyncService : ILanSyncService
         lock (_gate)
         {
             if (_disposed) return;
-            EmergencyStop(); _disposed = true; _mode = "off";
+            _disposed = true;
+            foreach (var session in _sessions.Values.ToArray()) CloseLocked(session, "process_shutdown");
+            foreach (var slot in _remote) slot.Reset();
+            foreach (var slot in _local) { slot.Changes.Clear(); slot.State = PadState.Neutral; slot.Enabled = false; }
+            _mode = "off";
             _configurationVersion++; _networkReady = false;
             foreach (var p in _pending.Values) p.Answer.TrySetResult(false);
             _run.Cancel(); _stop.Cancel(); _listener?.Stop();

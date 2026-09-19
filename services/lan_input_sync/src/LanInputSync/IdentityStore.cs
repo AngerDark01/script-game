@@ -5,7 +5,9 @@ using System.Text.Json;
 namespace LanInputSync;
 
 internal sealed record TrustedPeer(string DeviceId, string Name, string Address, int Port, int[] Controllers);
-internal sealed record Preferences(string Name, string BindAddress, int Port, int[] Controllers, int RateHz = 125, string[]? RecoveryPeers = null);
+internal sealed record Preferences(string Name, string BindAddress, int Port, int[] Controllers, int RateHz = 125,
+    string[]? RecoveryPeers = null, Dictionary<string, string[]>? RecoveryCapabilities = null,
+    string Mode = "off", bool ReceivePositions = false, bool ReceiveEvents = false, int[]? EnabledControllers = null);
 
 internal sealed class IdentityStore : IDisposable
 {

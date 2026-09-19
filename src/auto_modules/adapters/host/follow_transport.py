@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from math import isfinite
+from threading import Lock
 from typing import Callable
 
 from auto_modules.adapters.virtual_gamepad.program_output import host_clock_ms
-from auto_modules.core.communication import Capability, DeliveryMode, MessageEnvelope, PeerId, Topic
-from auto_modules.core.lan_follow import SharedEvent, SharedPosition
+from auto_modules.core.communication import (
+    Capability,
+    DeliveryMode,
+    MessageEnvelope,
+    PeerId,
+    SharedEvent,
+    SharedPosition,
+    Topic,
+)
 
 
 class FollowTransport:
@@ -27,8 +36,18 @@ class FollowTransport:
         self.manager = manager
         self.peer_id = str(peer_id or "")
         self._leases = {}
+        self._inbox = {Topic.POSITION: deque(maxlen=128), Topic.EVENT: deque(maxlen=128)}
+        self._inbox_lock = Lock()
         self.clock = clock_ms or (lambda: int(time.monotonic() * 1000))
         self.host_clock = host_clock_ms_func or host_clock_ms
+        if self.manager is not None:
+            for capability, topic in (
+                (Capability.POSITION_SUBSCRIBE, Topic.POSITION),
+                (Capability.EVENT_SUBSCRIBE, Topic.EVENT),
+            ):
+                self._lease(capability).subscribe(
+                    topic, lambda message, topic=topic: self._enqueue(topic, message)
+                )
 
     def publish(self, position: SharedPosition) -> bool:
         age = self.clock() - position.captured_at_ms
@@ -115,10 +134,7 @@ class FollowTransport:
     def poll(self) -> tuple[tuple[SharedPosition, ...], tuple[SharedEvent, ...]]:
         if self.manager is not None:
             self.manager.pump()
-            communication = getattr(getattr(self.manager, "transport", None), "adapter", None)
-            if communication is None:
-                return (), ()
-            return self._poll_pending(communication.pop(Topic.POSITION), communication.pop(Topic.EVENT))
+            return self._poll_pending(self._drain_inbox(Topic.POSITION), self._drain_inbox(Topic.EVENT))
         started = self.clock()
         reply = self.client.request("sync.share.drain")
         now = self.clock()
@@ -222,6 +238,17 @@ class FollowTransport:
             lease = self.manager.acquire(PeerId(self.peer_id), capability)
             self._leases[key] = lease
         return lease
+
+    def _enqueue(self, topic: Topic, message: MessageEnvelope) -> None:
+        with self._inbox_lock:
+            self._inbox[topic].append(dict(message.payload))
+
+    def _drain_inbox(self, topic: Topic) -> tuple[dict, ...]:
+        with self._inbox_lock:
+            queue = self._inbox[topic]
+            items = tuple(queue)
+            queue.clear()
+            return items
 
     def close(self) -> None:
         for lease in tuple(self._leases.values()):

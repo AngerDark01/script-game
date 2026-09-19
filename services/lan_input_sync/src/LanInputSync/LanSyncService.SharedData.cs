@@ -35,7 +35,7 @@ public sealed partial class LanSyncService
 
     private void PublishPositionLocked(JsonElement payload)
     {
-        RequireMode("share");
+        RequireSenderOrShare();
         var position = ParsePosition(payload);
         if (payload.TryGetProperty("deadlineMs", out var expires))
         {
@@ -75,7 +75,7 @@ public sealed partial class LanSyncService
 
     private void PublishEventLocked(JsonElement payload)
     {
-        RequireMode("share");
+        RequireSenderOrShare();
         long remainingMs = 500;
         if (payload.TryGetProperty("deadlineMs", out var expires))
         {
@@ -100,7 +100,7 @@ public sealed partial class LanSyncService
 
     private void PublishCatalogLocked(JsonElement payload)
     {
-        RequireMode("share");
+        RequireSenderOrShare();
         string peer = RequiredString(payload, "deviceId");
         if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.HasData
             || (s.Capabilities & SessionCapability.CatalogPublish) == 0)

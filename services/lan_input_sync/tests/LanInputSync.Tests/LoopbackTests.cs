@@ -38,6 +38,7 @@ public class LoopbackTests
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "lan-sync-tests-" + Guid.NewGuid().ToString("N"));
         public LanSyncService Sender { get; }
         public LanSyncService Receiver { get; }
+        public string SenderDirectory => Path.Combine(_directory, "sender");
         public string ReceiverId => Call(Receiver, "sync.status").GetProperty("deviceId").GetString()!;
         public int SenderPort { get; } = FreePort();
         public int ReceiverPort { get; } = FreePort();
@@ -132,6 +133,111 @@ public class LoopbackTests
         Assert.False(Call(pair.Receiver, "sync.status").GetProperty("receiveEvents").GetBoolean());
         Assert.False(Call(pair.Receiver, "sync.status").GetProperty("receivePositions").GetBoolean());
         Assert.False(pair.Receiver.OwnsController(1));
+    }
+
+    [Fact]
+    public async Task OnePeerSessionAddsSharedCapabilitiesWithoutInterruptingInput()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair();
+        Call(pair.Receiver, "sync.configure", new { mode = "receive", name = "receiver", bindAddress = "127.0.0.1", port = pair.ReceiverPort,
+            receivePositions = true, receiveEvents = true });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("networkReady").GetBoolean(), pair.Details);
+        await pair.Start();
+        pair.Publish(1, new(LeftStickX: 21000), true);
+        await Until(() => pair.Receiver.Consume(1).LeftStickX == 21000, pair.Details);
+        string sessionId = Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString()!;
+
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, controllers = new[] { 1, 2 }, capabilities = new[] {
+            "input.send", "position.publish", "event.publish", "catalog.publish" } });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("peers")[0].GetProperty("capabilities")
+            .EnumerateArray().Any(value => value.GetString() == "position.subscribe"), pair.Details);
+        Assert.Equal(sessionId, Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+        pair.Publish(1, new(LeftStickX: -22000), true);
+        await Until(() => pair.Receiver.Consume(1).LeftStickX == -22000, pair.Details);
+
+        Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "v1", x = 12.0, y = 25.0, confidence = .9, ageMs = 0 });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
+        await Until(() =>
+        {
+            try { Call(pair.Sender, "sync.share.event", new { deviceId = pair.ReceiverId, name = "roll", targets = new[] { "1" } }); return true; }
+            catch { return false; }
+        }, pair.Details);
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("pendingSharedEvents").GetInt32() == 1, pair.Details);
+        Assert.Equal(sessionId, Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+    }
+
+    [Fact]
+    public async Task DataSessionCanAddInputWithinTheSamePeerSession()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Call(pair.Sender, "sync.configure", new { mode = "send", name = "sender", bindAddress = "127.0.0.1", port = pair.SenderPort });
+        Call(pair.Receiver, "sync.configure", new { mode = "receive", name = "receiver", bindAddress = "127.0.0.1", port = pair.ReceiverPort,
+            receivePositions = true, receiveEvents = true });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("networkReady").GetBoolean()
+            && Call(pair.Receiver, "sync.status").GetProperty("networkReady").GetBoolean(), pair.Details);
+        Call(pair.Receiver, "sync.start", new { controllers = new[] { 1, 2 } });
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, capabilities = new[] { "position.publish", "event.publish" } });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        string sessionId = Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString()!;
+
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, controllers = new[] { 1, 2 }, capabilities = new[] {
+            "input.send", "position.publish", "event.publish" } });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("capabilities")
+            .EnumerateArray().Any(value => value.GetString() == "input.send"), pair.Details);
+        Assert.Equal(sessionId, Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+        pair.Publish(1, new(LeftStickY: 19000), true);
+        await Until(() => pair.Receiver.Consume(1).LeftStickY == 19000, pair.Details);
+        Assert.Equal(sessionId, Call(pair.Receiver, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, capabilities = new[] { "position.publish", "event.publish" } });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("dataOnly").GetBoolean(), pair.Details);
+        await Until(() => pair.Receiver.Consume(1) == PadState.Neutral, pair.Details);
+        Assert.Equal(sessionId, Call(pair.Receiver, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+        Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "v1", x = 12.0, y = 25.0, confidence = .9, ageMs = 0 });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
+    }
+
+    [Fact]
+    public async Task TrustedDataSessionRecoversAfterProcessRestartButNotManualStop()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        pair.Sender.Dispose();
+
+        using (var restarted = new LanSyncService(pair.SenderDirectory))
+        {
+            await Until(() => Call(restarted, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(),
+                () => Call(restarted, "sync.status").ToString(), 12000);
+            Assert.Equal("share", Call(restarted, "sync.status").GetProperty("mode").GetString());
+            Call(restarted, "sync.stop", new { deviceId = pair.ReceiverId });
+        }
+
+        using var stopped = new LanSyncService(pair.SenderDirectory);
+        await Until(() => Call(stopped, "sync.status").GetProperty("networkReady").GetBoolean());
+        await Task.Delay(400);
+        Assert.False(Call(stopped, "sync.status").GetProperty("peers")[0].GetProperty("syncing").GetBoolean());
+    }
+
+    [Fact]
+    public async Task RejectedInputUpgradeKeepsPositionSessionAlive()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        Call(pair.Sender, "sync.configure", new { mode = "send", bindAddress = "127.0.0.1", port = pair.SenderPort });
+        Call(pair.Receiver, "sync.configure", new { mode = "receive", bindAddress = "127.0.0.1", port = pair.ReceiverPort,
+            receivePositions = true, receiveEvents = true });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("networkReady").GetBoolean()
+            && Call(pair.Receiver, "sync.status").GetProperty("networkReady").GetBoolean(), pair.Details);
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, capabilities = new[] { "position.publish" } });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        string sessionId = Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString()!;
+
+        Call(pair.Sender, "sync.start", new { deviceId = pair.ReceiverId, controllers = new[] { 1, 2 }, capabilities = new[] { "input.send", "position.publish" } });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("error").ValueKind == JsonValueKind.String, pair.Details);
+        Assert.True(Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("syncing").GetBoolean());
+        Assert.Equal(sessionId, Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
+        Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "v1", x = 8.0, y = 9.0, confidence = .9, ageMs = 0 });
+        await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
     }
 
     [Fact]

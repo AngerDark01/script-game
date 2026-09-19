@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict, deque
+from threading import Lock
 from typing import Callable
 
 from auto_modules.core.events.automation.execution import EventStateFrame
@@ -22,6 +24,8 @@ class HostEventBridge:
         self._manager = manager
         self._communication = communication or getattr(getattr(manager, "transport", None), "adapter", None)
         self._leases = {}
+        self._inbox = defaultdict(lambda: deque(maxlen=128))
+        self._inbox_lock = Lock()
 
     @property
     def connected(self) -> bool:
@@ -45,13 +49,23 @@ class HostEventBridge:
 
     def status(self) -> dict:
         if self._communication is not None:
-            return self._communication.status()
+            status = self._communication.status()
+            if self._manager is not None:
+                for peer in self.data_only_peers_from_status(status):
+                    peer_id = str(peer.get("deviceId") or "")
+                    if peer_id:
+                        self._subscribe_peer(peer_id)
+            return status
         return self._request("sync.status").get("status", {})
 
     def data_only_peers(self) -> tuple[dict, ...]:
+        return self.data_only_peers_from_status(self.status())
+
+    @staticmethod
+    def data_only_peers_from_status(status: dict) -> tuple[dict, ...]:
         return tuple(
             peer
-            for peer in self.status().get("peers", ())
+            for peer in status.get("peers", ())
             if peer.get("connected") and peer.get("syncing") and (
                 peer.get("dataOnly")
                 or any(str(value).startswith(("event.", "position.", "catalog.")) for value in peer.get("capabilities", ()))
@@ -59,14 +73,14 @@ class HostEventBridge:
         )
 
     def drain_events(self) -> tuple[dict, ...]:
-        if self._communication is not None:
-            return self._communication.pop(Topic.EVENT)
+        if self._manager is not None:
+            return self._drain_inbox(Topic.EVENT)
         reply = self._request("sync.share.drain")
         return tuple(item for item in reply.get("events", ()) if isinstance(item, dict))
 
     def drain_catalogs(self) -> tuple[dict, ...]:
-        if self._communication is not None:
-            return self._communication.pop(Topic.CATALOG)
+        if self._manager is not None:
+            return self._drain_inbox(Topic.CATALOG)
         reply = self._request("sync.share.catalog_drain")
         return tuple(item for item in reply.get("catalogs", ()) if isinstance(item, dict))
 
@@ -130,6 +144,8 @@ class HostEventBridge:
         for lease in tuple(self._leases.values()):
             lease.close()
         self._leases.clear()
+        with self._inbox_lock:
+            self._inbox.clear()
         if self._communication is not None:
             return
         client, self._client = self._client, None
@@ -150,3 +166,26 @@ class HostEventBridge:
             lease = self._manager.acquire(PeerId(str(peer_id)), capability)
             self._leases[key] = lease
         return lease
+
+    def _subscribe_peer(self, peer_id: str) -> None:
+        for capability, topic in (
+            (Capability.EVENT_SUBSCRIBE, Topic.EVENT),
+            (Capability.CATALOG_SUBSCRIBE, Topic.CATALOG),
+        ):
+            key = (peer_id, capability)
+            existing = self._leases.get(key)
+            if existing is not None and not existing.closed:
+                continue
+            lease = self._lease(peer_id, capability)
+            lease.subscribe(topic, lambda message, topic=topic: self._enqueue(topic, message))
+
+    def _enqueue(self, topic: Topic, message: MessageEnvelope) -> None:
+        with self._inbox_lock:
+            self._inbox[topic].append(dict(message.payload))
+
+    def _drain_inbox(self, topic: Topic) -> tuple[dict, ...]:
+        with self._inbox_lock:
+            queue = self._inbox[topic]
+            items = tuple(queue)
+            queue.clear()
+            return items

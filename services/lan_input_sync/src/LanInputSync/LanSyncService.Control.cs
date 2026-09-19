@@ -25,6 +25,9 @@ public sealed partial class LanSyncService
         public required SslStream Tls;
         public bool Incoming;
         public SessionCapability Capabilities;
+        public SessionCapability PendingCapabilities;
+        public Guid PendingCapabilityRequest;
+        public int[]? PendingControllers;
         public bool HasData => (Capabilities & SessionCapabilities.DataSharing) != 0;
         public bool DataOnly => HasData && (Capabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
         public long LastSharedEvent;
@@ -32,7 +35,7 @@ public sealed partial class LanSyncService
         public readonly Dictionary<ulong, long> IssuedChallenges = new();
         public bool Active = true;
         public NetPeer? Peer;
-        public long Created = Now, LastReceive, LastSend, LastProbe;
+        public long Created = Now, LastReceive, LastSend, LastPositionSend, LastProbe;
         public double? RttMs;
         public ulong ChallengeId;
         public readonly Queue<(ulong Id, long Time)> Challenges = new();
@@ -114,7 +117,8 @@ public sealed partial class LanSyncService
         SessionCapability requestedCapabilities = hello.TryGetProperty("capabilities", out var capabilityValue)
             ? SessionCapabilities.Parse(capabilityValue.EnumerateArray().Select(value => value.GetString() ?? ""))
             : SessionCapabilities.Legacy(legacyDataOnly, false);
-        bool dataOnly = (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
+        SessionCapability localCapabilities = SessionCapabilities.Reverse(requestedCapabilities);
+        bool dataOnly = (localCapabilities & SessionCapability.InputReceive) == 0;
         TrustedPeer trusted;
         Session session;
         byte[] senderKey = RandomNumberGenerator.GetBytes(32), receiverKey = RandomNumberGenerator.GetBytes(32);
@@ -124,18 +128,19 @@ public sealed partial class LanSyncService
         lock (_gate)
         {
             if (!_trusted.TryGetValue(remoteId, out trusted!)) throw new AuthenticationException("Device is not paired");
-            RequireMode(dataOnly ? "share" : "receive");
-            if (dataOnly && !_receivePositions && !_receiveEvents) throw new InvalidOperationException("尚未允许位置或事件接收。");
-            if (dataOnly && _shareBlockedPeers.Contains(remoteId)) throw new InvalidOperationException("本机已停止该设备的数据连接。");
+            ValidateIncomingCapabilitiesLocked(remoteId, localCapabilities);
             if (_sessions.ContainsKey(remoteId)) throw new InvalidOperationException("该设备已有活动会话，请先停止同步。");
             int[] requested = dataOnly ? [] : Controllers(hello, [1, 2]);
-            if (requested.Any(c => !_preferences.Controllers.Contains(c) || !_remoteEnabled[c - 1])) throw new InvalidOperationException("接收端尚未允许所选手柄，请先开启接收。");
+            if (requested.Any(c => !_preferences.Controllers.Contains(c)
+                || (!_remoteEnabled[c - 1] && !(_preferences.EnabledControllers?.Contains(c) ?? false))))
+                throw new InvalidOperationException("接收端尚未允许所选手柄，请先开启接收。");
             if (_sessions.Values.Any(s => s.Incoming && s.Active && s.Controllers.Intersect(requested).Any())) throw new InvalidOperationException("控制器已被其他发送设备占用。");
+            foreach (int c in requested) _remoteEnabled[c - 1] = true;
             session = new()
             {
                 DeviceId = remoteId, Name = trusted.Name, Address = address.ToString(), Token = udpToken, Controllers = requested,
                 Id = sessionId, Crypto = new(sessionId, receiverKey, senderKey), Tcp = tcp, Tls = tls, Incoming = true,
-                Capabilities = dataOnly ? SessionCapabilities.DataSharing : SessionCapability.InputReceive
+                Capabilities = localCapabilities
             };
             foreach (int c in requested) { _remote[c - 1].Reset(); session.Grants[c - 1] = NewGrant(); }
             _sessions[remoteId] = session;
@@ -248,14 +253,15 @@ public sealed partial class LanSyncService
         var connection = await ConnectTls(peer.Address, peer.Port, peer.DeviceId, deadline.Token);
         using var tcp = connection.Tcp; using var tls = connection.Tls;
         if (requestedCapabilities == SessionCapability.None)
-            requestedCapabilities = SessionCapabilities.Legacy(dataOnly, true);
+            requestedCapabilities = SessionCapabilities.Legacy(dataOnly, false);
         await WriteMessage(tls, new { type = dataOnly ? "start-data" : "start", capabilities = SessionCapabilities.ToWire(requestedCapabilities), controllers = peer.Controllers }, deadline.Token);
         var ready = await ReadMessage(tls, deadline.Token);
         if (RequiredString(ready, "type") != "session") throw new AuthenticationException("Receiver did not permit session");
         if (dataOnly && (!ready.TryGetProperty("dataOnly", out var dataFlag) || !dataFlag.GetBoolean())) throw new AuthenticationException("Receiver does not support data sharing");
         SessionCapability grantedCapabilities = ready.TryGetProperty("capabilities", out var granted)
-            ? SessionCapabilities.Parse(granted.EnumerateArray().Select(value => value.GetString() ?? ""))
-            : SessionCapabilities.Legacy(dataOnly, false);
+            ? SessionCapabilities.Reverse(SessionCapabilities.Parse(granted.EnumerateArray().Select(value => value.GetString() ?? "")))
+            : requestedCapabilities;
+        if (grantedCapabilities != requestedCapabilities) throw new AuthenticationException("Receiver granted different session capabilities");
         Guid id = Guid.Parse(RequiredString(ready, "sessionId"));
         byte[] tx = Convert.FromBase64String(RequiredString(ready, "senderKey")), rx = Convert.FromBase64String(RequiredString(ready, "receiverKey"));
         var session = new Session
@@ -271,7 +277,9 @@ public sealed partial class LanSyncService
         BeforeSessionRegistrationForTest?.Invoke(peer.DeviceId);
         lock (_gate)
         {
-            if (_generation != generation || _mode != (dataOnly ? "share" : "send") || !_trusted.ContainsKey(peer.DeviceId) || _startVersions.GetValueOrDefault(peer.DeviceId) != startVersion) { session.Crypto.Dispose(); throw new OperationCanceledException(); }
+            if (_generation != generation || _mode is not ("send" or "share") || (_mode == "share" && !dataOnly)
+                || !_trusted.ContainsKey(peer.DeviceId) || _startVersions.GetValueOrDefault(peer.DeviceId) != startVersion)
+            { session.Crypto.Dispose(); throw new OperationCanceledException(); }
             if (_sessions.TryGetValue(peer.DeviceId, out var activeSession) && activeSession.Active)
             { session.Crypto.Dispose(); throw new InvalidOperationException("设备已有活动连接，请勿双向同时发起。"); }
             _sessions[peer.DeviceId] = session; _peerErrors.Remove(peer.DeviceId); _error = null;
@@ -303,9 +311,100 @@ public sealed partial class LanSyncService
             while (!token.IsCancellationRequested)
             {
                 var message = await ReadMessage(session.Tls, token);
+                string messageType = RequiredString(message, "type");
+                if (messageType == "capability-update" && session.Incoming)
+                {
+                    Guid requestId = Guid.Parse(RequiredString(message, "requestId"));
+                    var requested = SessionCapabilities.Parse(message.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString() ?? ""));
+                    var local = SessionCapabilities.Reverse(requested);
+                    try
+                    {
+                        lock (_gate)
+                        {
+                            if (!session.Active) return;
+                            ValidateIncomingCapabilitiesLocked(session.DeviceId, local);
+                            bool input = (local & SessionCapability.InputReceive) != 0;
+                            int[] controllers = input ? Controllers(message, []) : [];
+                            if (input && session.Controllers.Length > 0 && !session.Controllers.SequenceEqual(controllers))
+                                throw new InvalidOperationException("该连接的手柄范围已固定，请先停止后重新启动。");
+                            if (controllers.Any(c => !_preferences.Controllers.Contains(c)
+                                || (!_remoteEnabled[c - 1] && !(_preferences.EnabledControllers?.Contains(c) ?? false))))
+                                throw new InvalidOperationException("接收端尚未允许所选手柄，请先开启接收。");
+                            if (_sessions.Values.Any(s => s != session && s.Incoming && s.Active && s.Controllers.Intersect(controllers).Any()))
+                                throw new InvalidOperationException("控制器已被其他发送设备占用。");
+                            if (!input)
+                            {
+                                foreach (int c in session.Controllers) { _remote[c - 1].Reset(); session.Grants[c - 1] = 0; }
+                            }
+                            else if (session.Controllers.Length == 0)
+                            {
+                                foreach (int c in controllers) _remoteEnabled[c - 1] = true;
+                                foreach (int c in controllers) { _remote[c - 1].Reset(); session.Grants[c - 1] = NewGrant(); }
+                            }
+                            session.Controllers = controllers;
+                            session.Capabilities = local;
+                            if (!session.Controls.Writer.TryWrite(new { type = "capability-ack", requestId, capabilities = SessionCapabilities.ToWire(local), controllers, grants = session.Grants.ToArray() }))
+                                throw new InvalidOperationException("能力确认队列已满。");
+                        }
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        lock (_gate)
+                        {
+                            if (!session.Active || !session.Controls.Writer.TryWrite(new { type = "capability-reject", requestId, error = ex.Message }))
+                                throw;
+                        }
+                    }
+                    continue;
+                }
+                if (messageType == "capability-reject" && !session.Incoming)
+                {
+                    Guid requestId = Guid.Parse(RequiredString(message, "requestId"));
+                    lock (_gate)
+                    {
+                        if (!session.Active) return;
+                        if (requestId != session.PendingCapabilityRequest) throw new AuthenticationException("未知的能力拒绝响应。");
+                        _peerErrors[session.DeviceId] = RequiredString(message, "error");
+                        session.PendingCapabilityRequest = Guid.Empty;
+                        session.PendingCapabilities = SessionCapability.None;
+                        session.PendingControllers = null;
+                    }
+                    continue;
+                }
+                if (messageType == "capability-ack" && !session.Incoming)
+                {
+                    Guid requestId = Guid.Parse(RequiredString(message, "requestId"));
+                    var granted = SessionCapabilities.Reverse(SessionCapabilities.Parse(message.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString() ?? "")));
+                    lock (_gate)
+                    {
+                        if (!session.Active) return;
+                        if (requestId != session.PendingCapabilityRequest || granted != session.PendingCapabilities)
+                            throw new AuthenticationException("能力确认与请求不一致。");
+                        int[] controllers = session.PendingControllers ?? throw new AuthenticationException("缺少待确认的手柄范围。");
+                        int[] confirmed = Controllers(message, [], allowEmpty: true);
+                        uint[] updatedGrants = message.GetProperty("grants").EnumerateArray().Select(value => value.GetUInt32()).ToArray();
+                        if (!confirmed.SequenceEqual(controllers) || updatedGrants.Length != 2 || controllers.Any(c => updatedGrants[c - 1] == 0))
+                            throw new AuthenticationException("手柄范围或授予令牌与请求不一致。");
+                        session.Controllers = controllers;
+                        for (int i = 0; i < 2; i++)
+                            if (session.Grants[i] != updatedGrants[i]) { session.Grants[i] = updatedGrants[i]; session.Initialized[i] = false; }
+                        if (controllers.Length == 0) session.Unacked.Clear();
+                        session.Capabilities = granted;
+                        if (_trusted.TryGetValue(session.DeviceId, out var trusted))
+                            _trusted[session.DeviceId] = trusted with { Controllers = controllers };
+                        _autoReconnectBlocked.Remove(session.DeviceId);
+                        _recoveryPeers.Add(session.DeviceId);
+                        _recoveryCapabilities[session.DeviceId] = granted;
+                        _peerErrors.Remove(session.DeviceId);
+                        SavePreferencesLater();
+                        session.PendingCapabilityRequest = Guid.Empty;
+                        session.PendingCapabilities = SessionCapability.None;
+                        session.PendingControllers = null;
+                    }
+                    continue;
+                }
                 if (session.HasData)
                 {
-                    string messageType = RequiredString(message, "type");
                     if (messageType is "shared-event" or "shared-catalog")
                     {
                         lock (_gate) ReceiveSharedEventLocked(session, message);
@@ -314,7 +413,7 @@ public sealed partial class LanSyncService
                     if (messageType.StartsWith("map.", StringComparison.Ordinal))
                         continue;
                 }
-                if (RequiredString(message, "type") != "permissions" || session.Incoming) throw new AuthenticationException("Unexpected control message");
+                if (messageType != "permissions" || session.Incoming) throw new AuthenticationException("Unexpected control message");
                 uint[] grants = message.GetProperty("grants").EnumerateArray().Select(v => v.GetUInt32()).ToArray();
                 if (grants.Length != 2) throw new AuthenticationException("Invalid grants");
                 lock (_gate)
@@ -347,4 +446,17 @@ public sealed partial class LanSyncService
     private static void ValidateName(string name) { if (name.Length is < 1 or > 64) throw new InvalidDataException("Invalid device name"); }
     private static void ValidateNonce(string nonce) { if (nonce.Length != 64 || !nonce.All(Uri.IsHexDigit)) throw new AuthenticationException("Invalid pairing challenge"); }
     private static uint NewGrant() => (uint)RandomNumberGenerator.GetInt32(1, int.MaxValue);
+
+    private void ValidateIncomingCapabilitiesLocked(string peerId, SessionCapability capabilities)
+    {
+        bool receivesInput = (capabilities & SessionCapability.InputReceive) != 0;
+        if (receivesInput) RequireMode("receive");
+        else if (_mode is not ("share" or "receive")) throw new InvalidOperationException("本机未允许共享数据会话。");
+        if ((capabilities & SessionCapability.PositionSubscribe) != 0 && !_receivePositions)
+            throw new InvalidOperationException("本机尚未允许位置接收。");
+        if ((capabilities & (SessionCapability.EventSubscribe | SessionCapability.CatalogSubscribe)) != 0 && !_receiveEvents)
+            throw new InvalidOperationException("本机尚未允许事件接收。");
+        if ((capabilities & SessionCapabilities.DataSharing) != 0 && _shareBlockedPeers.Contains(peerId))
+            throw new InvalidOperationException("本机已停止该设备的数据连接。");
+    }
 }

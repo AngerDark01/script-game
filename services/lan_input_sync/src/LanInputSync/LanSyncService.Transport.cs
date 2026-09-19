@@ -179,9 +179,9 @@ public sealed partial class LanSyncService
                 }
                 if ((s.Capabilities & SessionCapability.PositionPublish) != 0)
                 {
-                    if (now - s.LastSend >= 33)
+                    if (now - s.LastPositionSend >= 33)
                     {
-                        s.LastSend = now;
+                        s.LastPositionSend = now;
                         foreach (var p in _publishedPositions.Values)
                         {
                             long age = p.AgeMs + now - p.StoredAt;
@@ -189,9 +189,8 @@ public sealed partial class LanSyncService
                                 packets.Add((s, 0, JsonSerializer.SerializeToUtf8Bytes(p.Message with { ageMs = age, challenge = s.LastPeerChallenge })));
                         }
                     }
-                    if ((s.Capabilities & SessionCapability.InputSend) == 0) continue;
                 }
-                if (s.Incoming) continue;
+                if (s.Incoming || (s.Capabilities & SessionCapability.InputSend) == 0) continue;
                 foreach (int controller in s.Controllers)
                 {
                     int i = controller - 1;
@@ -249,12 +248,15 @@ public sealed partial class LanSyncService
                 ReceivePositionLocked(session, payload);
                 return;
             }
-            if (session.DataOnly && lane == 1) throw new InvalidDataException("Input packets forbidden in data session");
+            // Old input datagrams can still arrive while the capability ack is in flight.
+            if ((lane == 0 || lane == 1) && session.Incoming
+                && (session.Capabilities & SessionCapability.InputReceive) == 0) return;
+            if (session.DataOnly && lane == 1) return;
             using var stream = new MemoryStream(payload); using var reader = new BinaryReader(stream);
             long now = Now;
             if (lane == 0)
             {
-                if (!session.Incoming) throw new InvalidDataException();
+                if (!session.Incoming || (session.Capabilities & SessionCapability.InputReceive) == 0) throw new InvalidDataException();
                 int count = reader.ReadByte(); if (count is < 1 or > 2) throw new InvalidDataException();
                 HashSet<int> seen = [];
                 for (int n = 0; n < count; n++)
@@ -268,7 +270,7 @@ public sealed partial class LanSyncService
             }
             else if (lane == 1)
             {
-                if (!session.Incoming) throw new InvalidDataException();
+                if (!session.Incoming || (session.Capabilities & SessionCapability.InputReceive) == 0) throw new InvalidDataException();
                 int i = reader.ReadByte(); uint grant = reader.ReadUInt32(), epoch = reader.ReadUInt32(), revision = reader.ReadUInt32();
                 bool enabled = reader.ReadBoolean(); ushort buttons = reader.ReadUInt16(); bool baseline = reader.ReadBoolean();
                 if (i > 1 || !session.Controllers.Contains(i + 1)) throw new InvalidDataException();

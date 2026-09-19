@@ -8,11 +8,18 @@ from .paths import (
     root_config_path_from_file,
     root_config_path_from_map_folder,
 )
-from .services import CoreServices, create_core_services
+from .services import (
+    CommunicationServices,
+    CoreServices,
+    create_communication_services,
+    create_core_services,
+)
 
 __all__ = [
     "advanced_settings_dir_from_file",
+    "CommunicationServices",
     "CoreServices",
+    "create_communication_services",
     "create_core_services",
     "map_data_dir_from_file",
     "project_root_from_file",

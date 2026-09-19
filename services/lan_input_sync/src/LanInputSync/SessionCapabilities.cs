@@ -29,6 +29,24 @@ internal static class SessionCapabilities
     public static bool Allows(SessionCapability granted, SessionCapability required)
         => required != SessionCapability.None && (granted & required) == required;
 
+    public static SessionCapability Reverse(SessionCapability capabilities)
+    {
+        var reversed = SessionCapability.None;
+        foreach (var (local, remote) in new[]
+        {
+            (SessionCapability.InputSend, SessionCapability.InputReceive),
+            (SessionCapability.PositionPublish, SessionCapability.PositionSubscribe),
+            (SessionCapability.EventPublish, SessionCapability.EventSubscribe),
+            (SessionCapability.CatalogPublish, SessionCapability.CatalogSubscribe),
+            (SessionCapability.MapPublish, SessionCapability.MapSubscribe)
+        })
+        {
+            if ((capabilities & local) != 0) reversed |= remote;
+            if ((capabilities & remote) != 0) reversed |= local;
+        }
+        return reversed;
+    }
+
     public static SessionCapability Parse(IEnumerable<string>? names)
     {
         var result = SessionCapability.None;
@@ -67,4 +85,3 @@ internal static class SessionCapabilities
         return result.ToArray();
     }
 }
-

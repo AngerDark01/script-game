@@ -8,16 +8,16 @@ shared drain operation during ``pump``.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
 from typing import Any, Callable
+from threading import Lock
 
 from auto_modules.core.communication import (
-    Capability,
     DeliveryMode,
     MessageEnvelope,
     PeerId,
     Topic,
 )
+from auto_modules.application.communication.manager import StaleSessionError
 
 
 class HostPeerConnection:
@@ -61,7 +61,7 @@ class HostCommunicationAdapter:
         self._client_factory = client_factory
         self._connect_timeout = float(connect_timeout)
         self._client: Any | None = None
-        self._pending: dict[Topic, deque[dict]] = defaultdict(deque)
+        self._connect_lock = Lock()
 
     @property
     def connected(self) -> bool:
@@ -74,15 +74,22 @@ class HostCommunicationAdapter:
     def ensure_connected(self) -> None:
         if self._client is not None:
             return
-        if self._client_factory is None:
-            from auto_modules.adapters.virtual_gamepad import VirtualGamepadClient
+        with self._connect_lock:
+            if self._client is not None:
+                return
+            if self._client_factory is None:
+                from auto_modules.adapters.virtual_gamepad import VirtualGamepadClient
 
-            factory = VirtualGamepadClient
-        else:
-            factory = self._client_factory
-        client = factory()
-        client.connect(timeout=self._connect_timeout)
-        self._client = client
+                factory = VirtualGamepadClient
+            else:
+                factory = self._client_factory
+            client = factory()
+            try:
+                client.connect(timeout=self._connect_timeout)
+            except Exception:
+                client.close()
+                raise
+            self._client = client
 
     def request(self, command: str, payload: dict | None = None) -> dict:
         self.ensure_connected()
@@ -129,11 +136,10 @@ class HostCommunicationAdapter:
                 created_at_ms=0,
                 ttl_ms=500,
             )
-            self._pending[Topic.POSITION].append(dict(item))
             try:
                 manager.dispatch_incoming(peer, envelope)
-            except Exception:
-                pass
+            except StaleSessionError:
+                continue
             count += 1
         for item in reply.get("events", ()):
             if not isinstance(item, dict):
@@ -148,11 +154,10 @@ class HostCommunicationAdapter:
                 deadline_ms=max(1, int(item.get("deadlineMs") or 1)),
                 sequence=int(item.get("sequence") or 0),
             )
-            self._pending[Topic.EVENT].append(dict(item))
             try:
                 manager.dispatch_incoming(peer, envelope)
-            except Exception:
-                pass
+            except StaleSessionError:
+                continue
             count += 1
         for item in reply.get("catalogs", ()):
             if not isinstance(item, dict):
@@ -165,19 +170,12 @@ class HostCommunicationAdapter:
                 delivery=DeliveryMode.RELIABLE_ORDERED,
                 created_at_ms=0,
             )
-            self._pending[Topic.CATALOG].append(dict(item))
             try:
                 manager.dispatch_incoming(peer, envelope)
-            except Exception:
-                pass
+            except StaleSessionError:
+                continue
             count += 1
         return count
-
-    def pop(self, topic: Topic | str) -> tuple[dict, ...]:
-        queue = self._pending[Topic(topic)]
-        items = tuple(queue)
-        queue.clear()
-        return items
 
     def write_state(self, frame, ttl_ms: int = 120) -> dict:
         return self.request(

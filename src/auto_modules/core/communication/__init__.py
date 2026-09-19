@@ -3,6 +3,7 @@
 from .contracts import Capability, DeliveryMode, PeerId, SessionId, Topic, capability_topic
 from .messages import MessageEnvelope
 from .qos import LATEST_STATE, RELIABLE_EVENT, VERSIONED_RESOURCE, QoS, QoSProfile, qos_for_topic
+from .shared_state import SharedEvent, SharedPosition
 
 __all__ = [
     "Capability",
@@ -14,6 +15,8 @@ __all__ = [
     "QoSProfile",
     "RELIABLE_EVENT",
     "SessionId",
+    "SharedEvent",
+    "SharedPosition",
     "Topic",
     "VERSIONED_RESOURCE",
     "capability_topic",

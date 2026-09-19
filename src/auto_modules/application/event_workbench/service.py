@@ -46,7 +46,10 @@ def _data_peers(status: dict) -> tuple[dict, ...]:
     return tuple(
         peer
         for peer in status.get("peers", ())
-        if peer.get("connected") and peer.get("syncing") and peer.get("dataOnly")
+        if peer.get("connected") and peer.get("syncing") and (
+            peer.get("dataOnly")
+            or any(str(value).startswith(("event.", "catalog.")) for value in peer.get("capabilities", ()))
+        )
     )
 
 
@@ -234,10 +237,10 @@ class EventWorkbenchService:
 
     def tick_once(self) -> None:
         with self._lock:
-            if self._communication_manager is not None:
-                self._communication_manager.pump()
             bridge = self._ensure_bridge()
             host_status = bridge.status()
+            if self._communication_manager is not None:
+                self._communication_manager.pump()
             peers = _data_peers(host_status)
             self._connected = True
             self._peer_count = len(peers)

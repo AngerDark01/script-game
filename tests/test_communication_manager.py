@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -110,3 +112,49 @@ def test_recover_restores_persisted_capabilities_but_skips_revoked_peers(tmp_pat
     assert manager.transport.connect_calls == ["peer-a"]
     manager.disconnect(PeerId("peer-a"), manual=True)
     assert store.get_recovery_capabilities(PeerId("peer-a")) == set()
+
+
+def test_process_shutdown_preserves_trusted_recovery_preferences(tmp_path) -> None:
+    store = FileTrustStore(tmp_path)
+    peer = PeerId("peer-a")
+    store.save(TrustRecord(peer, "device-a", "fp", "127.0.0.1", 45873))
+    store.set_recovery_capabilities(peer, [Capability.EVENT_SUBSCRIBE])
+    manager = CommunicationManager(FakeTransport(), trust_store=store)
+    manager.acquire(peer, Capability.EVENT_SUBSCRIBE)
+
+    manager.close()
+
+    assert store.get_recovery_capabilities(peer) == {Capability.EVENT_SUBSCRIBE}
+
+
+def test_concurrent_capability_requests_open_one_peer_connection() -> None:
+    entered = Event()
+    release = Event()
+    duplicate_connect = Event()
+
+    class SlowTransport(FakeTransport):
+        attempts = 0
+
+        def connect(self, peer_id: PeerId) -> FakeConnection:
+            self.attempts += 1
+            if self.attempts > 1:
+                duplicate_connect.set()
+            entered.set()
+            assert release.wait(2)
+            return super().connect(peer_id)
+
+    transport = SlowTransport()
+    manager = CommunicationManager(transport)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(manager.acquire, "peer-a", Capability.EVENT_SUBSCRIBE)
+        assert entered.wait(2)
+        second = executor.submit(manager.acquire, "peer-a", Capability.POSITION_SUBSCRIBE)
+        try:
+            assert not duplicate_connect.wait(0.1)
+        finally:
+            release.set()
+        leases = (first.result(timeout=2), second.result(timeout=2))
+
+    assert transport.connect_calls == ["peer-a"]
+    for lease in leases:
+        lease.close()

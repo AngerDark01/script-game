@@ -1,3 +1,5 @@
+using System.Security.Authentication;
+
 namespace LanInputSync.Tests;
 
 public sealed class TrustStoreTests
@@ -27,6 +29,8 @@ public sealed class TrustStoreTests
         var backoff = new ReconnectBackoff();
         Assert.Equal(TimeSpan.FromSeconds(1), backoff.Next("peer"));
         Assert.Equal(TimeSpan.FromSeconds(2), backoff.Next("peer"));
+        Assert.Equal(TimeSpan.FromSeconds(5), backoff.Next("peer"));
+        Assert.Equal(TimeSpan.FromSeconds(15), backoff.Next("peer"));
         for (int i = 0; i < 10; i++) Assert.Equal(TimeSpan.FromSeconds(30), backoff.Next("peer"));
         backoff.Reset("peer");
         Assert.Equal(TimeSpan.FromSeconds(1), backoff.Next("peer"));
@@ -39,6 +43,9 @@ public sealed class TrustStoreTests
         Assert.True(SessionCapabilities.Allows(SessionCapabilities.Legacy(false, true), SessionCapability.InputReceive));
         Assert.Throws<ArgumentException>(() => SessionCapabilities.Parse(["unknown.topic"]));
         Assert.Contains("map.subscribe", SessionCapabilities.ToWire(SessionCapability.MapSubscribe));
+        var requested = SessionCapability.InputSend | SessionCapability.PositionPublish | SessionCapability.EventPublish;
+        var receiving = SessionCapabilities.Reverse(requested);
+        Assert.True(SessionCapabilities.Allows(receiving, SessionCapability.InputReceive | SessionCapability.PositionSubscribe | SessionCapability.EventSubscribe));
+        Assert.Equal(requested, SessionCapabilities.Reverse(receiving));
     }
 }
-
