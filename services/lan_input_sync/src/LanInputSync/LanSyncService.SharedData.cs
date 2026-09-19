@@ -91,7 +91,8 @@ public sealed partial class LanSyncService
         if (name.Length is < 1 or > 64) throw new ArgumentException("Invalid event name");
         string[] targets = payload.GetProperty("targets").EnumerateArray().Select(v => v.GetString() ?? "").ToArray();
         if (targets.Length is < 1 or > 8 || targets.Any(t => t.Length is < 1 or > 64)) throw new ArgumentException("Invalid targets");
-        if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.DataOnly) throw new InvalidOperationException("No shared data session");
+        if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.HasData
+            || (s.Capabilities & SessionCapability.EventPublish) == 0) throw new InvalidOperationException("Event capability is not authorized");
         if (s.LastPeerChallenge == 0) throw new InvalidOperationException("共享会话正在校验，请稍后重试。");
         var message = new { type = "shared-event", id = Guid.NewGuid().ToString("N"), sequence = ++_eventSequence, name, eventId, eventRevision, targets, remainingMs, challenge = s.LastPeerChallenge };
         if (!s.Controls.Writer.TryWrite(message)) { CloseLocked(s, "event_queue_overflow"); throw new InvalidOperationException("Event queue overflow"); }
@@ -101,7 +102,8 @@ public sealed partial class LanSyncService
     {
         RequireMode("share");
         string peer = RequiredString(payload, "deviceId");
-        if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.DataOnly)
+        if (!_sessions.TryGetValue(peer, out var s) || !s.Active || !s.HasData
+            || (s.Capabilities & SessionCapability.CatalogPublish) == 0)
             throw new InvalidOperationException("No shared data session");
         if (s.LastPeerChallenge == 0) throw new InvalidOperationException("Shared session is still validating");
         if (!payload.TryGetProperty("catalog", out var catalog) || catalog.ValueKind != JsonValueKind.Object)
@@ -118,7 +120,7 @@ public sealed partial class LanSyncService
         string type = RequiredString(message, "type");
         if (type == "shared-catalog")
         {
-            if (!_receiveEvents) return;
+            if (!_receiveEvents || (session.Capabilities & SessionCapability.CatalogSubscribe) == 0) return;
             if (!FreshChallenge(session, message, out _)) return;
             if (!message.TryGetProperty("catalog", out var catalog) || catalog.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid catalog");
             if (_sharedCatalogs.Count >= 8) { _sharedCatalogs.Dequeue(); }
@@ -126,7 +128,7 @@ public sealed partial class LanSyncService
             return;
         }
         if (type != "shared-event") throw new InvalidDataException("Unexpected shared control message");
-        if (!_receiveEvents) return;
+        if (!_receiveEvents || (session.Capabilities & SessionCapability.EventSubscribe) == 0) return;
         if (!FreshChallenge(session, message, out var deadline)) return;
         long remaining = message.TryGetProperty("remainingMs", out var remainingValue) ? remainingValue.GetInt64() : 500;
         if (remaining is <= 0 or > 500) throw new InvalidDataException("Invalid event lifetime");

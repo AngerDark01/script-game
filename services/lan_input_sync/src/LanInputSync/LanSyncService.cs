@@ -47,6 +47,10 @@ public sealed partial class LanSyncService : ILanSyncService
     private readonly Dictionary<string, Guid> _connecting = new();
     private readonly Dictionary<string, Guid> _startVersions = new();
     private readonly Dictionary<string, Guid> _pairVersions = new();
+    private readonly HashSet<string> _recoveryPeers = new();
+    private readonly HashSet<string> _autoReconnectBlocked = new();
+    private readonly HashSet<string> _reconnectPending = new();
+    private readonly ReconnectBackoff _reconnectBackoff = new();
 
     private sealed class LocalSlot
     {
@@ -73,6 +77,7 @@ public sealed partial class LanSyncService : ILanSyncService
         _identity = new IdentityStore(dataDirectory);
         _addresses = LocalAddresses();
         _preferences = _identity.Read<Preferences>("preferences.json") ?? new(Environment.MachineName, _addresses.FirstOrDefault() ?? "127.0.0.1", 45873, [1, 2]);
+        foreach (var peer in _preferences.RecoveryPeers ?? []) _recoveryPeers.Add(peer);
         foreach (var peer in _identity.Read<TrustedPeer[]>("trusted.json") ?? []) _trusted[peer.DeviceId] = peer;
         _persistenceWorker = Task.Factory.StartNew(() =>
         {
@@ -157,6 +162,8 @@ public sealed partial class LanSyncService : ILanSyncService
             Array.Fill(_remoteEnabled, false);
             _sharePositions.Clear(); _sharedEvents.Clear(); _publishedPositions.Clear();
             _receivePositions = false; _receiveEvents = false;
+            _autoReconnectBlocked.UnionWith(_trusted.Keys);
+            _recoveryPeers.Clear();
             foreach (var slot in _remote) slot.Reset();
             foreach (var session in _sessions.Values.ToArray()) CloseLocked(session, "emergency_stop");
             foreach (var slot in _local) { slot.Changes.Clear(); slot.State = PadState.Neutral; slot.Enabled = false; slot.Epoch++; }
@@ -221,6 +228,12 @@ public sealed partial class LanSyncService : ILanSyncService
                         {
                             RequireSenderOrShare();
                             bool dataOnly = _mode == "share";
+                            SessionCapability requestedCapabilities = payload.TryGetProperty("capabilities", out var capabilityValue)
+                                ? SessionCapabilities.Parse(capabilityValue.EnumerateArray().Select(value => value.GetString() ?? ""))
+                                : SessionCapabilities.Legacy(dataOnly, true);
+                            if (_mode == "share" && (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) != 0)
+                                throw new InvalidOperationException("共享数据会话不能申请手柄输入能力。");
+                            dataOnly = (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
                             string? selectedPeer = String(payload, "deviceId");
                             var peerIds = selectedPeer is null
                                 ? (dataOnly ? _trusted.Keys.ToArray() : throw new ArgumentException("请选择目标设备。"))
@@ -234,12 +247,14 @@ public sealed partial class LanSyncService : ILanSyncService
                                 peer = peer with { Controllers = controllers }; _trusted[peerId] = peer;
                                 var capturedPeer = peer; var startVersion = Guid.NewGuid();
                                 _shareBlockedPeers.Remove(peerId);
+                                _autoReconnectBlocked.Remove(peerId);
+                                _recoveryPeers.Add(peerId);
                                 _startVersions[peerId] = startVersion;
                                 // Publish the fencing version before starting
                                 // the worker. Task.Run may execute immediately;
                                 // otherwise a valid session can observe the
                                 // previous/default version and self-cancel.
-                                ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly));
+                                ScheduleConnection(peerId, () => StartOutgoingAsync(capturedPeer, generation, startVersion, token, dataOnly, requestedCapabilities));
                             }
                             SavePreferencesLater();
                         }
@@ -252,6 +267,17 @@ public sealed partial class LanSyncService : ILanSyncService
                             else _shareBlockedPeers.Add(selected);
                         }
                         foreach (var s in _sessions.Values.Where(s => selected is null || s.DeviceId == selected).ToArray()) CloseLocked(s, "stopped");
+                        if (selected is null)
+                        {
+                            _autoReconnectBlocked.UnionWith(_trusted.Keys);
+                            _recoveryPeers.Clear();
+                        }
+                        else
+                        {
+                            _autoReconnectBlocked.Add(selected);
+                            _recoveryPeers.Remove(selected);
+                        }
+                        SavePreferencesLater();
                         if (_mode == "receive") { Array.Fill(_remoteEnabled, false); foreach (var slot in _remote) slot.Reset(); }
                         if (selected is null) { _generation++; _startVersions.Clear(); foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId); }
                         else { _startVersions.Remove(selected); _connecting.Remove(selected); }
@@ -265,11 +291,13 @@ public sealed partial class LanSyncService : ILanSyncService
                         if (resetDevice is null)
                         {
                             _connecting.Clear(); _startVersions.Clear(); _shareBlockedPeers.Clear(); _peerErrors.Clear();
+                            _autoReconnectBlocked.UnionWith(_trusted.Keys); _recoveryPeers.Clear();
                         }
                         else
                         {
                             _connecting.Remove(resetDevice); _startVersions.Remove(resetDevice);
                             _shareBlockedPeers.Remove(resetDevice); _peerErrors.Remove(resetDevice);
+                            _autoReconnectBlocked.Add(resetDevice); _recoveryPeers.Remove(resetDevice);
                         }
                         _error = null;
                         _pairingState = "idle";
@@ -279,6 +307,7 @@ public sealed partial class LanSyncService : ILanSyncService
                         var forgotten = RequiredString(payload, "deviceId");
                         if (_sessions.TryGetValue(forgotten, out var active)) CloseLocked(active, "forgotten");
                         _trusted.Remove(forgotten); _startVersions.Remove(forgotten); _pairVersions.Remove(forgotten); _connecting.Remove(forgotten);
+                        _autoReconnectBlocked.Add(forgotten); _recoveryPeers.Remove(forgotten);
                         foreach (var pending in _pending.Values.Where(p => p.DeviceId == forgotten)) pending.Answer.TrySetResult(false);
                         SavePreferencesLater(); break;
                     default: throw new ArgumentException("Unknown LAN sync command: " + command);
@@ -309,7 +338,10 @@ public sealed partial class LanSyncService : ILanSyncService
         int[] controllers = mode == "share"
             ? Controllers(value, _preferences.Controllers, allowEmpty: true)
             : Controllers(value, _preferences.Controllers);
+        var configuredRecoveryPeers = _recoveryPeers.ToHashSet();
         EmergencyStop();
+        _recoveryPeers.UnionWith(configuredRecoveryPeers);
+        _autoReconnectBlocked.ExceptWith(configuredRecoveryPeers);
         _shareBlockedPeers.Clear();
         _receivePositions = mode == "share" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
         _receiveEvents = mode == "share" && value.TryGetProperty("receiveEvents", out var re) && re.GetBoolean();
@@ -325,6 +357,7 @@ public sealed partial class LanSyncService : ILanSyncService
     }
     private void SavePreferencesLater()
     {
+        _preferences = _preferences with { RecoveryPeers = _recoveryPeers.ToArray() };
         var preferences = _preferences; var trusted = _trusted.Values.ToArray();
         if (!_persistence.TryAdd(() => { _identity.Write("preferences.json", preferences); _identity.Write("trusted.json", trusted); }))
             _error = "配置保存队列繁忙，请稍后重试。";
@@ -338,6 +371,32 @@ public sealed partial class LanSyncService : ILanSyncService
             try { await connect(); }
             catch (Exception ex) { lock (_gate) { _error = ex.Message; _peerErrors[key] = ex.Message; if (key.StartsWith("pair:", StringComparison.Ordinal)) _pairingState = "failed"; } }
             finally { lock (_gate) if (_connecting.GetValueOrDefault(key) == ticket) _connecting.Remove(key); }
+        });
+    }
+
+    private void ScheduleAutoReconnectLocked(string peerId, string reason)
+    {
+        if (_disposed || _mode is not ("send" or "share") || !_trusted.ContainsKey(peerId)
+            || _autoReconnectBlocked.Contains(peerId) || !_recoveryPeers.Contains(peerId)
+            || _reconnectPending.Contains(peerId) || _connecting.ContainsKey(peerId)) return;
+        _reconnectPending.Add(peerId);
+        TimeSpan delay = _reconnectBackoff.Next(peerId);
+        int generation = _generation;
+        bool dataOnly = _mode == "share";
+        var peer = _trusted[peerId];
+        var startVersion = Guid.NewGuid();
+        _startVersions[peerId] = startVersion;
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(delay, _run.Token); }
+            catch (OperationCanceledException) { }
+            lock (_gate)
+            {
+                _reconnectPending.Remove(peerId);
+                if (_disposed || generation != _generation || _autoReconnectBlocked.Contains(peerId)
+                    || !_recoveryPeers.Contains(peerId) || !_trusted.ContainsKey(peerId)) return;
+                ScheduleConnection(peerId, () => StartOutgoingAsync(peer, generation, startVersion, _run.Token, dataOnly));
+            }
         });
     }
     private object StatusLocked()
@@ -362,6 +421,7 @@ public sealed partial class LanSyncService : ILanSyncService
                 return new { deviceId = p.DeviceId, name = p.Name, address = p.Address, port = p.Port,
                     connected = s?.Peer?.ConnectionState == ConnectionState.Connected, syncing = s?.Active == true,
                     connecting = _connecting.ContainsKey(p.DeviceId), dataOnly = s?.DataOnly == true,
+                    capabilities = s is null ? Array.Empty<string>() : SessionCapabilities.ToWire(s.Capabilities),
                     controllers = s?.Controllers ?? p.Controllers,
                     rttMs = s?.RttMs, error = _peerErrors.GetValueOrDefault(p.DeviceId) };
             }).ToArray(),
@@ -396,6 +456,15 @@ public sealed partial class LanSyncService : ILanSyncService
         foreach (var key in _sharePositions.Keys.Where(k => k.Peer == s.DeviceId).ToArray()) _sharePositions.Remove(key);
         if (s.Incoming)
             foreach (int c in s.Controllers) { _remote[c - 1].Reset(); _remoteEnabled[c - 1] = false; }
+        if (reason is "stopped" or "forgotten" or "emergency_stop" or "reset_by_user" or "manual_disconnect")
+        {
+            _autoReconnectBlocked.Add(s.DeviceId);
+            _recoveryPeers.Remove(s.DeviceId);
+        }
+        else
+        {
+            ScheduleAutoReconnectLocked(s.DeviceId, reason);
+        }
         _work.Enqueue(() => { s.Tcp.Dispose(); s.Peer?.Disconnect(); s.Crypto.Dispose(); });
     }
     private void RequireMode(string mode) { if (_mode != mode) throw new InvalidOperationException("请先切换到" + (mode == "send" ? "发送" : "接收") + "模式。"); }

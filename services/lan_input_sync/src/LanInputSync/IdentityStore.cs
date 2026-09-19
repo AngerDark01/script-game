@@ -5,12 +5,13 @@ using System.Text.Json;
 namespace LanInputSync;
 
 internal sealed record TrustedPeer(string DeviceId, string Name, string Address, int Port, int[] Controllers);
-internal sealed record Preferences(string Name, string BindAddress, int Port, int[] Controllers, int RateHz = 125);
+internal sealed record Preferences(string Name, string BindAddress, int Port, int[] Controllers, int RateHz = 125, string[]? RecoveryPeers = null);
 
 internal sealed class IdentityStore : IDisposable
 {
     private readonly string _directory;
     private readonly object _disk = new();
+    public string DirectoryPath => _directory;
     public X509Certificate2 Certificate { get; }
     public string DeviceId { get; }
     public static string Fingerprint(X509Certificate certificate) => Convert.ToHexString(SHA256.HashData(certificate.GetRawCertData()));

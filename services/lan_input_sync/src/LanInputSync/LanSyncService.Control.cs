@@ -24,7 +24,9 @@ public sealed partial class LanSyncService
         public required TcpClient Tcp;
         public required SslStream Tls;
         public bool Incoming;
-        public bool DataOnly;
+        public SessionCapability Capabilities;
+        public bool HasData => (Capabilities & SessionCapabilities.DataSharing) != 0;
+        public bool DataOnly => HasData && (Capabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
         public long LastSharedEvent;
         public ulong LastPeerChallenge;
         public readonly Dictionary<ulong, long> IssuedChallenges = new();
@@ -107,8 +109,12 @@ public sealed partial class LanSyncService
             await ConfirmPairAsync(tls, new(remoteId, name, address.ToString(), peerPort, [1, 2]), clientNonce, serverNonce, true, generation, pairing.Token);
             return;
         }
-        bool dataOnly = type == "start-data";
-        if (type != "start" && !dataOnly) throw new AuthenticationException("Unsupported control message");
+        bool legacyDataOnly = type == "start-data";
+        if (type != "start" && !legacyDataOnly) throw new AuthenticationException("Unsupported control message");
+        SessionCapability requestedCapabilities = hello.TryGetProperty("capabilities", out var capabilityValue)
+            ? SessionCapabilities.Parse(capabilityValue.EnumerateArray().Select(value => value.GetString() ?? ""))
+            : SessionCapabilities.Legacy(legacyDataOnly, false);
+        bool dataOnly = (requestedCapabilities & (SessionCapability.InputSend | SessionCapability.InputReceive)) == 0;
         TrustedPeer trusted;
         Session session;
         byte[] senderKey = RandomNumberGenerator.GetBytes(32), receiverKey = RandomNumberGenerator.GetBytes(32);
@@ -128,7 +134,8 @@ public sealed partial class LanSyncService
             session = new()
             {
                 DeviceId = remoteId, Name = trusted.Name, Address = address.ToString(), Token = udpToken, Controllers = requested,
-                Id = sessionId, Crypto = new(sessionId, receiverKey, senderKey), Tcp = tcp, Tls = tls, Incoming = true, DataOnly = dataOnly
+                Id = sessionId, Crypto = new(sessionId, receiverKey, senderKey), Tcp = tcp, Tls = tls, Incoming = true,
+                Capabilities = dataOnly ? SessionCapabilities.DataSharing : SessionCapability.InputReceive
             };
             foreach (int c in requested) { _remote[c - 1].Reset(); session.Grants[c - 1] = NewGrant(); }
             _sessions[remoteId] = session;
@@ -137,7 +144,7 @@ public sealed partial class LanSyncService
         }
         try
         {
-            await WriteMessage(tls, new { type = "session", dataOnly, sessionId, token = udpToken, senderKey = Convert.ToBase64String(senderKey), receiverKey = Convert.ToBase64String(receiverKey), port = udpPort, grants = session.Grants }, handshake.Token);
+            await WriteMessage(tls, new { type = "session", dataOnly, capabilities = SessionCapabilities.ToWire(session.Capabilities), sessionId, token = udpToken, senderKey = Convert.ToBase64String(senderKey), receiverKey = Convert.ToBase64String(receiverKey), port = udpPort, grants = session.Grants }, handshake.Token);
             await RunControlsAsync(session, token);
         }
         finally
@@ -234,21 +241,26 @@ public sealed partial class LanSyncService
         }
     }
 
-    private async Task StartOutgoingAsync(TrustedPeer peer, int generation, Guid startVersion, CancellationToken token, bool dataOnly = false)
+    private async Task StartOutgoingAsync(TrustedPeer peer, int generation, Guid startVersion, CancellationToken token, bool dataOnly = false, SessionCapability requestedCapabilities = SessionCapability.None)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(10));
         var connection = await ConnectTls(peer.Address, peer.Port, peer.DeviceId, deadline.Token);
         using var tcp = connection.Tcp; using var tls = connection.Tls;
-        await WriteMessage(tls, new { type = dataOnly ? "start-data" : "start", controllers = peer.Controllers }, deadline.Token);
+        if (requestedCapabilities == SessionCapability.None)
+            requestedCapabilities = SessionCapabilities.Legacy(dataOnly, true);
+        await WriteMessage(tls, new { type = dataOnly ? "start-data" : "start", capabilities = SessionCapabilities.ToWire(requestedCapabilities), controllers = peer.Controllers }, deadline.Token);
         var ready = await ReadMessage(tls, deadline.Token);
         if (RequiredString(ready, "type") != "session") throw new AuthenticationException("Receiver did not permit session");
         if (dataOnly && (!ready.TryGetProperty("dataOnly", out var dataFlag) || !dataFlag.GetBoolean())) throw new AuthenticationException("Receiver does not support data sharing");
+        SessionCapability grantedCapabilities = ready.TryGetProperty("capabilities", out var granted)
+            ? SessionCapabilities.Parse(granted.EnumerateArray().Select(value => value.GetString() ?? ""))
+            : SessionCapabilities.Legacy(dataOnly, false);
         Guid id = Guid.Parse(RequiredString(ready, "sessionId"));
         byte[] tx = Convert.FromBase64String(RequiredString(ready, "senderKey")), rx = Convert.FromBase64String(RequiredString(ready, "receiverKey"));
         var session = new Session
         {
-            DeviceId = peer.DeviceId, Name = peer.Name, Address = peer.Address, Token = RequiredString(ready, "token"), Controllers = dataOnly ? [] : peer.Controllers, DataOnly = dataOnly,
+            DeviceId = peer.DeviceId, Name = peer.Name, Address = peer.Address, Token = RequiredString(ready, "token"), Controllers = dataOnly ? [] : peer.Controllers, Capabilities = grantedCapabilities,
             Id = id, Crypto = new(id, tx, rx), Tcp = tcp, Tls = tls
         };
         CryptographicOperations.ZeroMemory(tx); CryptographicOperations.ZeroMemory(rx);
@@ -291,10 +303,16 @@ public sealed partial class LanSyncService
             while (!token.IsCancellationRequested)
             {
                 var message = await ReadMessage(session.Tls, token);
-                if (session.DataOnly)
+                if (session.HasData)
                 {
-                    lock (_gate) ReceiveSharedEventLocked(session, message);
-                    continue;
+                    string messageType = RequiredString(message, "type");
+                    if (messageType is "shared-event" or "shared-catalog")
+                    {
+                        lock (_gate) ReceiveSharedEventLocked(session, message);
+                        continue;
+                    }
+                    if (messageType.StartsWith("map.", StringComparison.Ordinal))
+                        continue;
                 }
                 if (RequiredString(message, "type") != "permissions" || session.Incoming) throw new AuthenticationException("Unexpected control message");
                 uint[] grants = message.GetProperty("grants").EnumerateArray().Select(v => v.GetUInt32()).ToArray();

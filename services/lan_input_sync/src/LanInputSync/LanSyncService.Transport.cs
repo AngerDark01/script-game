@@ -96,7 +96,12 @@ public sealed partial class LanSyncService
             lock (_gate)
             {
                 stale = version != _configurationVersion || _disposed;
-                if (!stale) { _listener = tcp; _net = manager; _networkReady = true; }
+                if (!stale)
+                {
+                    _listener = tcp; _net = manager; _networkReady = true;
+                    foreach (var peerId in _recoveryPeers.ToArray())
+                        ScheduleAutoReconnectLocked(peerId, "process_restart");
+                }
             }
             if (stale) { tcp.Stop(); manager.Stop(); return; }
             _ = AcceptLoopAsync(tcp, token);
@@ -158,13 +163,13 @@ public sealed partial class LanSyncService
             {
                 if (!s.Active || s.Peer?.ConnectionState != ConnectionState.Connected) continue;
                 if (s.LastReceive == 0) s.LastReceive = now;
-                if (overflow && !s.Incoming && !s.DataOnly) { CloseLocked(s, "publication_queue_overflow"); continue; }
+                if (overflow && !s.Incoming && (s.Capabilities & SessionCapability.InputSend) != 0) { CloseLocked(s, "publication_queue_overflow"); continue; }
                 if (now - s.LastProbe >= 50)
                 {
                     s.LastProbe = now;
                     ulong id = ++s.ChallengeId;
                     s.Challenges.Enqueue((id, now));
-                    if (s.DataOnly)
+                    if (s.HasData)
                     {
                         s.IssuedChallenges[id] = now;
                         foreach (var old in s.IssuedChallenges.Where(p => now-p.Value > 500).Select(p => p.Key).ToArray()) s.IssuedChallenges.Remove(old);
@@ -172,7 +177,7 @@ public sealed partial class LanSyncService
                     byte[] probe = new byte[9]; probe[0] = 0; BinaryPrimitives.WriteUInt64LittleEndian(probe.AsSpan(1), id);
                     packets.Add((s, 2, probe));
                 }
-                if (s.DataOnly)
+                if ((s.Capabilities & SessionCapability.PositionPublish) != 0)
                 {
                     if (now - s.LastSend >= 33)
                     {
@@ -184,7 +189,7 @@ public sealed partial class LanSyncService
                                 packets.Add((s, 0, JsonSerializer.SerializeToUtf8Bytes(p.Message with { ageMs = age, challenge = s.LastPeerChallenge })));
                         }
                     }
-                    continue;
+                    if ((s.Capabilities & SessionCapability.InputSend) == 0) continue;
                 }
                 if (s.Incoming) continue;
                 foreach (int controller in s.Controllers)
@@ -238,7 +243,8 @@ public sealed partial class LanSyncService
         lock (_gate)
         {
             if (!session.Active) return;
-            if (session.DataOnly && lane == 0)
+            if (session.HasData && (session.Capabilities & SessionCapability.PositionSubscribe) != 0
+                && lane == 0 && payload.Length > 0 && payload[0] == (byte)'{')
             {
                 ReceivePositionLocked(session, payload);
                 return;
@@ -296,7 +302,7 @@ public sealed partial class LanSyncService
                         session.Challenges.Dequeue();
                         if (next.Id == challenge) session.RttMs = now - next.Time;
                     }
-                    if (!session.Incoming || session.DataOnly) session.LastReceive = now;
+                    if (!session.Incoming || session.HasData) session.LastReceive = now;
                     uint revision0 = reader.ReadUInt32(), revision1 = reader.ReadUInt32();
                     var retained = session.Unacked.Where(a => a.Revision > (a.Slot == 0 ? revision0 : revision1)).ToArray();
                     session.Unacked.Clear(); foreach (var a in retained) session.Unacked.Enqueue(a);
