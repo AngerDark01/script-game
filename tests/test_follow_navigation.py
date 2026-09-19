@@ -1,12 +1,12 @@
 import numpy as np
-from auto_modules.core.routing.follow_target import FollowTargetGenerator
-from auto_modules.core.routing.follower_planner import FollowerPlanner
+from auto_modules.core.routing import LaggedTrajectoryTarget
+from auto_modules.features.torchlight.follow.planner import FollowerPlanner
 from auto_modules.core.routing.vector_tracker import VectorPathTracker
 from auto_modules.core.routing.stuck_recovery import ProgressWatchdog
 
 
 def test_target_follows_leader_trail_instead_of_cutting_corner():
-    generator = FollowTargetGenerator()
+    generator = LaggedTrajectoryTarget()
     for i, point in enumerate(((10, 10), (20, 10), (20, 20))):
         generator.observe(point, i*100)
     assert generator.target(15) == (15, 10)

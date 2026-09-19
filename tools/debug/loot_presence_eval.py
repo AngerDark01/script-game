@@ -18,17 +18,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from auto_modules.core.events.types.loot.assets import LOOT_MINIMAP_TEMPLATES, LOOT_PLAYER_MARKER_EXCLUDE_TEMPLATES  # noqa: E402
-from auto_modules.core.events.types.loot.config import LootEventConfig  # noqa: E402
-from auto_modules.core.events.types.loot.detection.exclusions import (  # noqa: E402
+from auto_modules.features.torchlight.loot.assets import LOOT_MINIMAP_TEMPLATES, LOOT_PLAYER_MARKER_EXCLUDE_TEMPLATES  # noqa: E402
+from auto_modules.features.torchlight.loot.config import LootEventConfig  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.exclusions import (  # noqa: E402
     is_blue_map_artifact_candidate,
     is_player_marker_candidate,
     is_white_ring_map_artifact_candidate,
     player_marker_color_signature,
 )
-from auto_modules.core.events.types.loot.detection.images import pad_small_frame  # noqa: E402
-from auto_modules.core.events.types.loot.detection.pipeline import _pad_bboxes, detect_loot_candidates, detect_loot_presence  # noqa: E402
-from auto_modules.core.events.types.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.images import pad_small_frame  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.pipeline import _pad_bboxes, detect_loot_candidates, detect_loot_presence  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}

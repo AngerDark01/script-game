@@ -289,18 +289,19 @@ Future hook placement:
 - `on_handler_action` after handler update returns non-null action.
 - `on_task_completed` or `on_task_failed` before `_clear()`.
 
-## Config Boundary Warning
+## Config Boundary
 
-`DEFAULT_EVENT_CONFIG` currently contains portal-specific defaults directly in `core/events/config.py`. That makes the event core know about the first event package.
-
-Preferred direction:
+`DEFAULT_EVENT_CONFIG` contains only game-neutral runtime fields and an empty
+`events` mapping. Concrete definitions own their defaults. Navigation loads the
+persisted config, then applies the active registry through:
 
 ```text
-EventSystemConfig.default(registry)
-  └── merge global defaults with each EventDefinition.default_config()
+load_event_config(map_folder)
+  -> apply_registered_event_defaults(registry, config)
+       -> EventDefinition.default_config()
 ```
 
-This would let new event packages register their own defaults without editing event core config.
+This lets new event packages register defaults without editing core config.
 
 ## Round Status
 
@@ -308,11 +309,5 @@ Status: partial for the visual/navigation event family. The action-event family
 is now split into pure automation modules plus a platform service and is covered
 by focused repository, routing, execution, adapter, service, and GUI tests.
 
-Next read target:
-
-- `core/events/types/portal/definition.py`
-- `core/events/types/portal/minimap_detector.py`
-- `core/events/types/portal/handler.py`
-- `core/events/types/portal/minimap_feature_matcher.py`
-- `core/events/types/portal/minimap_shape_color_matcher.py`
-- `core/events/types/portal/main_view_confirmer.py`
+Concrete Torchlight events live under `features/torchlight/{portal,loot}` and
+are documented at that business boundary rather than as core event modules.

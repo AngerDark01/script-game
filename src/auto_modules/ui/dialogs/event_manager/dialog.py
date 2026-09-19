@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QDialog
 
 from auto_modules.core.events.config import build_tui_event_options
 
-from .layout import COMPACT_PARAM_KEYS, build_event_manager_ui
+from .layout import build_event_manager_ui
 from .schema_form import (
     clear_param_form,
     create_param_label,
@@ -21,8 +21,7 @@ class EventManagerDialog(QDialog):
 
     config_changed = Signal(object)
     save_requested = Signal()
-    test_portal_requested = Signal()
-    reset_portal_requested = Signal()
+    manual_test_requested = Signal()
     reset_events_requested = Signal()
 
     def __init__(self, parent=None):
@@ -93,16 +92,16 @@ class EventManagerDialog(QDialog):
 
         if not self.registry or not self.config:
             self.global_enabled_checkbox.setEnabled(False)
-            self.reset_portal_button.setEnabled(False)
-            self.test_portal_button.setEnabled(False)
+            self.reset_events_button.setEnabled(False)
+            self.manual_test_button.setEnabled(False)
             self.event_selector.setEnabled(False)
             self.status_label.setText("未加载事件配置")
             self._clear_params("请先加载地图。")
             return
 
         self.global_enabled_checkbox.setEnabled(True)
-        self.reset_portal_button.setEnabled(True)
-        self.test_portal_button.setEnabled(True)
+        self.reset_events_button.setEnabled(True)
+        self.manual_test_button.setEnabled(True)
         self.event_selector.setEnabled(True)
         with QSignalBlocker(self.global_enabled_checkbox):
             self.global_enabled_checkbox.setChecked(bool(getattr(self.config, "enabled", True)))
@@ -221,7 +220,7 @@ class EventManagerDialog(QDialog):
             self.selected_event_enabled_checkbox.setChecked(bool(values.get("enabled", option.get("enabled", True))))
             self._set_event_text(
                 str(option.get("description") or ""),
-                self._format_current_values(values),
+                self._format_current_values(values, option.get("schema", {}) or {}),
             )
         finally:
             self._syncing_event_controls = False
@@ -241,7 +240,11 @@ class EventManagerDialog(QDialog):
         event_type = str(option.get("event_type", ""))
         values = self.config.events.setdefault(event_type, {}) if self.config else {}
         editable_items = editable_schema_items(schema)
-        compact_items = editable_schema_items(schema, COMPACT_PARAM_KEYS)
+        compact_keys = [
+            key for key, spec in schema.items()
+            if bool(spec.get("compact", False))
+        ]
+        compact_items = editable_schema_items(schema, compact_keys)
         clear_param_form(self.params_layout, self._param_widgets, "")
         clear_param_form(self.compact_params_layout, self._compact_param_widgets, "")
         if not editable_items:
@@ -305,7 +308,7 @@ class EventManagerDialog(QDialog):
             if event_type == self._selected_event_type:
                 self._set_event_text(
                     str(option.get("description") or ""),
-                    self._format_current_values(values),
+                    self._format_current_values(values, schema),
                 )
                 self._syncing_event_controls = True
                 try:
@@ -314,62 +317,12 @@ class EventManagerDialog(QDialog):
                     self._syncing_event_controls = False
             break
 
-    def _format_current_values(self, values: dict) -> str:
-        keys = [
-            "interaction",
-            "detector_mode",
-            "minimap_threshold",
-            "max_candidates",
-            "minimap_nms_radius",
-            "min_blue_ratio",
-            "feature_sat_min",
-            "feature_val_min",
-            "feature_min_blue_pixels",
-            "shape_min_outer_score",
-            "shape_min_shape_score",
-            "shape_signature_min_edge_score",
-            "shape_signature_min_color_score",
-            "stable_frames",
-            "arrival_radius",
-            "interact_radius",
-            "portal_point_click_wait_ms",
-            "weighted_threshold",
-            "detection_interval_ms",
-            "roi_prefilter_enabled",
-            "roi_expand",
-            "template_weight",
-            "shape_weight",
-            "color_weight",
-            "target_update_mode",
-            "target_update_max_drift",
-            "player_marker_exclusion_enabled",
-            "player_center_mask_enabled",
-            "player_center_mask_overlay_enabled",
-            "player_center_mask_radius",
-            "scales",
-            "stable_frames",
-            "localization_cluster_radius",
-            "stable_variance",
-            "dedupe_radius",
-            "localization_max_samples",
-            "localization_cluster_ttl_ms",
-            "localization_emit_interval_ms",
-            "memory_confirm_frames",
-            "max_blobs_per_frame",
-            "pickup_radius",
-            "pickup_key",
-            "post_pickup_wait_ms",
-            "absence_confirm_frames",
-            "absence_frame_ms",
-            "pickup_press_limit",
-            "cooldown_ms",
-            "cooldown_radius",
-            "type_cooldown_ms",
-            "retry_limit",
-            "diagnostic_capture_enabled",
-            "diagnostic_capture_interval_ms",
-            "diagnostic_capture_max_frames",
-        ]
+    def _format_current_values(self, values: dict, schema: dict) -> str:
+        keys = [key for key, spec in schema.items() if bool(spec.get("summary", False))]
+        if not keys:
+            keys = [key for key, spec in schema.items() if bool(spec.get("compact", False))]
+        if not keys:
+            keys = [key for key, _spec in editable_schema_items(schema)[:8]]
         parts = []
         for key in keys:
             if key in values:

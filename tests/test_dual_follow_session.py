@@ -1,9 +1,9 @@
 import numpy as np
-from auto_modules.application.follow.dual_session import DualFollowSession
-from auto_modules.application.follow.controller import FollowerController
+from auto_modules.features.torchlight.follow.dual_session import DualFollowSession
+from auto_modules.features.torchlight.follow.controller import FollowerController
 from auto_modules.core.events.registry import EventRegistry
-from auto_modules.core.events.follow_chain import FollowChainDefinition
-from auto_modules.core.lan_follow import SharedEvent,SharedPosition
+from auto_modules.features.torchlight.skills import FollowChainDefinition
+from auto_modules.core.communication import SharedEvent,SharedPosition
 
 
 class Output:

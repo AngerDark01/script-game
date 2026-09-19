@@ -150,7 +150,7 @@ def _sha256_file(path: Path) -> str:
 
 def _missing_model_message(spec: RapidOcrModelSpec, directory: Path) -> str:
     command = (
-        "python utils/install_perception_ocr_model.py "
+        "python tools/probes/install_perception_ocr_model.py "
         f"--model {spec.model_id} --destination {directory}"
     )
     return f"RapidOCR model {spec.model_id!r} is not installed. Install it with: {command}"

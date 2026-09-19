@@ -1,7 +1,7 @@
 import numpy as np
 from dataclasses import replace
-from auto_modules.core.lan_follow import SharedPosition
-from auto_modules.application.follow.controller import FollowerController
+from auto_modules.core.communication import SharedPosition
+from auto_modules.features.torchlight.follow.controller import FollowerController
 
 
 def position(actor, xy, stamp=100):

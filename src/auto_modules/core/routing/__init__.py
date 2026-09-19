@@ -17,9 +17,11 @@ from .obstacles import derive_navigation_wall_layer
 from .pathfinder import PathFinder
 from .route_repository import RouteManager
 from .route_progress import PolylineProjection, project_point_on_polyline
+from .trajectory_target import LaggedTrajectoryTarget
 
 __all__ = [
     "AnchorPathResult",
+    "LaggedTrajectoryTarget",
     "PathFinder",
     "PolylineProjection",
     "RouteManager",

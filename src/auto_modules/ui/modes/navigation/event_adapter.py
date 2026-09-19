@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from auto_modules.core.events.models import EventTick
 from auto_modules.core.events.registry import EventRegistry
-from auto_modules.core.events.types.loot import LootEventDefinition
-from auto_modules.core.events.types.portal import PortalEventDefinition
-from auto_modules.adapters.windows.window_finder import find_game_window
 
 
-def create_default_event_registry() -> EventRegistry:
-    registry = EventRegistry()
-    registry.register(PortalEventDefinition())
-    registry.register(LootEventDefinition())
-    return registry
+def create_default_event_registry(
+    registry_factory: Callable[[], EventRegistry] | None = None,
+) -> EventRegistry:
+    """Build an event registry supplied by the application composition root.
+
+    A standalone navigation widget receives an empty generic registry. The
+    host application injects a composition factory when it wants concrete
+    event features.
+    """
+    return registry_factory() if registry_factory is not None else EventRegistry()
 
 
 def event_config_summary(event_config) -> str:
@@ -19,14 +23,6 @@ def event_config_summary(event_config) -> str:
         f"{event_type}:{'on' if values.get('enabled', True) else 'off'}"
         for event_type, values in getattr(event_config, "events", {}).items()
     )
-
-
-def find_default_game_window_rect():
-    try:
-        window = find_game_window("Torchlight", "UnrealWindow")
-        return window.rect if window else None
-    except Exception:
-        return None
 
 
 def build_event_tick(

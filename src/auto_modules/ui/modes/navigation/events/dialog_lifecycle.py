@@ -17,15 +17,14 @@ class NavigationEventDialogLifecycleTargets:
     main_window: object
     get_event_dialog: Callable[[], object]
     set_event_dialog: Callable[[object], None]
-    get_portal_test_controller: Callable[[], object]
+    get_manual_test_controller: Callable[[], object]
     get_event_registry: Callable[[], object]
     get_event_config: Callable[[], object]
     get_event_coordinator: Callable[[], object]
     get_map_name: Callable[[], str]
     on_config_changed: Callable[[object], None]
     on_save_requested: Callable[[], None]
-    on_test_portal_requested: Callable[[], None]
-    on_reset_portal_requested: Callable[[], None]
+    on_manual_test_requested: Callable[[], None]
     on_reset_events_requested: Callable[[], None]
 
 
@@ -53,8 +52,7 @@ class NavigationEventDialogLifecycle:
             self.targets.get_event_dialog(),
             on_config_changed=self.targets.on_config_changed,
             on_save_requested=self.targets.on_save_requested,
-            on_test_portal_requested=self.targets.on_test_portal_requested,
-            on_reset_portal_requested=self.targets.on_reset_portal_requested,
+            on_manual_test_requested=self.targets.on_manual_test_requested,
             on_reset_events_requested=self.targets.on_reset_events_requested,
         )
 
@@ -79,8 +77,8 @@ class NavigationEventDialogLifecycle:
             dialog.refresh_tasks()
 
     def _sync_manual_test_button(self, dialog) -> None:
-        portal_test_controller = self.targets.get_portal_test_controller()
-        if portal_test_controller is None:
+        manual_test_controller = self.targets.get_manual_test_controller()
+        if manual_test_controller is None:
             return
-        portal_test_controller.button = dialog.test_portal_button
-        portal_test_controller.reset_button()
+        manual_test_controller.button = dialog.manual_test_button
+        manual_test_controller.reset_button()

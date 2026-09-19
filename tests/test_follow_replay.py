@@ -1,5 +1,5 @@
 import numpy as np
-from auto_modules.core.diagnostics.follow_replay import FollowRecorder,replay_localization,summarize_timings
+from auto_modules.features.torchlight.follow.replay import FollowRecorder,replay_localization,summarize_timings
 from auto_modules.core.localization.dual_localizer import LocalizationSnapshot
 from auto_modules.core.shared.frame_registration import FrameRegistration
 

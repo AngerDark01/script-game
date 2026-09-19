@@ -9,6 +9,7 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 | `core/...` | `src/auto_modules/core/...` | 纯算法、领域契约、状态机、任务和 intent |
 | `gui/...` | `src/auto_modules/ui/...` | PySide6 展示和交互协调 |
 | `workflows/...` | `src/auto_modules/application/workflows/...` | 应用用例编排 |
+| `features/<game>/...` | `src/auto_modules/features/<game>/...` | 游戏专用业务策略、模型组合和业务诊断 |
 | `utils/...` | `tools/probes/...` | 显式执行的验证探针 |
 | `debug/...` | `tools/debug/...` 或 `data/diagnostics/...` | 可复用脚本与生成数据分离 |
 | `assets/...` | `resources/assets/...` | 只读发布资源 |
@@ -24,11 +25,178 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 - 原 `core/input` 和 `core/platform` 的具体副作用实现现位于 `src/auto_modules/adapters/input`、`adapters/platform`。
 - RapidOCR 实现位于 `adapters/perception`；通用 perception contracts/algorithms 仍在 `core/perception`。
 - `EventWorkbenchService` 位于 `application/event_workbench`，Host bridge 位于 `adapters/host`，Win32 hotkeys 位于 `adapters/windows`。
-- follow 用例位于 `application/follow`；`SharedPosition` / `SharedEvent` 留在 `core/lan_follow`，Host wire translation 位于 `adapters/host/follow_transport.py`。
+- Torchlight follow 用例、规划器和诊断位于 `features/torchlight/follow`；`SharedPosition` / `SharedEvent` 位于游戏无关的 `core/communication/shared_state.py`，Host wire translation 位于 `adapters/host/follow_transport.py`。
+- Torchlight Portal/Loot 定义和识别实现位于 `features/torchlight/{portal,loot}`；`core` 只保留通用事件生命周期、感知、定位、导航任务和动作契约。
+- `core/events/automation/action_sequence.py` 是通用动作序列运行时；`features/torchlight/skills/follow_chain.py` 只提供 Torchlight 业务 facade，旧 `core/events/follow_chain.py` 已删除。
 - 通用 `ProgramGamepadOutput` 的 Host 协议实现和 Host-compatible clock 位于 `adapters/virtual_gamepad/program_output.py`。
 - 根 `main.py` 仅把 `src` 放入导入路径并委托 `auto_modules.bootstrap.main.main()`；完整启动逻辑不再位于根脚本。
 
 当前强制依赖方向为 `core <- application/adapters <- ui/bootstrap`。箭头表示右侧可使用左侧；`core` 不得导入 `application`、`adapters`、`ui` 或 `bootstrap`。所有生产 Python import 使用 `auto_modules.*`。
+
+## 当前补充：PoE2 实时地形预览
+
+`src/auto_modules/adapters/poe2_live_terrain/` 是 PoE2 手动地形采集的唯一正式适配器。`capture_adapter.py` 只调用外部 `D:\ACloud\poe2-map-research\experiments\live-terrain-preview\live_preview.py` 的 `init`/`capture`，校验 `latest.json` 的 `tool=manual-live-terrain-capture`、拒绝 checkpoint 字段，并限制 `native_grid.npz` 路径留在外部 producer 的 output 目录内。成功后由 `native_grid.py` 使用 `allow_pickle=False` 读取 `raw_cells`、`cell_state`、`known_mask`、`wall_layer`、`explored_map` 和 `metadata_json`。
+
+`contracts.py` 定义只读 `TerrainSnapshot` 和 `CaptureMetadata`。快照数组始终保持原生 `height x width` 的 `yx` 方向，数组会复制并关闭写入标志；`cell_state` 只允许 `-1/0/1`。`service.py` 的 `Poe2TerrainService` 管理 `NEW -> READY_TO_CAPTURE -> CAPTURED/ERROR` 生命周期，初始化或捕获失败会清除旧快照；`memory_store.py` 不提供任何文件写入接口。`debug_archive.py` 是显式测试适配器，保存转换后的最新 NPZ 和 manifest 到 `data/poe2_live_terrain_test/`，不参与页面读取。
+
+`src/auto_modules/ui/modes/poe2_live_terrain/` 是 PoE2 业务页面。`presenter.py` 将快照的已知可行走区域转成深灰底面，并从可行走区域边界生成白色轮廓，得到旧绘图地图的黑底/灰面/白线格式；原始数组不被修改。`page.py` 处理初始化、手动获取、清空、独立监控配置、实时预览、单人人物定位状态和 marker/轨迹显示，并复用 `ScalableMapWidget`。`MainWindow` 将它追加为独立第 8 个页面，通过 `Poe2TerrainService` 和 `features.poe2.live_terrain` runtime 注入；它不使用绘图页的 `MapStitcher`，不接入路线规划、动态障碍、Xbox 或 LAN。
+
+`src/auto_modules/features/poe2/live_terrain/` 承载正式 PoE2 业务组合：terrain reference、calibration、single-player policy 和 localization runtime。`tools/experiments/poe2_live_terrain/` 只保留兼容导出，不承载生产实现；两者都只组合 `auto_modules.core` 与 PoE2 adapter，不复制通用定位状态机，也不产生输入或网络副作用。
+
+### Torchlight 业务域（verified）
+
+`src/auto_modules/features/torchlight/` 是火炬之光专用业务边界：
+
+- `portal/`：Torchlight 传送门模型、目标证据、交互处理器和完成判定。
+- `loot/`：Torchlight 掉落检测、目标投影、拾取移动和完成判定。
+- `follow/`：自动跟随配置、角色规划、双会话、工作进程、回放和基准诊断。
+- `skills/`：技能/事件链业务 facade；执行算法由通用 `core.events.automation` 提供。
+- `composition.py`：注册 Portal/Loot 事件定义的唯一业务组合入口。
+
+`src/auto_modules/ui/modes/torchlight/follow/` 是对应的 Torchlight UI；通用事件
+工作台只通过该 UI 的编辑器入口组合，不直接从 `core.events.types.*` 注册业务。
+
+采集边界的每个阶段使用 `logging_utils.py` 写入 `data/logs/poe2_live_terrain.log`，包括按钮动作、producer 命令、manifest 校验、native grid 转换、内存替换、测试归档、渲染和异常。
+
+### PoE2 单人定位与独立监控（verified）
+
+`src/auto_modules/core/spatial/monitor_binding.py` 只定义通用的不可变 `CaptureRect` 和
+`MonitorBinding`。它不认识 PoE2、导航或窗口配置；`as_dict()` 只输出矩形、屏幕标识、
+坐标空间、DPI 和可选人物 marker。
+
+`src/auto_modules/adapters/poe2_live_terrain/monitor_config.py` 定义 `Poe2MonitorConfig` 和
+`Poe2MonitorConfigStore`。配置字段为 `binding`、`search_radius`、`match_threshold`、
+`sample_interval_ms`，默认值分别为无绑定、96、0.72、100；`save()` 在 PoE2 数据目录
+写临时 JSON、flush/fsync 后 `os.replace()`，`load()` 对缺失、非法 JSON 或非法字段
+fail closed 到独立默认值。`monitor_source.py::MonitorFrameSource.capture(binding)` 只把
+`MonitorBinding.rect` 传给注入的截图后端，不读取 `AppContext` 或 `NavConfig`。
+
+`features/poe2/live_terrain/terrain_reference.py::build_reference(snapshot)` 的
+算法是：
+
+1. 计算 `known = snapshot.known_mask > 0`；
+2. 计算 `walkable_mask = (cell_state == 1) & known`；
+3. 生成通用 matcher 墙层（可行走为 0、阻挡/未知为 255）和已知层（已知为 255、未知为 0）；
+4. 复制并冻结数组，保留原始 `height x width` 及区域 metadata。
+
+### 通信层重构（verified）
+
+通信层现在按“设备信任 -> 物理 session -> capability lease -> topic subscription”分层。
+`src/auto_modules/core/communication/contracts.py` 定义 `PeerId`、`SessionId`、
+`Capability`、`Topic`、`DeliveryMode`，不依赖 Host 或 LAN；`messages.py::MessageEnvelope`
+校验 TTL、deadline、sequence 和 versioned-resource 的 manifest/chunk 字段，并提供
+`from_shared_position` / `from_shared_event` 构造器；`shared_state.py` 定义位置/事件记录，`qos.py`
+把实时 latest、可靠有序和版本资源策略命名化。
+
+`src/auto_modules/application/communication/trust_store.py::FileTrustStore` 使用
+`data_root()/communication` 下的 `trusted_peers.json`、`revocations.json` 和
+`capability_preferences.json`。`save()` 对证书指纹变化默认 fail closed，所有 JSON 写入
+使用临时文件、flush/fsync 和 `os.replace`；`revoke()`、`forget()` 和
+`clear_recovery()` 不会把 session key 写入磁盘。
+
+`application/communication/manager.py::CommunicationManager.acquire(peer, capability)`
+通过 `PeerSession` registry 保证一个 peer 只有一个 transport connection。lease 的引用计数
+使一个业务释放时不影响其他业务；`MessageDispatcher.dispatch()` 对同一 envelope fan-out
+给多个 topic subscriber，不再让业务直接 drain Host 队列；`ReconnectController` 用递增
+generation 拦截旧 reconnect/message，并提供 1/2/5/15/30 秒退避。
+
+`src/auto_modules/adapters/host/communication_adapter.py::HostCommunicationAdapter` 只持有
+一个 `VirtualGamepadClient`，通过 `HostPeerTransport` 将 generic envelope 转成旧的
+`sync.share.position/event/catalog` 命令。`CommunicationManager.pump()` 调用适配器一次
+`sync.share.drain`，把事件、位置、目录同时放入本地 topic 队列并通知 dispatcher。旧的
+`HostEventBridge` 和 `FollowTransport` 在未注入 manager 时保留兼容 client 路径；注入 manager
+后只申请能力 lease，不创建或关闭独立 LAN session。
+
+关键数据流：
+
+```text
+EventWorkbenchService.tick_once()
+  -> CommunicationManager.pump()
+  -> HostCommunicationAdapter.pump(manager)
+  -> VirtualGamepadClient.request("sync.share.drain")
+  -> MessageDispatcher.dispatch(peer, MessageEnvelope)
+  -> HostEventBridge.drain_events()/drain_catalogs()
+  -> EventExecutionRuntime.start/tick
+```
+
+```text
+FollowService._network_shared()
+  -> manager.acquire(position.subscribe/event.subscribe[/position.publish])
+  -> FollowTransport.poll()/publish()
+  -> manager.pump()/CapabilityLease.publish(MessageEnvelope)
+  -> HostPeerConnection.send()
+  -> HostCommunicationAdapter.send_message()
+  -> sync.share.*
+```
+
+`services/lan_input_sync/src/LanInputSync/SessionCapabilities.cs` 将旧 `DataOnly` 映射为
+`input.*`、`position.*`、`event.*`、`catalog.*` 和预留的 `map.*` flags；旧 `start`/
+`start-data` 命令仍可用，status 额外返回 `capabilities`。`PeerTrustStore` 保存非敏感信任
+元数据并拒绝静默证书替换，`ReconnectBackoff` 提供有界退避。普通 session close 会按恢复
+偏好调度重连，手动 stop/reset/forget/emergency 会设置 block fence。
+
+风险登记：
+
+- P1 `HostCommunicationAdapter.pump()`：旧 Host drain 响应仍依赖 JSON 兼容字段；Host 协议
+  字段变化会让位置/事件只进入诊断队列而不触发业务。建议协议 v2 增加显式 envelope 版本和
+  contract test。
+- P1 `LanSyncService.ReceivePacket()`：兼容期在同一 lane 用 JSON `{` 前缀区分位置和旧
+  输入二进制，若未来输入编码允许 `{` 开头会误判。建议后续协议版本分配独立 data lane。
+- P2 `FileTrustStore._read_mapping()`：JSON 损坏会 fail closed 并阻断启动；部署层应提供
+  诊断提示和人工恢复入口，不能自动删除信任文件。
+
+`calibration.py::Poe2Calibration.local_to_reference(local_position)` 对局部点做有限值校验，
+按显式 scale、axis_direction、offset 和可选 Y 翻转映射到参考坐标；禁止零比例、非法轴向、
+越界人物 marker。`player_policy.py::select_single_player(frame, min_confidence)` 只在
+阈值候选数恰好为 1 时返回候选，多候选/空候选返回 `None`；`select_single_player_frame()`
+把选择结果写回通用 `ObservationFrame.selected_index`。
+
+`runtime.py::Poe2LocalizationRuntime.tick()` 是当前 PoE2 业务组合入口：
+
+1. `_capture_frame()` 调用注入的 callable 或 `capture/read/get_frame`；
+2. `_recognize()` 调用注入识别器，规范化为 `ObservationFrame`；
+3. 单人策略筛选唯一人物，失败返回 `LocalizationResult(source="failed", reason="player_not_detected")`；
+4. 把 `Poe2FrameInput(raw_frame, observation, selected, captured_at_ms)` 交给通用 `MapLocalizer`；
+5. 只有有位置的 fresh 结果才追加 `TrajectoryBuffer`，旧确认点只保存在
+   `latest_confirmed_position`，不冒充本帧位置；
+6. 发布 `Poe2LocalizationState`，包含原始帧、候选、局部/全局点、mode/source/confidence、
+   三段耗时和失败原因，并通知显式 listener。
+
+`Poe2LocalizationRuntime.configure_snapshot()` 用 `build_reference()` 构建业务参考，并在
+没有外部 localizer 时注入 `_global_match()`/`_local_match()`：全局 matcher 在完整参考层
+执行 `cv2.matchTemplate`，局部 matcher 将模板搜索窗口限制在人物预测点的
+`search_radius` 内。两者都要求墙体特征和置信度阈值，否则返回 `None`。`HSVPlayerObservationRecognizer`
+只把 HSV 玩家 mask 的轮廓转换为通用候选；它不写控制设备。
+
+`src/auto_modules/ui/modes/poe2_live_terrain/monitor_dialog.py::Poe2MonitorConfigDialog`
+只编辑 `Poe2MonitorConfig`，运行时由 `set_editable(False)` 锁定；`page.py` 通过注入
+runtime/config store 管理初始化、地图捕获、QTimer、实时预览、状态文本和关闭时清理。
+`presenter.py::present_localization_overlay()` 在 terrain pixmap 副本上绘制确认轨迹和真实
+全局 marker；它不参与定位计算。`MainWindow.setup_ui()` 是组合根，创建独立 store、
+`MonitorFrameSource` 和 `Poe2LocalizationRuntime` 后注入页面，保留原有模式索引和关闭顺序。
+
+**数据流 F-POE2-LOC（verified）：**
+
+`Poe2LiveTerrainPage.start_monitoring()`（无输入字段，前置为 captured snapshot 和 PoE2 binding）
+调用 `Poe2LocalizationRuntime.start()`，启动 `QTimer`；每次 timeout 调用
+`Poe2LiveTerrainPage._tick_runtime()` -> `runtime.tick()` -> `MonitorFrameSource.capture()`
+（`CaptureRect.left/top/width/height`）-> `HSVPlayerObservationRecognizer.__call__()`
+（BGR frame）-> `select_single_player_frame()`（`ObservationFrame`）->
+`MapLocalizer.update(Poe2FrameInput)`（`LocalizationResult`）-> `TrajectoryBuffer.append()`
+（仅 fresh position）-> `Poe2LiveTerrainPage.handle_runtime_state()`。最终副作用是更新
+`minimap_preview`、定位状态 label 和 `ScalableMapWidget` pixmap；没有输入、网络或文件写入。
+
+**风险登记（P1/P2）：**
+
+- P1，`Poe2LocalizationRuntime._global_match()`：native terrain 与 minimap 的实际比例/轴向
+  尚未由实机样本确认，可能在相似墙体区域产生错误全局峰值。实机记录 scale、Y flip、首帧
+  confidence 后，在 PoE2 calibration/runtime 业务层修正，不修改通用状态机。
+- P1，`HSVPlayerObservationRecognizer.__call__()`：人物颜色、透明度或多角色同时出现时，
+  候选数可能为 0 或大于 1；当前 fail closed 会显示失败而不伪造中心位置。需要实机样本
+  校准 HSV/形态学参数，不能把“取最大轮廓”下沉为通用引擎规则。
+- P2，`Poe2LiveTerrainPage.handle_runtime_state()`：每帧重绘完整大图 pixmap，超大地图上
+  可能增加 UI CPU/内存压力。若实机帧耗时超标，应把 marker/trail 改成独立 overlay item，
+  保持 `ScalableMapWidget` 的原始 pixmap 不变。
 
 ## 当前补充：Navigation 首帧定位诊断
 
@@ -42,17 +210,17 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 
 ## 当前补充：Loot 掉落物事件
 
-本轮新增正式事件类型 `loot`。实现位置为 `core/events/types/loot/`，正向模板资产在 `assets/event_templates/loot/minimap/`，人物箭头负样本在 `assets/event_templates/loot/exclude/player_marker/`，单图/handler 验证入口为 `debug/loot_event_probe.py`，批量正负样本评估入口为 `debug/loot_dataset_eval.py`。`gui/modes/navigation/event_adapter.py::create_default_event_registry()` 当前默认注册 `PortalEventDefinition()` 和 `LootEventDefinition()`；`core/events/config_model.py::DEFAULT_EVENT_CONFIG` 已包含 `events.loot` 默认配置。
+正式事件类型 `loot` 的实现位于 `features/torchlight/loot/`，正向模板资产在 `resources/games/torchlight/event_templates/loot/minimap/`，人物箭头负样本在 `resources/games/torchlight/event_templates/loot/exclude/player_marker/`，单图/handler 验证入口为 `debug/loot_event_probe.py`，批量正负样本评估入口为 `debug/loot_dataset_eval.py`。`features/torchlight/composition.py` 注册 `PortalEventDefinition()` 和 `LootEventDefinition()`；`MainWindow` 把该工厂注入导航 widget，未注入时 `gui/modes/navigation/event_adapter.py::create_default_event_registry()` 只返回空的通用注册表。`core/events/config_model.py::DEFAULT_EVENT_CONFIG` 的 `events` 为空，Portal/Loot 默认值由各自 definition 提供并通过通用 `apply_registered_event_defaults()` 物化。
 
 2026-06-03 新增数据集回归入口：`D:\ACloud\.venv\Scripts\python.exe debug\loot_dataset_eval.py --dataset-root D:\ACloud\image\sample --map-config map_data\A\event_config.json`。脚本读取 `02_has_loot` / `03_no_loot` 作为正负标签，每张图独立创建 detector，并按 `presence_confirm_frames` 连续喂帧；输出 `summary.json`、`cases.csv` 和 FP/FN overlay，默认关闭 runtime diagnostic 落盘。当前基线输出在 `debug/loot_dataset_eval/20260603_104108/`：77 张样本中 TP=25、FP=52、FN=0、TN=0，precision=0.3247、recall=1.0000、FPR=1.0000，平均检测耗时约 215.747ms。误检分数低于地图 A 的 `weighted_threshold=0.70`，说明后续优化重点是 `detection.scoring.accepted_candidate()` 的强证据直通路径和 accepted 后排除规则，而不是只调高总阈值。
 
-2026-06-03 新增独立 ROI 多特征匹配探针：`D:\ACloud\.venv\Scripts\python.exe debug\loot_feature_match_probe.py --dataset-root D:\ACloud\image\sample --map-config map_data\A\event_config.json --dump-all`。该脚本验证“ROI 内滑窗 + masked template + edge overlap + Chamfer + HOG-lite + 轮廓/Hu + 颜色辅助”的 CNN-like 特征响应定位思路；同一套核心算法已经抽到 `core/events/types/loot/detection/feature_match/`，并通过 `detector_mode=async_feature_match` 接入正式 runtime。默认只匹配黄钻、红星、金三角三个形状明确的模板，尺度为 `0.75,0.85,1.0`，每模板每 ROI 取 `top_k=2`，并按模板类型施加语义门槛。探针默认和正式默认必须保持一致：`feature_match_threshold=0.64`、`feature_match_collect_threshold=0.38`、`feature_match_top_k_per_template=2`、`feature_match_max_candidates=5`、`feature_match_search_padding=48`、`feature_match_scales="0.75,0.85,1.0"`。最新完整样本输出在 `debug/loot_feature_match_probe/20260603_174004/`：TP=25、FP=0、FN=0、TN=52，precision=1.0000、recall=1.0000、FPR=0.0000，平均耗时约 341.366ms、p95 约 664.686ms。线程并行 `--workers 4` 墙钟略降但单张图延迟显著上升，因此生产接入采用独立 worker 线程，而不是帧内并行。
+2026-06-03 新增独立 ROI 多特征匹配探针：`D:\ACloud\.venv\Scripts\python.exe debug\loot_feature_match_probe.py --dataset-root D:\ACloud\image\sample --map-config map_data\A\event_config.json --dump-all`。该脚本验证“ROI 内滑窗 + masked template + edge overlap + Chamfer + HOG-lite + 轮廓/Hu + 颜色辅助”的 CNN-like 特征响应定位思路；同一套核心算法已经抽到 `features/torchlight/loot/detection/feature_match/`，并通过 `detector_mode=async_feature_match` 接入正式 runtime。默认只匹配黄钻、红星、金三角三个形状明确的模板，尺度为 `0.75,0.85,1.0`，每模板每 ROI 取 `top_k=2`，并按模板类型施加语义门槛。探针默认和正式默认必须保持一致：`feature_match_threshold=0.64`、`feature_match_collect_threshold=0.38`、`feature_match_top_k_per_template=2`、`feature_match_max_candidates=5`、`feature_match_search_padding=48`、`feature_match_scales="0.75,0.85,1.0"`。最新完整样本输出在 `debug/loot_feature_match_probe/20260603_174004/`：TP=25、FP=0、FN=0、TN=52，precision=1.0000、recall=1.0000、FPR=0.0000，平均耗时约 341.366ms、p95 约 664.686ms。线程并行 `--workers 4` 墙钟略降但单张图延迟显著上升，因此生产接入采用独立 worker 线程，而不是帧内并行。
 
 `loot` 检测主链路：`LootMinimapDetector.detect(tick, config)` 读取 `tick.raw_minimap_frame`，先调用 `detection.pipeline.detect_loot_presence()` 做轻量存在判断。粗检只构造 HSV 金色/暖色/银白/高亮 mask，并在小地图中心按人物箭头负模板确认后挖掉固定玩家区域；小尺寸图标样本会跳过中心遮罩，避免整张模板样本被擦掉。默认 `detector_mode="async_feature_match"`：存在判断连续达到 `presence_confirm_frames=2` 后，`AsyncLootPerception.maybe_submit()` 在独立 worker 线程复制当前帧并调用 `FeatureLootMatcher.detect()`，主线程只读取缓存 detection，不阻塞导航循环。worker 把命中的局部点投影为全局记录，后续帧只用当前 `FrameRegistration` 把缓存记录投回局部 detection；`async_full_scan_interval_ms=1000` 限制全量提交频率，`async_track_refresh_ms=8000` 避免已知目标被反复全量重识别，`async_track_ttl_ms=8000` 和 absence streak 控制消失。`detector_mode="feature_match"` 是同步回归模式，直接调用同一套 feature matcher；`detector_mode="weighted_blob"` 保留旧三路加权后端，调用 `detect_loot_blobs(frame, prepared_templates, config, exclusion_templates, seed_bboxes=...)`。detector 初始化阶段会预先生成正向模板、feature 模板和人物箭头负模板的多尺度灰度图、边缘图、mask，避免每帧重复 resize/Canny。
 
 2026-06-03 17:40 接入一致性验证：生产 `FeatureLootMatcher.detect()` 同步路径在 `D:/ACloud/image/sample` 上跑出 TP=25、FP=0、FN=0、TN=52；生产默认 `LootMinimapDetector(detector_mode="async_feature_match")` 在同一数据集上模拟有效 `FrameRegistration` 并等待 worker 返回，也跑出 TP=25、FP=0、FN=0、TN=52，默认参数打印为 `async_feature_match 0.64 0.38 2 5 48 0.75,0.85,1.0`。因此后续测试异步路径时需要等待 worker 完成，不能把“本帧尚未返回检测”视为算法漏检。
 
-人物处理现在分两层：`detection.roi.apply_player_center_mask()` 先在粗检 mask 层处理固定中心人物位置，只在中心 patch 有足够亮/金/白/蓝像素且负模板命中人物箭头时，按 `player_center_mask_radius=28` 挖空中心人物前景；候选通过模板/外形/颜色评分后，`detection.seed_scan._best_candidate_for_seed()` 和旧区域扫描路径还会只对已接受候选调用 `detection.exclusions.is_player_marker_candidate()` 与 `is_blue_map_artifact_candidate(patch, shape_score)`。后者用蓝/青底比例、金色比例、亮白比例、白色比例和候选外形分数过滤人物底色、蓝白地图装饰、边线等误检；因为只在 accepted 候选出口执行，成本被 seed 粗检和局部复核限制住。当前掉落物模板和人物负样本模板均为带 alpha 的透明 PNG，`detection.images.foreground_mask()` 会优先使用 alpha 作为匹配 mask，避免小地图背景参与模板响应。2026-06-09 起，`gui/modes/navigation/presentation/event_overlay.py` 会在导航地图上显示中心人物遮罩范围，开关为 `player_center_mask_overlay_enabled=true`，圆半径按 `player_center_mask_radius * nav_core.draw_scale` 换算。随后 `detection.clustering.cluster_candidates()` 把堆叠或相邻候选合并成区域级 `LootCluster`。`detection.conversion.clusters_to_detections()` 将 blob center 写入 `EventDetection.local_minimap_pos`，metadata 写入 bbox、候选数、命中模板、三路分数和 `pickup_radius`。
+人物处理现在分两层：`detection.roi.apply_player_center_mask()` 先在粗检 mask 层处理固定中心人物位置，只在中心 patch 有足够亮/金/白/蓝像素且负模板命中人物箭头时，按 `player_center_mask_radius=28` 挖空中心人物前景；候选通过模板/外形/颜色评分后，`detection.seed_scan._best_candidate_for_seed()` 和旧区域扫描路径还会只对已接受候选调用 `detection.exclusions.is_player_marker_candidate()` 与 `is_blue_map_artifact_candidate(patch, shape_score)`。后者用蓝/青底比例、金色比例、亮白比例、白色比例和候选外形分数过滤人物底色、蓝白地图装饰、边线等误检；因为只在 accepted 候选出口执行，成本被 seed 粗检和局部复核限制住。当前掉落物模板和人物负样本模板均为带 alpha 的透明 PNG，`detection.images.foreground_mask()` 会优先使用 alpha 作为匹配 mask，避免小地图背景参与模板响应。Loot 调试遮罩由 `ui/modes/torchlight/navigation.py::build_loot_debug_overlays()` 解释业务配置并输出通用 `EventCircleOverlay`；`ui/modes/navigation/presentation/event_overlay.py` 只绘制领域中立图元，圆半径仍按 `player_center_mask_radius * draw_scale` 换算。随后 `detection.clustering.cluster_candidates()` 把堆叠或相邻候选合并成区域级 `LootCluster`。`detection.conversion.clusters_to_detections()` 将 blob center 写入 `EventDetection.local_minimap_pos`，metadata 写入 bbox、候选数、命中模板、三路分数和 `pickup_radius`。
 
 `loot` 执行主链路：`EventCoordinator.observe()` 仍负责 detect -> position stabilize -> memory merge；`NavigationTaskBuilder.build()` 把 loot `EventTask.metadata["pickup_radius"]` 写入 `NavigationTask.radius` 和 `metadata["event_stop_radius"]`；`EventApproachController.update()` 优先使用 per-task `event_stop_radius`，因此 loot 在拾取半径内停稳后释放给 handler。`LootPickupHandler.update(tick, task)` 距离远时返回 `EventAction.move_to(task.global_pos)`，进入 `pickup_radius` 后返回 `EventAction.press_key(pickup_key)`，默认 `a`；按键后等待 `post_pickup_wait_ms`，若 `task.last_seen_ms` 超过 `absence_confirm_frames * absence_frame_ms` 未刷新，则返回 `EventAction.complete()`。
 
@@ -84,7 +252,7 @@ D:\ACloud\.venv\Scripts\python.exe debug\loot_event_probe.py --benchmark --handl
 D:\ACloud\.venv\Scripts\python.exe debug\loot_event_probe.py --target-jitter-smoke
 ```
 
-相关中文文档：`architecture_docs/zh-CN/core/events/types/loot/ARCHITECTURE.md`。
+相关中文文档：`architecture_docs/zh-CN/features/torchlight/loot/ARCHITECTURE.md`。
 
 ## 1. 项目概览
 Python 3.11+、PySide6、OpenCV、NumPy 与 C#/.NET 服务组成的桌面自动化工作台。Python 进程提供建图、定位、路径、事件、跟随、UI 和设备适配；C# Host 提供双虚拟 Xbox 输出，独立 LAN 库提供认证同步。源码开发默认把可写数据放在 `data/`，安装态由 `AUTO_MODULES_DATA_DIR` 指向 `%LOCALAPPDATA%/AutoModules/Workbench`。关键约束：定位截图、地图全局坐标、主画面物理坐标、控制器来源和远端设备会话必须显式区分；真实输入和网络同步只能由专用 adapter/service 在明确启动后执行。
@@ -233,8 +401,14 @@ gui/modes/mapping/io/config_store.py - 绘图模式项目路径、map_data 目�
 gui/modes/mapping/io/config_restore.py - 绘图模式启动配置恢复编排，负责根配置读取、AppContext 写回、capture selection 恢复和 Qt 控件同步。
 gui/modes/mapping/io/map_save.py - 绘图模式保存地图包和地图级 config 的 IO 编排 helper。
 gui/modes/events/__init__.py - 事件工作台 GUI 包入口，导出 `EventWorkbenchPage`。
+gui/modes/events/action_sequence_editor.py - 通用声明式动作序列与并行轨道编辑器，不含 Torchlight 角色策略。
 gui/modes/events/workbench.py - 事件定义、路由、运行状态和远程发送的 Qt 展示/编辑适配器；仅依赖 `EventWorkbenchService`，不直接读写 JSON 或访问 Host/LAN。
-core/routing/__init__.py - 路径规划系统包入口，聚合 obstacles/pathfinder/geometry/anchors/route_repository。
+gui/modes/torchlight/__init__.py - Torchlight UI 模式公共入口。
+gui/modes/torchlight/navigation.py - Torchlight 导航 UI 组合，注入事件 registry 工厂、游戏窗口查找器和 Loot 调试 overlay provider。
+gui/modes/torchlight/follow/__init__.py - Torchlight Follow 页面入口。
+gui/modes/torchlight/follow/editors.py - Torchlight 角色识别/手柄映射编辑器，并重导出通用序列编辑器供 Follow 页面使用。
+gui/modes/torchlight/follow/page.py - Torchlight Follow 配置、地图/ROI、角色、事件链和运行诊断页面。
+core/routing/__init__.py - 路径规划系统包入口，聚合 obstacles/pathfinder/geometry/anchors/route_repository，并公开 `LaggedTrajectoryTarget`。
 core/routing/obstacles.py - 从原始 wall_layer 派生 A* 专用的宽容障碍层，不改变定位用墙图。
 core/routing/pathfinder/__init__.py - A* pathfinder package 入口，导出 `PathFinder`。
 core/routing/pathfinder/runtime.py - `PathFinder` 真实 class，保留构造参数、`find_path()` 和旧私有 helper wrapper。
@@ -243,6 +417,7 @@ core/routing/pathfinder/astar.py - 8 邻接 A* 主循环、禁止斜向穿角、
 core/routing/pathfinder/snap.py - 起点/终点落入障碍时的最近可走格搜索。
 core/routing/pathfinder/coordinates.py - map-space/grid-space 坐标转换和 grid path 转全局路径点。
 core/routing/geometry.py - 路径平滑、投影、插值、出口区域判断兼容工具；投影/累计长度/插值委托 `routing/route_progress`。
+core/routing/trajectory_target.py - 从有序位置轨迹按累计距离选择滞后目标点的通用状态对象。
 core/routing/route_progress/__init__.py - 统一折线进度算法包入口，导出 `PolylineProjection`、累计长度、投影和插值 helper。
 core/routing/route_progress/models.py - `PolylineProjection` DTO，统一表示投影点、累计 progress、segment index 和偏离距离。
 core/routing/route_progress/projection.py - 折线累计长度、点到折线投影和按累计距离插值的权威实现。
@@ -364,6 +539,7 @@ architecture_docs/zh-CN/core/FACADE_EXTRACTION_METHOD.md - core facade 逐步抽
 core/input/controller.py - `MotionController` 正式类入口，拥有输入控制运行态并委托 motion_controller helper 包。
 core/input/action_adapter.py - 通用 primitive `ActionCommand` 到现有 `MotionController` 点击/按键策略的兼容 backend adapter。
 core/events/automation/__init__.py - 通用动作事件定义、路由和执行能力的稳定导出入口。
+core/events/automation/action_sequence.py - 游戏无关的有界声明式动作序列校验和 tick 驱动执行器。
 core/events/automation/definitions.py - 本机/远程共用的事件定义解析、稳定身份、revision、owner、tombstone 和目录解析仓库。
 core/events/automation/routes.py - 中英文旧路由值规范化、路由文件仓库和无副作用 trigger-to-dispatch 决策。
 core/events/automation/execution.py - 按 `(source, controller)` 隔离的本机/远程共享事件执行器，输出完整 XInput 状态帧。
@@ -374,7 +550,8 @@ core/runtime/event_service/hotkeys.py - 可注入读取器的 Win32 热键按下
 core/runtime/event_service/service.py - 本机触发、A->B/C 广播、远程接收、目录同步、状态输出和生命周期的单一组合根。
 core/events/models.py - 事件系统通用数据结构和动作类型。
 core/events/config.py - 事件配置兼容 facade，re-export 配置模型、IO 和 TUI 事件选项输出。
-core/events/config_model.py - `EventSystemConfig`、默认事件配置、deep merge 和 legacy detector mode 兼容。
+core/events/config_model.py - 游戏无关的 `EventSystemConfig`、全局事件运行时默认值和 deep merge；具体事件默认值不在 core。
+core/events/config_schema.py - 复制事件配置 schema，并校验/标注通用 `compact`、`summary` 展示提示。
 core/events/config_io.py - 地图级 `event_config.json` 路径、加载和保存。
 core/events/registry.py - 完整事件包注册表，TUI/Coordinator 只通过它枚举事件。
 core/events/hooks/__init__.py - 事件生命周期 hook package 入口，导出 hook 常量、上下文 DTO 和 registry。
@@ -412,42 +589,57 @@ core/events/capture_provider.py - 为事件 handler 提供小地图/主画面截
 core/events/window_finder.py - Windows 游戏窗口枚举、DPI awareness 和窗口矩形获取。
 core/events/detectors/template_matcher.py - 多模板、多尺度图标匹配通用工具。
 core/events/perception_adapter.py - 将 legacy `EventDetection` 与通用 `TargetDetection(MINIMAP)` 纯转换、反向转换和批量归一化；不包含 Portal/Loot 算法或事件策略。
-core/events/types/portal/definition.py - `portal` 完整事件包对外定义。
-core/events/types/portal/minimap_detector.py - 传送门小地图图标 detector facade，持有 `PortalMinimapDetector`、模板缓存、feature signature 和日志节流状态。
-core/events/types/portal/minimap_detection/__init__.py - portal minimap detector helper package 入口，聚合 mode、诊断和 hit 转换 helper。
-core/events/types/portal/minimap_detection/modes.py - portal minimap detector mode 选择、feature template 刷新、template/feature/shape-color 命中调用和 shape-color 参数构造。
-core/events/types/portal/minimap_detection/diagnostics.py - portal minimap detector skipped/no-hit/rejected/best-hit 运行日志 helper，集中维护日志节流写法。
-core/events/types/portal/minimap_detection/conversion.py - portal minimap hit 颜色过滤、EventDetection 构造和 metadata 字段填充 helper。
-core/events/types/portal/minimap_feature_matcher/__init__.py - 传送门小地图蓝色本体特征匹配器 package 入口，保留旧 public/private helper 导出。
-core/events/types/portal/minimap_feature_matcher/models.py - `PortalFeatureTemplate`、`PortalFeatureHit` DTO 和 hit center 计算。
-core/events/types/portal/minimap_feature_matcher/masks.py - HSV 蓝/青色 portal body 二值 mask 提取。
-core/events/types/portal/minimap_feature_matcher/templates.py - 从通用 `TemplateSpec` 构建 portal 蓝色本体 feature templates。
-core/events/types/portal/minimap_feature_matcher/response.py - 多尺度 mask resize 和响应图局部峰值提取 helper。
-core/events/types/portal/minimap_feature_matcher/pipeline.py - portal feature matcher 主流程、候选评分和近邻 hit 合并。
-core/events/types/portal/minimap_hit_filter.py - 传送门小地图 hit 的蓝色像素接受过滤 helper。
-core/events/types/portal/minimap_shape_color/__init__.py - shape-color matcher 子模块入口，聚合 DTO、mask、模板准备、评分和主流程。
-core/events/types/portal/minimap_shape_color/models.py - shape-color matcher 参数、命中、debug mask 和 prepared template DTO。
-core/events/types/portal/minimap_shape_color/masks.py - shape-color matcher 的蓝色核心/外环 mask、缩放和 BGR/HSV 转换 helper。
-core/events/types/portal/minimap_shape_color/templates.py - shape-color matcher 的模板多尺度准备 helper。
-core/events/types/portal/minimap_shape_color/scoring/__init__.py - shape-color scoring package 入口，保留原 scoring 函数导出。
-core/events/types/portal/minimap_shape_color/scoring/response.py - shape-color matcher 的 mask/color 响应图组合和响应峰值提取 helper。
-core/events/types/portal/minimap_shape_color/scoring/color.py - masked HSV 颜色相似度和 color response map helper。
-core/events/types/portal/minimap_shape_color/scoring/overlap.py - blue/outer/shape/edge mask 的 F1-like overlap 分数 helper。
-core/events/types/portal/minimap_shape_color/scoring/candidate.py - shape-color 候选窗口评分、signature boost 和 reject reason 判定 helper。
-core/events/types/portal/minimap_shape_color/pipeline.py - shape-color matcher 主匹配流程和候选去重 helper。
-core/events/types/portal/main_view_confirmer.py - 传送门主画面蓝紫发光实体 confirmer。
-core/events/types/portal/environment_signature.py - portal 交互前后小地图环境签名和差异计算 helper。
-core/events/types/portal/completion_detector.py - portal teleport 完成判定 helper，覆盖已知出口、位置变化和环境变化。
-core/events/types/portal/handler/__init__.py - portal handler package 入口，只导出 `PortalEventHandler`。
-core/events/types/portal/handler/runtime.py - `PortalEventHandler` facade/state owner，保留 `start()`、`update()`、`reset()` 和 completion wrapper。
-core/events/types/portal/handler/movement.py - portal 到达半径、交互半径和 forced repeat movement action helper。
-core/events/types/portal/handler/interaction.py - portal 点强制点击、点击后等待、按 `D` 交互和交互签名采集 helper。
-core/events/types/portal/handler/completion.py - portal `wait_result` 阶段、completion/fail/wait action 和 relocalize request helper。
-core/events/types/portal/handler/diagnostics.py - portal handler 状态变化和节流日志 helper。
-assets/event_templates/portal/minimap/portal_minimap_01.png - 传送门小地图图标模板 1，供事件识别探针和后续 PortalMinimapDetector 使用。
-assets/event_templates/portal/minimap/portal_minimap_02.png - 传送门小地图图标模板 2，覆盖同类传送门图标的另一种小地图外观。
-assets/event_detectors/portal/main_view/blue_glow_detector_v1.json - 大画面传送门蓝紫发光检测参数资产。
-assets/event_detectors/portal/main_view/README.md - 大画面传送门检测资产说明和复现命令。
+features/__init__.py - 游戏业务域根包，不聚合具体游戏 API。
+features/torchlight/__init__.py - Torchlight 业务域根包，避免导入时启动运行时副作用。
+features/torchlight/composition.py - Portal/Loot 事件定义的 Torchlight 组合入口，接受已有通用注册表或创建新注册表。
+features/torchlight/skills/__init__.py - Torchlight skill facade 公共入口。
+features/torchlight/skills/follow_chain.py - 将通用 `ActionSequenceDefinition` 命名为 Torchlight skill/follow chain，不复制执行算法。
+features/torchlight/follow/__init__.py - Torchlight 自动跟随公共 API。
+features/torchlight/follow/config.py - Torchlight 跟随角色、地图、识别、事件链和快捷键配置与版本存储。
+features/torchlight/follow/controller.py - 单角色跟随控制策略，组合目标轨迹、FollowerPlanner 和运动决策。
+features/torchlight/follow/planner.py - Torchlight 跟随路径缓存和多尺度 A* 策略；通用 A*/几何仍由 core 提供。
+features/torchlight/follow/dual_session.py - A 端多角色跟随/事件抢占会话状态机。
+features/torchlight/follow/resources.py - Torchlight follow 地图包读取和通用导航引用构造。
+features/torchlight/follow/service.py - Torchlight follow 进程、热键、通信与生命周期组合根。
+features/torchlight/follow/workers.py - 每角色视觉、规划和输出 worker；真实设备只在显式启动后连接。
+features/torchlight/follow/replay.py - Torchlight follow 录制、离线回放和耗时摘要。
+features/torchlight/follow/benchmark.py - Torchlight follow 专用基准入口。
+features/torchlight/portal/definition.py - `portal` 完整事件包对外定义。
+features/torchlight/portal/minimap_detector.py - 传送门小地图图标 detector facade，持有 `PortalMinimapDetector`、模板缓存、feature signature 和日志节流状态。
+features/torchlight/portal/minimap_detection/__init__.py - portal minimap detector helper package 入口，聚合 mode、诊断和 hit 转换 helper。
+features/torchlight/portal/minimap_detection/modes.py - portal minimap detector mode 选择、feature template 刷新、template/feature/shape-color 命中调用和 shape-color 参数构造。
+features/torchlight/portal/minimap_detection/diagnostics.py - portal minimap detector skipped/no-hit/rejected/best-hit 运行日志 helper，集中维护日志节流写法。
+features/torchlight/portal/minimap_detection/conversion.py - portal minimap hit 颜色过滤、EventDetection 构造和 metadata 字段填充 helper。
+features/torchlight/portal/minimap_feature_matcher/__init__.py - 传送门小地图蓝色本体特征匹配器 package 入口，保留旧 public/private helper 导出。
+features/torchlight/portal/minimap_feature_matcher/models.py - `PortalFeatureTemplate`、`PortalFeatureHit` DTO 和 hit center 计算。
+features/torchlight/portal/minimap_feature_matcher/masks.py - HSV 蓝/青色 portal body 二值 mask 提取。
+features/torchlight/portal/minimap_feature_matcher/templates.py - 从通用 `TemplateSpec` 构建 portal 蓝色本体 feature templates。
+features/torchlight/portal/minimap_feature_matcher/response.py - 多尺度 mask resize 和响应图局部峰值提取 helper。
+features/torchlight/portal/minimap_feature_matcher/pipeline.py - portal feature matcher 主流程、候选评分和近邻 hit 合并。
+features/torchlight/portal/minimap_hit_filter.py - 传送门小地图 hit 的蓝色像素接受过滤 helper。
+features/torchlight/portal/minimap_shape_color/__init__.py - shape-color matcher 子模块入口，聚合 DTO、mask、模板准备、评分和主流程。
+features/torchlight/portal/minimap_shape_color/models.py - shape-color matcher 参数、命中、debug mask 和 prepared template DTO。
+features/torchlight/portal/minimap_shape_color/masks.py - shape-color matcher 的蓝色核心/外环 mask、缩放和 BGR/HSV 转换 helper。
+features/torchlight/portal/minimap_shape_color/templates.py - shape-color matcher 的模板多尺度准备 helper。
+features/torchlight/portal/minimap_shape_color/scoring/__init__.py - shape-color scoring package 入口，保留原 scoring 函数导出。
+features/torchlight/portal/minimap_shape_color/scoring/response.py - shape-color matcher 的 mask/color 响应图组合和响应峰值提取 helper。
+features/torchlight/portal/minimap_shape_color/scoring/color.py - masked HSV 颜色相似度和 color response map helper。
+features/torchlight/portal/minimap_shape_color/scoring/overlap.py - blue/outer/shape/edge mask 的 F1-like overlap 分数 helper。
+features/torchlight/portal/minimap_shape_color/scoring/candidate.py - shape-color 候选窗口评分、signature boost 和 reject reason 判定 helper。
+features/torchlight/portal/minimap_shape_color/pipeline.py - shape-color matcher 主匹配流程和候选去重 helper。
+features/torchlight/portal/main_view_confirmer.py - 传送门主画面蓝紫发光实体 confirmer。
+features/torchlight/portal/environment_signature.py - portal 交互前后小地图环境签名和差异计算 helper。
+features/torchlight/portal/completion_detector.py - portal teleport 完成判定 helper，覆盖已知出口、位置变化和环境变化。
+features/torchlight/portal/handler/__init__.py - portal handler package 入口，只导出 `PortalEventHandler`。
+features/torchlight/portal/handler/runtime.py - `PortalEventHandler` facade/state owner，保留 `start()`、`update()`、`reset()` 和 completion wrapper。
+features/torchlight/portal/handler/movement.py - portal 到达半径、交互半径和 forced repeat movement action helper。
+features/torchlight/portal/handler/interaction.py - portal 点强制点击、点击后等待、按 `D` 交互和交互签名采集 helper。
+features/torchlight/portal/handler/completion.py - portal `wait_result` 阶段、completion/fail/wait action 和 relocalize request helper。
+features/torchlight/portal/handler/diagnostics.py - portal handler 状态变化和节流日志 helper。
+resources/games/torchlight/event_templates/portal/minimap/portal_minimap_01.png - Torchlight 传送门小地图图标模板 1。
+resources/games/torchlight/event_templates/portal/minimap/portal_minimap_02.png - Torchlight 传送门小地图图标模板 2。
+resources/games/torchlight/event_detectors/portal/main_view/blue_glow_detector_v1.json - Torchlight 大画面传送门蓝紫发光检测参数资产。
+resources/games/torchlight/event_detectors/portal/main_view/README.md - Torchlight 大画面传送门检测资产说明和复现命令。
 utils/event_icon_probe.py - 独立事件图标探针，用原始小地图截图验证多模板匹配。
 utils/portal_screen_probe.py - 独立大画面传送门探针，用游戏窗口截图验证蓝紫发光实体识别。
 utils/route_context_probe.py - 离线打印 route.json 中辅助锚点、必经点和出口的路线进度。
@@ -578,16 +770,22 @@ Level 3: unified action-event path
 对外依赖：`core.actions.StickSlewLimiter`、Windows `GetTickCount64`、注入的 Host client。
 注意事项：`start()` 才获取 lease，`write()` 不会启动 controller mapping，`stop()` 幂等释放；Host 协议和 Windows clock 不再位于 core。
 
-### `src/auto_modules/core/lan_follow/models.py`
+### `src/auto_modules/core/communication/shared_state.py`
 职责：定义与设备/协议无关的共享位置和共享事件不可变数据契约。
 关键导出：`SharedPosition`、`SharedEvent`。
 对外依赖：仅标准库 `dataclasses`。
 注意事项：字段使用调用方本地单调时钟语义；Host deadline translation 不属于该模块。
 
+### `src/auto_modules/core/routing/trajectory_target.py`
+职责：保存有序二维轨迹，并按累计路径长度返回距离最新点指定距离的滞后目标。
+关键导出：`LaggedTrajectoryTarget`。
+对外依赖：`core.routing.geometry` 的累计长度、距离和插值函数。
+注意事项：拒绝非有限/逆序时间样本，0.5 像素内重复点不追加；不知道角色、游戏、设备或跟随策略。旧 `routing.follow_target` 已删除。
+
 ### `src/auto_modules/adapters/host/follow_transport.py`
 职责：把 `SharedPosition/SharedEvent` 与 Host `sync.share.*` wire payload 双向转换，并在 IPC 延迟后重新检查 TTL。
 关键导出：`FollowTransport`。
-对外依赖：`core.lan_follow` contracts、`adapters.virtual_gamepad.host_clock_ms`、注入的 Host client。
+对外依赖：`core.communication` contracts、`adapters.virtual_gamepad.host_clock_ms`、注入的 Host client。
 注意事项：没有 socket ownership；LAN 会话仍由 Host 拥有。`poll()` 丢弃非法、非有限或过期记录，不把远端单调时间戳当成本机时间。
 
 ### `src/auto_modules/application/event_workbench/service.py`
@@ -596,10 +794,10 @@ Level 3: unified action-event path
 对外依赖：`core.events.automation`、`adapters.host`、`adapters.windows`、`adapters.virtual_gamepad.host_clock_ms`。
 注意事项：UI 只消费 service contract；Host clock 和 wire commands 均留在 adapter 边界。
 
-### `src/auto_modules/application/follow/service.py`
+### `src/auto_modules/features/torchlight/follow/service.py`
 职责：协调 follow workers、热键边沿、Host share transport 和有界队列。
 关键导出：`FollowService`。
-对外依赖：`core.lan_follow.SharedEvent`、`adapters.host.FollowTransport`、`adapters.windows.HotkeyTriggerSource`、`adapters.virtual_gamepad`。
+对外依赖：`core.communication.SharedEvent`、`adapters.host.FollowTransport`、`adapters.windows.HotkeyTriggerSource`、`adapters.virtual_gamepad`。
 注意事项：不再直接读取 Win32 key state；网络 I/O 在线程中运行，真实 worker/Host 连接只有显式 `start()` 后发生。
 
 ### `services/virtual_gamepad/launcher/src/VirtualGamepadLauncher/LauncherPaths.cs`
@@ -690,7 +888,7 @@ Level 3: unified action-event path
 职责：独立事件管理窗口，用于测试、运行时观察事件系统，并通过 Hooks 页编辑 hook 实例。
 关键导出：`EventManagerDialog`。
 对外依赖：`core.events.config.build_tui_event_options`、`gui.dialogs.event_manager.hooks.EventHookPanel`。
-注意事项：窗口现在使用 `QTabWidget` 分为“事件”和“Hooks”两页。事件选配表只展示完整事件包，例如 `portal`；不会暴露 minimap detector、main-view confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。Hooks 页编辑 `event_config.hooks.instances`，当前只支持 key_press 实例：启用、名称、按键、绑定事件类型、是否挂到“事件进入真实视野”和“事件完成之后”。同一个实例可同时绑定多个事件类型，也可同时勾选两个触发点。完整 `refresh()` 会重建事件表、参数控件和 hook 面板；运行中高频更新使用 `refresh_tasks()` 只刷新任务表，避免导航循环反复重建按钮和参数控件。选中事件行后，参数面板根据该事件的 `config_schema()` 自动生成控件，参数变化只更新内存态配置并发出 `config_changed`，点击保存才写入当前地图 `event_config.json`。Hook 面板变化同样发出 `config_changed`，由导航页重新注册 hook handler。
+注意事项：窗口现在使用 `QTabWidget` 分为“事件”和“Hooks”两页。事件选配表只展示 registry 提供的完整事件包，不暴露 detector、confirmer、handler 等内部步骤。任务表从 `EventCoordinator.tasks()` 刷新，展示 ID、事件类型、状态、识别次数、置信度、地图坐标、尝试次数和最近识别时间。Hooks 页编辑 `event_config.hooks.instances`。完整 `refresh()` 会重建事件表、参数控件和 hook 面板；运行中高频更新使用 `refresh_tasks()` 只刷新任务表。选中事件后，参数面板根据 `config_schema()` 自动生成控件，并只按字段级 `compact`/`summary` 元数据决定紧凑视图和摘要；通用 dialog 不维护任何具体游戏参数白名单。`manual_test_requested` 与 `reset_events_requested` 都是领域中立信号。
 
 ### `gui/dialogs/event_manager/hooks/panel.py`
 职责：事件管理窗口的独立 Hooks 页，编辑 hook 实例配置。
@@ -781,7 +979,7 @@ Level 3: unified action-event path
 职责：集中导航页 lifecycle/controller 的 wiring 顺序。
 关键导出：`initialize_navigation_pre_signal_lifecycles(owner)`、`initialize_navigation_runtime_lifecycles(owner)`。
 对外依赖：`PySide6.QtCore.QTimer`、`navigation.calibration`、`navigation.config`、`navigation.display`、`navigation.events`、`navigation.map`、`navigation.route`、`navigation.runtime`。
-注意事项：这是 navigation 局部 composition module，不实现算法、不处理用户命令。`initialize_navigation_pre_signal_lifecycles()` 必须在 `_connect_signals()` 前执行，创建 display/event-dialog/route/config/calibration/map-load lifecycle；`initialize_navigation_runtime_lifecycles()` 必须在 `_connect_signals()` 后执行，创建 `QTimer`、延迟事件弹窗、manual portal controller、runtime command/event/map-click lifecycle 和 `NavigationRuntimeFrameLoop`。这个模块暂时持有 owner 访问以避免超大构造参数，后续若要增强复用性，应先收窄 owner 依赖。
+注意事项：这是 navigation 局部 composition module，不实现算法、不处理用户命令。`initialize_navigation_pre_signal_lifecycles()` 必须在 `_connect_signals()` 前执行，创建 display/event-dialog/route/config/calibration/map-load lifecycle；`initialize_navigation_runtime_lifecycles()` 必须在 `_connect_signals()` 后执行，创建 `QTimer`、通用 manual-event controller、runtime command/event/map-click lifecycle 和 `NavigationRuntimeFrameLoop`。这个模块暂时持有 owner 访问以避免超大构造参数，后续若要增强复用性，应先收窄 owner 依赖。
 
 ### `gui/modes/navigation/ui/__init__.py`
 职责：导航 UI shell 包导出。
@@ -941,7 +1139,7 @@ Level 3: unified action-event path
 注意事项：该模块不保存 event_config、不重置 portal state、不推进 event handler；它只处理 UI wiring。`connect_event_dialog_signals()` 会先尝试 disconnect 再 connect，避免重复连接导致一次按钮点击触发多次 slot。
 ### `gui/modes/navigation/presentation/__init__.py`
 职责：导航 presentation helper 包导出。
-关键导出：`apply_map_loaded_ui`、`populate_map_combo`、`warn_map_config_missing`、`show_map_load_failed`、`warn_overlay_map_config_incomplete`、`show_initial_hint_set`、`show_hint_mode_status`、`show_screen_center_calibrated`、`mark_nav_params_dirty`、`warn_nav_config_missing_map`、`show_nav_config_saved`、`show_nav_config_save_failed`、`warn_default_nav_config_missing`、`show_default_nav_config_saved`、`show_default_nav_config_save_failed`、`warn_event_config_missing`、`show_event_config_saved`、`show_event_config_save_failed`、`warn_event_system_missing`、`show_portal_event_state_reset`、`warn_portal_manual_test_missing_screen_center`、`show_portal_manual_test_started`、`show_portal_manual_test_stopped`、`warn_auto_navigation_unavailable`、`warn_auto_navigation_invalid_route`、`show_auto_navigation_started`、`show_auto_navigation_stopped`、`warn_navigation_missing_screen_center`、`warn_navigation_map_config_incomplete`、`show_navigation_started`、`show_navigation_paused`、`show_route_command_status`、`warn_route_save_failed`、`warn_move_target_requires_localization`、`show_move_target_set`、`create_map_scene_items`、`update_player_marker`、`update_monitor_rect_item`、`update_game_view_rect_item`、`create_last_position_marker`、`create_initial_hint_marker`、`set_target_marker`、`hide_item`、`show_owned_dialog`、`toggle_owned_dialog`、`update_debug_overlay`、`clear_event_overlay`、`global_to_scene`、`render_event_overlay`、`clear_route_overlay`、`render_route_overlay`、`screen_overlay_geometry`、`build_navigation_status_text`、`show_navigation_runtime_status`、`append_navigation_status_suffix`、`show_navigation_relocalizing`、`show_navigation_arrived`、`show_navigation_failed`。
+关键导出：`apply_map_loaded_ui`、`populate_map_combo`、`warn_map_config_missing`、`show_map_load_failed`、`warn_overlay_map_config_incomplete`、`show_initial_hint_set`、`show_hint_mode_status`、`show_screen_center_calibrated`、`mark_nav_params_dirty`、`warn_nav_config_missing_map`、`show_nav_config_saved`、`show_nav_config_save_failed`、`warn_default_nav_config_missing`、`show_default_nav_config_saved`、`show_default_nav_config_save_failed`、`warn_event_config_missing`、`show_event_config_saved`、`show_event_config_save_failed`、`warn_event_system_missing`、`warn_manual_event_test_missing_screen_center`、`show_manual_event_test_started`、`show_manual_event_test_stopped`、`warn_auto_navigation_unavailable`、`warn_auto_navigation_invalid_route`、`show_auto_navigation_started`、`show_auto_navigation_stopped`、`warn_navigation_missing_screen_center`、`warn_navigation_map_config_incomplete`、`show_navigation_started`、`show_navigation_paused`、`show_route_command_status`、`warn_route_save_failed`、`warn_move_target_requires_localization`、`show_move_target_set`、`create_map_scene_items`、`update_player_marker`、`update_monitor_rect_item`、`update_game_view_rect_item`、`create_last_position_marker`、`create_initial_hint_marker`、`set_target_marker`、`hide_item`、`show_owned_dialog`、`toggle_owned_dialog`、`update_debug_overlay`、`clear_event_overlay`、`global_to_scene`、`render_event_overlay`、`clear_route_overlay`、`render_route_overlay`、`screen_overlay_geometry`、`build_navigation_status_text`、`show_navigation_runtime_status`、`append_navigation_status_suffix`、`show_navigation_relocalizing`、`show_navigation_arrived`、`show_navigation_failed`。
 对外依赖：`navigation.presentation.calibration_feedback`、`navigation.presentation.config_save_state`、`navigation.presentation.event_management_state`、`navigation.presentation.navigation_command_state`、`navigation.presentation.route_command_state`、`navigation.presentation.map_load_state`、`navigation.presentation.map_presenter`、`navigation.presentation.dialog_host`、`navigation.presentation.debug_overlay`、`navigation.presentation.status_presenter`、`navigation.presentation.event_overlay`、`navigation.presentation.route_overlay`、`navigation.presentation.viewport_overlay`。
 注意事项：只聚合导出，不承载业务逻辑。
 ### `gui/modes/navigation/presentation/calibration_feedback.py`
@@ -956,7 +1154,7 @@ Level 3: unified action-event path
 注意事项：该模块不写 config、不调用 `_apply_config_to_core()`、不刷新 overlay；只展示保存链路结果。当前地图配置保存成功文案、失败文案和默认配置保存文案保持旧中文文本。
 ### `gui/modes/navigation/presentation/event_management_state.py`
 职责：封装事件管理保存、事件系统缺失、传送门状态刷新和手动测试启动/停止的状态标签与 QMessageBox 文案。
-关键导出：`warn_event_config_missing`、`show_event_config_saved`、`show_event_config_save_failed`、`warn_event_system_missing`、`show_portal_event_state_reset`、`warn_portal_manual_test_missing_screen_center`、`show_portal_manual_test_started`、`show_portal_manual_test_stopped`。
+关键导出：`warn_event_config_missing`、`show_event_config_saved`、`show_event_config_save_failed`、`warn_event_system_missing`、`warn_manual_event_test_missing_screen_center`、`show_manual_event_test_started`、`show_manual_event_test_stopped`。
 对外依赖：无内部业务模块依赖；使用 PySide6 `QMessageBox`。
 注意事项：该模块不保存 `event_config`、不调用 `EventCoordinator.reset_event_type()`、不启动/停止 `ManualEventTestController`、不修改 motion/input window；只负责旧中文提示与状态栏文案。
 ### `gui/modes/navigation/presentation/navigation_command_state.py`
@@ -995,10 +1193,10 @@ Level 3: unified action-event path
 对外依赖：`navigation.presentation.event_overlay.global_to_scene`。
 注意事项：只接收 scene/nav_core/route_data/current path 等输入并创建/移除 QGraphicsItem，不修改 route 数据或导航任务状态。
 ### `gui/modes/navigation/presentation/event_overlay.py`
-职责：封装导航地图事件 marker 的 QGraphics 绘制、坐标转换和旧事件 overlay item 清理。
-关键导出：`clear_event_overlay`、`global_to_scene`、`render_event_overlay`。
-对外依赖：无内部业务模块依赖；只接收调用方传入的 `scene/nav_core/event_coordinator/items`。
-注意事项：该模块只绘制 `EventCoordinator.overlays()` 产出的 presentation 模型，不决定事件启用、调度或状态；`global_to_scene()` 同时被 route overlay 复用，避免 route/event 各自重复裁剪偏移换算。
+职责：封装导航地图事件 marker、可注入圆形调试图元的 QGraphics 绘制、坐标转换和 overlay item 清理。
+关键导出：`EventOverlayContext`、`EventCircleOverlay`、`clear_event_overlay`、`global_to_scene`、`render_event_overlay`。
+对外依赖：无业务模块依赖；只接收调用方传入的 `scene/nav_core/event_coordinator/items/overlay_providers`。
+注意事项：该模块只绘制 `EventCoordinator.overlays()` 产出的任务模型和 provider 返回的领域中立圆形描述，不读取具体事件配置键；`global_to_scene()` 同时被 route overlay 复用，避免 route/event 各自重复裁剪偏移换算。
 ### `gui/modes/navigation/presentation/status_presenter.py`
 职责：构造并写入导航循环状态栏文案，封装运行态后缀追加和终态提示。
 关键导出：`build_navigation_status_text`、`show_navigation_runtime_status`、`append_navigation_status_suffix`、`show_navigation_relocalizing`、`show_navigation_arrived`、`show_navigation_failed`。
@@ -1068,9 +1266,9 @@ Level 3: unified action-event path
 注意事项：该模块不 import QWidget，不直接知道按钮或 status label；通过回调执行 `NavigationTaskController.stop()`、关闭游戏输入窗口、复位自动导航按钮和显示 ARRIVED/FAILED 文案。非 ARRIVED/FAILED intent 返回 `False` 且不触发任何回调。该 helper 仅处理单个终态 intent 的收束，不停止 `nav_timer`，保持自动导航到达后定位循环继续运行的旧行为。
 ### `gui/modes/navigation/event_adapter.py`
 职责：封装导航模式和事件系统之间的轻量桥接，不推进事件状态机。
-关键导出：`create_default_event_registry`、`event_config_summary`、`find_default_game_window_rect`、`build_event_tick`、`event_status_text`。
-对外依赖：`core.events.models.EventTick`、`core.events.registry.EventRegistry`、`core.events.types.portal.PortalEventDefinition`、`core.events.window_finder.find_game_window`。
-注意事项：该模块只组装事件系统需要的输入和状态文案；事件 handler 的执行由 `NavigationTaskController` 通过 `EventCoordinator.run_task()` 触发，真实输入由 `NavigationRuntimeFrameLoop._execute_navigation_intent()` 统一消费。旧 UI 级 `EventAction` 仲裁 helper 已移除，`EventActionType` 翻译只保留在 core navigation task 层。
+关键导出：`create_default_event_registry`、`event_config_summary`、`build_event_tick`、`event_status_text`。
+对外依赖：`core.events.models.EventTick`、`core.events.registry.EventRegistry`。
+注意事项：该模块只组装事件系统需要的输入和状态文案，不查找具体游戏窗口、不导入业务 definition；事件 handler 由 `NavigationTaskController` 通过 `EventCoordinator.run_task()` 触发，真实输入由 `NavigationRuntimeFrameLoop._execute_navigation_intent()` 统一消费。
 ### `gui/modes/navigation/map/config_store.py`
 职责：封装导航模式地图目录解析、地图列表读取、导航配置 JSON 读写、默认配置 fallback 和 merge 保存。
 关键导出：`MISSING_MAP_DATA_LABEL`、`project_root_from_file`、`map_data_dir`、`list_map_names`、`resolve_map_folder`、`load_nav_config`、`save_nav_config`、`default_nav_config_path_from_file`、`default_nav_config_path_from_map_folder`、`save_default_nav_config`。
@@ -1350,7 +1548,7 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 注意事项：事件识别必须使用 raw minimap frame，不使用 `HSVRecognizer.extract_combined()` 之后的定位特征图；脚本需要和游戏同权限运行，非管理员权限可能抓到黑帧。`--template` 和 `--image` 均可重复传入；静态图片模式用于验证用户提供截图是否能被当前模板资产识别。默认仍可跑整块模板诊断；加 `--portal-feature-detector` 时改用运行时 portal 蓝色本体特征算法，打印 mask/density 分数和蓝色像素范围，用于区分“背景模板不鲁棒”和“本体特征不可分”的问题；加 `--portal-shape-color-detector` 时改用探针专用形状+颜色联合算法，同时保存蓝色 core mask、白/灰 outer-ring mask、combined shape mask 和 accepted/rejected 候选裁剪，用于确认误报是否来自“只有蓝色相似但外环/轮廓不完整”。
 
 ### `gui/dialogs/event_manager_dialog.py`
-职责：事件系统的非模态管理窗口，展示完整事件选配、事件参数、识别任务状态和 hook 实例配置，并发出保存、测试传送门、刷新传送门状态信号。
+职责：事件系统的非模态管理窗口，展示 registry 驱动的事件选配、schema 参数、识别任务状态和 hook 实例配置，并发出领域中立的保存、手工测试、刷新状态信号。
 关键导出：`EventManagerDialog`。
 对外依赖：`core.events.config.build_tui_event_options`、`gui.dialogs.event_manager.hooks.EventHookPanel`。
 注意事项：窗口使用 `Qt.Tool` 且 `WA_DeleteOnClose=False`，避免手动传送门测试期间主窗口进入游戏输入模式后，事件面板跟随父窗口层级被隐藏或关闭后无法再次打开。导航页每次打开事件管理时会确保窗口存在、刷新上下文并显式 `show/raise/activate`。Hooks 页只编辑配置，不注册 handler；真实注册由 `gui/modes/navigation/hooks/registration.py` 根据当前事件配置完成。
@@ -1358,7 +1556,7 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 ### `utils/portal_screen_probe.py`
 职责：不接入导航主循环，只用于验证主游戏画面里传送门实体是否能被视觉识别。
 关键导出：`main()`。
-对外依赖：`core.platform.SquareScreenCapture`、`core.events.window_finder`、`core.events.types.portal.main_view_confirmer`。
+对外依赖：`core.platform.SquareScreenCapture`、`core.events.window_finder`、`features.torchlight.portal.main_view_confirmer`。
 注意事项：该探针默认枚举 `UnrealWindow` / `Torchlight` 游戏窗口并抓整块窗口画面；也支持 `--rect` 或 `--full-screen`。探针现在复用 portal 事件包的 main-view confirmer，避免探针算法和运行时算法漂移。
 
 ### `core/events/*`
@@ -1409,17 +1607,47 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 副作用：通过注入回调触发一次按键；写事件日志。
 失败行为：空 key 降级为跳过；回调异常由外层 `EventHookRegistry.emit()` 捕获并写 `event hook handler failed`。
 调用关系：called by `EventHookRegistry.emit()` after `NavigationHookRuntime` registers the instance to selected triggers。
-### `core/events/types/portal/*`
+### `features/torchlight/portal/*`
 职责：传送门完整事件包。对外暴露 `PortalEventDefinition`，内部拆分小地图 detector、主画面 confirmer 和 handler。
 关键导出：`PortalEventDefinition`。
-对外依赖：`core.events.detectors.template_matcher`、`core.events.types.portal.minimap_feature_matcher`、`core.events.types.portal.minimap_shape_color`、`core.events.types.portal.main_view_confirmer`。
+对外依赖：`core.events.detectors.template_matcher`、`features.torchlight.portal.minimap_feature_matcher`、`features.torchlight.portal.minimap_shape_color`、`features.torchlight.portal.main_view_confirmer`。
 注意事项：小地图 detector 的识别算法由 `PortalEventConfig.detector_mode` 选择：`template` 只走旧灰度/边缘整块模板；`feature` 只走蓝色本体特征；`feature_then_template` 先走蓝色本体特征、无命中再回退整块模板；`shape_color` 走形状+颜色联合匹配，当前默认使用它压低蓝色相似物误识别。旧配置只含 `feature_detector_enabled` 且没有 `detector_mode` 时仍会兼容映射为旧 feature/template 行为。`PortalMinimapDetector` 现在只保留模板缓存、feature signature 和日志节流状态，mode 选择/命中调用在 `minimap_detection/modes.py`，no-hit/rejected/best-hit 日志在 `minimap_detection/diagnostics.py`，hit 颜色过滤、`minimap_nms_radius` 局部重复合并和 `EventDetection` metadata 构造在 `minimap_detection/conversion.py`。`minimap_feature_matcher/` 当前是同名算法 package：models/masks/templates/response/pipeline 分别承接 DTO、HSV 蓝色 mask、模板准备、响应图峰值提取和主匹配/合并流程。shape+color 同时要求蓝色核心、白/灰外环、组合轮廓、边缘和 HSV 颜色一致，适合压住“蓝色相似但不是传送门”的误报。命中后仍必须通过 `minimap_hit_filter.portal_color_check()`，避免白色墙体、圆形地形细节被识别成传送门。2026-06-04 日志审计发现最近运行仍使用 `feature_then_template` 内存配置，而当前 `map_data/A/event_config.json` 已保存为 `shape_color`；同一轮日志中重复 portal task 的稳定坐标相距约 70-85px，旧 `localization_cluster_radius=56`、`dedupe_radius=32` 无法合并，已改为默认 96 并暴露到事件参数面板。当前传送门主流程是靠近后点击映射传送门点、短暂等待、再按 `D`；即使配置残留 `interaction="click"`，`PortalEventHandler` 也会强制按键交互并记录日志，不再要求主画面蓝紫实体确认。按键/点击后 handler 等待位置变化或小地图周边环境变化才判定传送完成，避免固定等待导致误完成；完成动作会携带入口和出口坐标，runner 将出口附近的传送门任务也标记 completed，防止双门来回触发。`PortalEventHandler` 当前是 `handler/` package：`runtime.py` 保留 handler 状态和 public API，movement/interaction/completion/diagnostics helper 分别承接状态机阶段。
 
 ### `core/events/automation/__init__.py`
 职责：作为动作事件纯能力包的稳定入口，聚合定义、路由、dispatch、执行器和状态帧类型。
-关键导出：`EventDefinitionRepository`、`ExecutableEventDefinition`、`parse_event_definition`、`EventRoute`、`EventDispatch`、`EventRouteRepository`、`EventRouter`、`EventExecutionRuntime`、`EventStateFrame`。
+关键导出：`EventDefinitionRepository`、`ExecutableEventDefinition`、`parse_event_definition`、`EventRoute`、`EventDispatch`、`EventRouteRepository`、`EventRouter`、`EventExecutionRuntime`、`EventStateFrame`、`ActionSequenceDefinition`、`ActionSequenceHandler`。
 对外依赖：`core.events.automation.definitions`、`routes`、`execution`。
 注意事项：入口不导出平台适配器，调用方需要真实热键或 Host/LAN 时应显式依赖 `core.runtime.event_service`。
+
+### `core/events/automation/action_sequence.py`
+职责：校验并执行与具体游戏无关的声明式顺序动作，支持 wait、button、parallel、condition、retry 和 emit。
+关键导出：`ActionSequenceDefinition`、`ActionSequenceHandler`、`button_mask()`、`inputs_mask()`、`BUTTONS`。
+对外依赖：通用 `EventDefinition/EventHandler/EventAction`、事件 hook 契约、共享 controller input mask 和并行轨道时间算法。
+注意事项：定义最多 128 步、总超时 1-60000ms、单 tick 最多解释 32 条、生命周期最多执行 512 条；模块只返回 `EventAction`，不访问设备。旧 `core.events.follow_chain` 已删除。
+
+### `core/events/config_schema.py`
+职责：为任意事件配置 schema 添加领域中立的紧凑视图与摘要视图提示，同时校验提示字段确实存在。
+关键导出：`with_display_hints(schema, *, compact=(), summary=())`。
+对外依赖：仅标准库 `copy` 与 `collections.abc`。
+注意事项：函数深复制输入，不修改 definition 持有的原始字典；未知字段抛 `ValueError`，使业务 definition 的 UI 元数据拼写错误在注册/测试阶段显式失败。
+
+### `features/torchlight/composition.py`
+职责：在应用组合根显式注册 Torchlight 的 Portal 与 Loot 业务事件定义。
+关键导出：`register_torchlight_events()`、`build_torchlight_feature_registry()`。
+对外依赖：通用 `EventRegistry`、`features.torchlight.portal.PortalEventDefinition`、`features.torchlight.loot.LootEventDefinition`。
+注意事项：接收已有 registry 时原地追加并返回同一实例；导航 UI 不导入具体事件定义，`MainWindow` 才决定使用该游戏组合。
+
+### `gui/modes/torchlight/navigation.py`
+职责：把 Torchlight 事件 registry、窗口识别和 Loot 调试 overlay 组合成可注入通用导航页的 UI 依赖。
+关键导出：`TorchlightNavigationComposition`、`build_torchlight_navigation_composition()`、`find_torchlight_window_rect()`、`build_loot_debug_overlays()`。
+对外依赖：Windows window-finder adapter、`features.torchlight.composition`、通用 `EventOverlayContext/EventCircleOverlay`。
+注意事项：窗口查找异常降级为 `None`；Loot provider 只读取 `loot` 业务配置并返回纯圆形描述，不直接操作 scene。通用导航包不反向导入该模块。
+
+### `features/torchlight/skills/follow_chain.py`
+职责：给通用动作序列提供 Torchlight skill/follow 业务名称和公共 facade。
+关键导出：`TorchlightSkillChainDefinition`、`SkillChainDefinition`、迁移期 `FollowChainDefinition`。
+对外依赖：`core.events.automation.action_sequence`。
+注意事项：不覆盖执行算法、不引入输入副作用；Torchlight 配置和 worker 从此入口引用业务类型。
 
 ### `core/events/automation/definitions.py`
 职责：提供本机和远程事件记录的唯一可执行解析路径，并集中管理稳定 ID、owner、revision、草稿身份剥离、目录 payload 与远程身份解析。
@@ -1480,6 +1708,18 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 关键导出：`EventWorkbenchPage`、`KEY_OPTIONS`、`CONTROLLER_SELECTIONS`。
 对外依赖：PySide6、`core.runtime_paths.data_root`、`core.runtime.event_service.EventWorkbenchService`、`ChainEditor`。
 注意事项：页面不理解事件 ID/revision/owner 的生成规则，不读写事件/路由/日志文件，不创建 Host client。复制事件通过 `service.new_event_draft()` 去除持久化身份；`shutdown()` 停 Qt timer 后只关闭统一服务且可重复调用。
+
+### `gui/modes/events/action_sequence_editor.py`
+职责：编辑通用声明式动作序列、独立输入轨道和单步并行动作组，并在接受前调用通用定义校验器。
+关键导出：`ChainEditor`、`ParallelGroupEditor`、`spin()`。
+对外依赖：PySide6、`core.events.automation.ActionSequenceDefinition`、通用 gamepad input picker。
+注意事项：不包含角色识别、Torchlight 跟随策略或设备连接；事件工作台可独立使用。
+
+### `gui/modes/torchlight/follow/editors.py`
+职责：编辑 Torchlight follow actor 的识别算法、HSV/template 参数、手柄槽位、跟随距离和坐标变换。
+关键导出：`ActorEditor`，以及为 Follow 页面重导出的 `ChainEditor`、`ParallelGroupEditor`、`spin`。
+对外依赖：PySide6、`gui.modes.events.action_sequence_editor`。
+注意事项：只有 `ActorEditor` 含 Torchlight follow 业务字段；通用动作序列 UI 的实现不在该文件重复。
 
 ### `tests/test_event_definition_repository.py`
 职责：验证本机/远程统一解析、稳定身份、版本变更、owner 重绑、草稿复制、legacy fallback 与 tombstone 删除传播。
@@ -1562,7 +1802,7 @@ def stop(self)
 5. `stop()` 先清本地 token/limiter，再在曾获取 lease 时发送 `program.release`；重复 stop 无 wire 副作用。
 副作用：仅通过注入 client 写 Host named-pipe protocol；不会启动 mapping 或安装驱动。
 失败行为：未 acquire 写入抛 `RuntimeError`；非法 controller/basis/vector/TTL 抛 `ValueError`；client 异常传播给 application worker 做安全停止。
-调用关系：Called by `application.follow.workers.actor_worker()`；Calls `StickSlewLimiter`、client `request()`、`host_clock_ms()`。
+调用关系：Called by `features.torchlight.follow.workers.actor_worker()`；Calls `StickSlewLimiter`、client `request()`、`host_clock_ms()`。
 
 ### `FollowTransport.publish/send_event/poll`
 ```python
@@ -1578,7 +1818,51 @@ def poll(self) -> tuple[tuple[SharedPosition, ...], tuple[SharedEvent, ...]]
 5. event 的 remainingMs 必须在 `(0,500]`，换算 local deadline 后必须仍未过期；非法单条记录被丢弃，其他记录继续。
 副作用：调用 Host `sync.share.position`、`sync.share.event`、`sync.share.drain`；不直接拥有 socket。
 失败行为：单条 malformed inbound 捕获 `KeyError/TypeError/ValueError` 并丢弃；client request 异常向上传播。
-调用关系：Called by `application.follow.service.FollowService._network()`；Calls injected client 和 Host-compatible clock。
+调用关系：Called by `features.torchlight.follow.service.FollowService._network()`；Calls injected client 和 Host-compatible clock。
+
+### `with_display_hints(schema: dict, *, compact: Iterable[str] = (), summary: Iterable[str] = ()) -> dict`
+行为：为通用事件配置 schema 标注紧凑视图和摘要视图字段。
+算法：1. 深复制输入 schema，避免业务 definition 的原始字典被 UI 修改。2. 将两个字段 iterable 转为集合并计算未知字段。3. 存在未知字段时抛 `ValueError`。4. 分别写入 `compact=True` 与 `summary=True` 并返回副本。
+副作用：无；只分配并返回新字典。
+失败行为：显示提示引用不存在的字段时抛 `ValueError`，不静默忽略业务配置错误。
+调用关系：called by Torchlight Portal/Loot `config_schema()`；calls `copy.deepcopy()`。
+
+### `build_torchlight_navigation_composition() -> TorchlightNavigationComposition`
+行为：生成供应用组合根注入通用导航页的 Torchlight UI 依赖集合。
+算法：1. 选择 `build_torchlight_feature_registry` 作为 registry 工厂。2. 选择 `find_torchlight_window_rect` 作为窗口 adapter。3. 将 `build_loot_debug_overlays` 组成不可变 provider tuple。4. 返回 frozen dataclass。
+副作用：无；不会在构造时枚举窗口、加载模型或启动运行时。
+失败行为：构造本身不抛业务异常；窗口查找错误只会在 finder 被调用时降级为 `None`。
+调用关系：called by `MainWindow.setup_ui()`；其返回字段传给 `NavigationModeWidget.__init__()`。
+
+### `build_loot_debug_overlays(context: EventOverlayContext) -> tuple[EventCircleOverlay, ...]`
+行为：把 Torchlight Loot 的人物中心遮罩调试配置转换为通用圆形 overlay 描述。
+算法：1. 从 `context.event_config` 读取 `loot` 配置。2. 依次检查配置存在、人物位置存在、事件启用、中心遮罩启用和调试显示启用。3. 规范化半径至少为 1。4. 乘 `draw_scale` 得 scene radius。5. 返回一个蓝色 `EventCircleOverlay`；任一 gate 不满足返回空 tuple。
+副作用：无；不访问 QGraphicsScene。
+失败行为：缺配置/位置降级为空；非数值半径的转换错误向调用方传播，以暴露无效业务配置。
+调用关系：registered by `build_torchlight_navigation_composition()`；called by generic `render_event_overlay()`。
+
+### `render_event_overlay(scene, nav_core, event_coordinator, items: list, *, overlay_providers=()) -> list`
+行为：清除旧图元，绘制通用事件任务 marker，并绘制注入 provider 返回的圆形调试图元。
+算法：1. 缺少 scene/nav_core/coordinator 时清理或返回空。2. 清除上一帧 items。3. 从 coordinator config、当前位置和 draw scale 构造 `EventOverlayContext`。4. 顺序调用 provider 并把每个 `EventCircleOverlay` 映射到 scene。5. 遍历 `EventCoordinator.overlays()` 绘制任务圆点和 label。6. 返回本帧图元列表供下次清理。
+副作用：向传入的 QGraphicsScene 添加/移除 item；不修改事件配置、任务或 provider 状态。
+失败行为：被删除的 Qt item 在清理时捕获 `RuntimeError`；provider 异常当前向帧循环传播，便于测试发现错误组合。
+调用关系：called by `NavigationMapDisplayLifecycle.render_event_overlay()`；calls injected business overlay providers and `EventCoordinator.overlays()`。
+
+### `ActionSequenceDefinition.__init__()` / `ActionSequenceHandler.update()`
+```python
+def __init__(self, name, steps, *, hooks=None, timeout_ms=30000, priority=0, resume=False)
+def update(self, tick: EventTick, task: EventTask) -> EventAction
+```
+行为与算法：
+1. definition 深拷贝最多 128 个步骤，验证 operation 白名单、0-5000ms 步长、controller input、并行轨道、1-10 次 retry、分支边界和 hook/condition 名称。
+2. handler 首 tick 记录单调起点；时钟倒退或达到总超时时返回 `EventAction.fail("chain_timeout")`。
+3. 每 tick 最多解释 32 个无等待步骤；累计最多 512 条，阻止条件/重试环形成 busy loop。
+4. wait/button/parallel 在持续期内返回 `EventAction.wait()`；button 写合并 bit mask，parallel 使用共享时间线计算当前 inputs，再转换为 mask。
+5. condition 从 `task.metadata["conditions"]` 取布尔值，按 then/else 跳转；retry 按步骤索引单独计数并有限回跳。
+6. emit 只向注入的 hook registry 发送 `EventHookContext`；序列结束返回 complete，单 tick 解释预算耗尽时返回 1ms wait。
+副作用：只有显式 hook registry 的同步 emit；不读写文件、不创建设备、不发送输入。
+失败行为：非法定义抛 `ValueError`；运行时超时或指令上限返回失败 action，不抛出到控制 worker。
+调用关系：Torchlight `FollowConfig.validate()`/`actor_worker()` 经 skill facade 构造 definition；`EventRunner` 调用生成的 handler。
 
 ### `LauncherPaths.LauncherPaths(string moduleRoot)`
 ```csharp
@@ -2168,40 +2452,31 @@ public LauncherPaths(string moduleRoot)
 1. 调用 `QMessageBox.warning(parent, "事件管理", "请先加载地图并初始化事件系统。")`。
 副作用：弹出 Qt 警告框。
 失败行为：Qt 弹窗异常向上传播；调用方负责 reset 按钮或直接返回。
-调用关系：called by `NavigationEventLifecycle.reset_portal_event_state()` and `NavigationEventLifecycle.run_portal_manual_test()`.
+调用关系：called by `NavigationEventLifecycle.reset_event_state()` and `NavigationEventLifecycle.run_manual_event_test()`.
 
-### `show_portal_event_state_reset(status_label, removed: int) -> None`
-行为：传送门事件状态刷新后，把清理任务数写入状态栏。
-算法：
-1. 按旧模板格式化 `removed`：`传送门状态已刷新，清理 {removed} 个任务；可重新识别测试`。
-2. 调用 `status_label.setText(text)`。
-副作用：写入 Qt 状态标签文本。
-失败行为：status label 缺少 `setText()` 时抛出属性错误，由开发期暴露。
-调用关系：called by `NavigationEventLifecycle.reset_portal_event_state()` after reset/overlay/dialog refresh.
-
-### `warn_portal_manual_test_missing_screen_center(parent) -> None`
-行为：启动传送门手动测试前发现未校准屏幕中心时，弹出旧中文警告。
+### `warn_manual_event_test_missing_screen_center(parent) -> None`
+行为：启动手工事件流程前发现未校准屏幕中心时弹出警告。
 算法：
 1. 调用 `QMessageBox.warning(parent, "事件管理", "请先校准屏幕中心。")`。
 副作用：弹出 Qt 警告框。
 失败行为：Qt 弹窗异常向上传播；调用方已先 reset 手动测试按钮。
-调用关系：called by `NavigationEventLifecycle.run_portal_manual_test()` guard branch.
+调用关系：called by `NavigationEventLifecycle.run_manual_event_test()` guard branch.
 
-### `show_portal_manual_test_started(status_label) -> None`
-行为：传送门手动测试正式启动后写入状态栏提示。
+### `show_manual_event_test_started(status_label) -> None`
+行为：手工事件流程正式启动后写入状态栏提示。
 算法：
-1. 调用 `status_label.setText("传送门测试已启动：使用正式事件流程执行")`。
+1. 调用 `status_label.setText("事件流程测试已启动：使用正式事件流程执行")`。
 副作用：写入 Qt 状态标签文本。
 失败行为：status label 缺少 `setText()` 时抛出属性错误，由开发期暴露。
-调用关系：called by `NavigationModeWidget._set_portal_manual_test_active(True)`.
+调用关系：called by `NavigationModeWidget._set_manual_event_test_active(True)`.
 
-### `show_portal_manual_test_stopped(status_label) -> None`
-行为：传送门手动测试停止后写入状态栏提示。
+### `show_manual_event_test_stopped(status_label) -> None`
+行为：手工事件流程停止后写入状态栏提示。
 算法：
-1. 调用 `status_label.setText("传送门测试已停止")`。
+1. 调用 `status_label.setText("事件流程测试已停止")`。
 副作用：写入 Qt 状态标签文本。
 失败行为：status label 缺少 `setText()` 时抛出属性错误，由开发期暴露。
-调用关系：called by `NavigationModeWidget._set_portal_manual_test_active(False)`.
+调用关系：called by `NavigationModeWidget._set_manual_event_test_active(False)`.
 
 ### `warn_auto_navigation_unavailable(parent, message: str) -> None`
 行为：自动导航启动 guard 未通过时，用调用方传入的旧原因文案提示用户。
@@ -2478,6 +2753,13 @@ public LauncherPaths(string moduleRoot)
 失败行为：单个 overlay 坐标无法映射时跳过。
 调用关系：called by `NavigationModeWidget._render_event_overlay()`。
 
+### `EventManagerDialog._format_current_values(self, values: dict, schema: dict) -> str`
+行为：按业务 definition 在通用 schema 中声明的显示提示构造当前配置摘要。
+算法：1. 按 schema 顺序收集 `summary=True` 字段。2. 没有 summary 时退到 `compact=True` 字段。3. 两者都没有时退到前 8 个可编辑字段。4. 只格式化实际存在于 values 的键并以逗号连接。
+副作用：无。
+失败行为：缺字段静默跳过；非 dict schema 由调用点规范为空 dict。
+调用关系：called by `_sync_selected_event_controls()` and `_update_event_summary()`；calls `editable_schema_items()` only for final fallback。
+
 ### `EventManagerDialog.refresh(self) -> None`
 行为：执行完整刷新，重建事件选配表、参数面板和事件任务表。
 算法：
@@ -2522,47 +2804,46 @@ public LauncherPaths(string moduleRoot)
 失败行为：底层返回 `False` 时只展示失败提示；缺少地图或配置时展示缺配置 warning。
 调用关系：called by `NavigationModeWidget._save_event_config()` wrapper。
 
-### `NavigationEventLifecycle.reset_portal_event_state(self, now_ms: int) -> bool`
-行为：重置 portal 事件运行态和地图 overlay/dialog 展示。
+### `NavigationEventLifecycle.reset_event_state(self, now_ms: int) -> bool`
+行为：重置当前 registry/config 覆盖的全部事件运行态和地图 overlay/dialog 展示。
 算法：
 1. 若没有 `event_coordinator`，调用 `warn_event_system_missing(parent)` 并返回 `False`。
-2. 若 portal 手动测试 active，调用 `set_portal_manual_test_active(False, reason="portal state reset")` 先停止手动测试。
-3. 调用 `event_coordinator.reset_event_type("portal", now_ms=now_ms)` 清除 portal 任务/聚类/冷却状态，得到 removed 数量。
-4. 调用 `reset_event_move_runtime()` 清空 movement/event approach runtime。
-5. 调用 `clear_event_overlay()`、`render_event_overlay()` 重绘事件 marker。
-6. 调用 `refresh_event_dialog_tasks()` 刷新任务表。
-7. 写入 `event_log("portal event state reset", removed=removed)`，并调用 `show_portal_event_state_reset(status_label, removed)`。
-副作用：修改 EventCoordinator portal 状态、停止手动测试、重置 movement runtime、刷新 overlay/dialog 和状态栏。
+2. 若手工事件测试 active，调用 `set_manual_event_test_active(False, reason="event state reset")`。
+3. 合并 config 事件键与 registry definition 类型并排序。
+4. 逐类调用 `event_coordinator.reset_event_type(event_type, now_ms=now_ms)`，累加 removed。
+5. 清空 movement/event approach runtime，重绘 overlay，刷新 dialog。
+6. 写通用 reset 日志并调用 `show_event_state_reset(status_label, removed_total)`。
+副作用：修改 EventCoordinator 中已注册/配置事件状态、停止手工测试、重置 movement runtime、刷新 overlay/dialog 和状态栏。
 失败行为：缺少 event coordinator 时只弹 warning 并返回 `False`。
-调用关系：called by `NavigationModeWidget._reset_portal_event_state()` wrapper。
+调用关系：called by `NavigationModeWidget._reset_event_state()` wrapper。
 
-### `NavigationEventLifecycle.run_portal_manual_test(self) -> bool`
-行为：响应事件管理窗口“测试传送门/停止传送门测试”命令。
+### `NavigationEventLifecycle.run_manual_event_test(self) -> bool`
+行为：响应事件管理窗口“测试事件流程/停止事件流程测试”命令。
 算法：
-1. 若 portal 手动测试已 active，调用 `set_portal_manual_test_active(False, reason="button stop")`，返回 `False`。
+1. 若手工事件测试已 active，调用 `set_manual_event_test_active(False, reason="button stop")`，返回 `False`。
 2. 校验 event coordinator 和 nav core；缺失时 reset 按钮、弹事件系统缺失 warning、返回 `False`。
 3. 校验 `NavConfig.game_screen_center`；缺失时 reset 按钮、弹屏幕中心缺失 warning、返回 `False`。
 4. 若导航 timer 未运行，则设置开始按钮 checked，调用 `toggle_navigation()` 复用普通导航启动；启动失败时 reset 按钮并返回 `False`。
-5. 调用 `set_portal_manual_test_active(True, reason="button start")`，返回 `True`。
+5. 调用 `set_manual_event_test_active(True, reason="button start")`，返回 `True`。
 副作用：可能启动导航 timer、启用输入窗口模式和 motion control、启动 task controller、写事件日志和状态栏。
 失败行为：任一前置条件失败会复位按钮并返回 `False`，不启动手动测试。
-调用关系：called by `NavigationModeWidget._run_portal_manual_test()` wrapper。
+调用关系：called by `NavigationModeWidget._run_manual_event_test()` wrapper。
 
-### `NavigationEventLifecycle.set_portal_manual_test_active(self, active: bool, reason: str = "") -> None`
-行为：实际切换 portal 手动测试运行态。
+### `NavigationEventLifecycle.set_manual_event_test_active(self, active: bool, reason: str = "") -> None`
+行为：实际切换通用手工事件测试运行态。
 算法：
-1. active 为真时，启动 `start_event_log_session("portal_manual_test")`。
+1. active 为真时，启动 `start_event_log_session("manual_event_test")`。
 2. 从 route data 读取 `routes.main`，调用 `NavigationTaskController.load_route(main_route)` 和 `start()`。
 3. 调用 `ManualEventTestController.start()` 同步按钮。
 4. 打开游戏输入窗口模式，并启用 `MotionController.set_control_enabled(True)`。
-5. 写入 `portal manual event test started` 事件日志和状态栏。
+5. 写入 `manual event test started` 事件日志和状态栏。
 6. active 为假时，调用 `ManualEventTestController.stop()`。
 7. 调用 `reset_event_move_runtime()` 重置 movement 和 event approach runtime。
 8. 若自动导航未启用，关闭游戏输入窗口模式。
-9. 写入 `portal manual event test stopped` 事件日志和状态栏。
+9. 写入 `manual event test stopped` 事件日志和状态栏。
 副作用：启动/停止 task controller、按钮状态、输入窗口模式、motion control、movement runtime、日志和状态栏。
 失败行为：本方法不做前置校验；调用方负责在启动前检查系统是否就绪。
-调用关系：called by `NavigationModeWidget._set_portal_manual_test_active()` wrapper、`NavigationEventLifecycle.run_portal_manual_test()` and `NavigationEventLifecycle.reset_portal_event_state()`。
+调用关系：called by `NavigationModeWidget._set_manual_event_test_active()` wrapper、`NavigationEventLifecycle.run_manual_event_test()` and `NavigationEventLifecycle.reset_event_state()`。
 
 ### `NavigationMapClickLifecycle.handle_map_click(self, scene_pos) -> bool`
 行为：按旧优先级解释地图点击：hint、route 编辑、手动移动目标。
@@ -2651,7 +2932,7 @@ public LauncherPaths(string moduleRoot)
 2. 禁用 `MotionController` 控制。
 3. 若存在 `nav_core`，复位 `is_first_frame_localized=False`。
 4. 设置 `auto_navigation_enabled=False`。
-5. 若手动事件测试 active，调用 `stop_portal_manual_test("navigation stopped")`。
+5. 若手动事件测试 active，调用 `stop_manual_event_test("navigation stopped")`。
 6. 调用 `NavigationTaskController.stop()`。
 7. 关闭游戏输入窗口模式。
 8. 复位开始按钮和自动导航按钮 checked。
@@ -2660,17 +2941,17 @@ public LauncherPaths(string moduleRoot)
 失败行为：设计为幂等；缺少 `nav_core` 时跳过 first-frame 复位。
 调用关系：called by `NavigationModeWidget.stop_runtime()` wrapper and `NavigationRuntimeCommandLifecycle.toggle_navigation()` stop branch。
 
-### `NavigationModeWidget._run_portal_manual_test(self)`
-行为：响应“测试传送门/停止传送门测试”按钮，以正式事件 pipeline 启停手动传送门执行。
+### `NavigationModeWidget._run_manual_event_test(self)`
+行为：响应“测试事件流程/停止事件流程测试”按钮，以当前已注册事件的正式 pipeline 启停通用手工事件会话。
 算法：
-1. 若 `portal_test_controller.active` 已为真，停止手动测试并返回。
+1. 若 `manual_test_controller.active` 已为真，停止手动测试并返回。
 2. 校验事件协调器、地图定位内核和游戏屏幕中心均已就绪；失败时恢复按钮显示并弹出警告。
 3. 若导航定时器未运行，则复用 `toggle_navigation()` 启动定位循环；启动失败时停止继续执行。
-4. 调用 `_set_portal_manual_test_active(True)`，开启游戏输入模式和运动控制。
+4. 调用 `_set_manual_event_test_active(True)`，开启游戏输入模式和运动控制。
 5. 后续每帧由 `NavigationRuntimeFrameLoop.run()` 调用 `EventCoordinator.observe()` 识别事件，再构造 `NavigationUpdateContext(events.manual_event_only=True)` 并调用 `NavigationTaskController.update_context()` 选择并执行事件任务。
 副作用：可启动导航循环、启用游戏输入、更新按钮/状态栏并记录事件日志。
 失败行为：先决条件缺失时只警告并保持测试未启动。
-调用关系：called by `EventManagerDialog.test_portal_requested` signal。
+调用关系：called by `EventManagerDialog.manual_test_requested` signal。
 
 ### `RouteEditor.handle_click(self, map_folder_path: str | None, global_point) -> RouteEditResult`
 行为：按当前 map click mode 处理地图点击，更新 route 数据并返回 UI 所需的状态文本/下一模式。
@@ -4098,6 +4379,21 @@ def shutdown(self)
 调用关系：called by Qt signals and `MainWindow.closeEvent()`；calls only `EventWorkbenchService` public methods。
 
 ## 6. 完整数据流链路
+### Flow: 应用注入 Torchlight 事件组合
+1. `ui/main_window.py::MainWindow.setup_ui()` 调用 `build_torchlight_navigation_composition()`，取得 registry 工厂、游戏窗口查找器和 Loot overlay provider；不在通用导航包中导入游戏事件类。
+2. `ui/modes/navigation/widget.py::NavigationModeWidget.__init__(..., event_registry_factory, game_window_finder, event_overlay_providers)` 保存三个显式注入点；未注入时分别使用空 registry、无窗口和无附加 overlay。
+3. `ui/modes/navigation/event_adapter.py::create_default_event_registry()` 只负责 registry 工厂调用；`ui/modes/torchlight/navigation.py` 才解释 Torchlight 窗口和 Loot 调试配置。
+4. `features/torchlight/composition.py::build_torchlight_feature_registry()` 创建通用 registry，调用 `register_torchlight_events()`。
+5. `register_torchlight_events()` 构造并注册 `PortalEventDefinition` 与 `LootEventDefinition`，输出包含 `portal/loot` 的 registry；模板读取仍延迟到 definition 创建 detector 的阶段。
+6. 地图加载时 `initialize_navigation_event_system()` 输入该 registry 和地图事件配置，输出 `EventCoordinator`；后续导航只通过通用 definition/handler contract 运行。
+
+### Flow: Torchlight skill chain 使用通用动作序列
+1. `features/torchlight/follow/config.py::FollowConfig.validate()` 输入保存的 chain dict，通过 `features.torchlight.skills.FollowChainDefinition` 验证边界；该 facade 继承 `ActionSequenceDefinition`。
+2. `features/torchlight/follow/workers.py::actor_worker()` 对 enabled chain 构造 definition 并注册到通用 `EventRegistry`；输入仅为本机已验证配置。
+3. `EventRunner`/`DualFollowSession` 调用 definition 的 `create_handler()`，输出独立 `ActionSequenceHandler`，每个 actor/任务持有自己的 index、retry 和时钟状态。
+4. handler `update(EventTick, EventTask)` 输出 WAIT/COMPLETE/FAIL 以及 controller input metadata；不接触 Host 或设备。
+5. `DualFollowSession` 把 action metadata 与跟随运动决策合并，交给 `ProgramGamepadOutput`；只有显式启动 worker、连接 Host 并取得 lease 后才产生真实输出。
+
 ### Flow: 源码与安装态启动
 1. `main.py::<module>` 输入当前脚本绝对路径，输出 `<root>/src` 并前置到 `sys.path`；副作用仅修改当前 Python 进程 import path。
 2. `main.py` 导入 `auto_modules.bootstrap.main::main`；输出 callable，不创建 GUI。
@@ -4106,8 +4402,8 @@ def shutdown(self)
 5. 安装态 `RuntimeLayout.CreateStartInfo()` 以 bundled `pythonw.exe -I -B app/main.py` 启动，并设置 `AUTO_MODULES_DATA_DIR/HOST_DIR/RESOURCE_DIR`；Python 仍沿用同一根入口。
 
 ### Flow: Follow 位置共享与程序手柄输出
-1. `application.follow.workers::vision_worker()` 输入小地图帧/定位结果，输出 `core.lan_follow.SharedPosition` 到 bounded latest queue；不理解 Host wire payload。
-2. `application.follow.service::FollowService._network()` 取 local contracts，调用 `adapters.host.follow_transport::publish()`；adapter 输出 `sync.share.position` payload 并转换 local age 到 Host deadline。
+1. `features.torchlight.follow.workers::vision_worker()` 输入小地图帧/定位结果，输出 `core.communication.SharedPosition` 到 bounded latest queue；不理解 Host wire payload。
+2. `features.torchlight.follow.service::FollowService._network()` 取 local contracts，调用 `adapters.host.follow_transport::publish()`；adapter 输出 `sync.share.position` payload 并转换 local age 到 Host deadline。
 3. `_network()` 调用 `FollowTransport.poll()`，输出经过有限值、confidence、TTL 和 IPC-delay 检查的 `SharedPosition/SharedEvent` tuples。
 4. `actor_worker()` 输入共享观察和事件，`DualFollowSession/FollowerController` 输出二维 movement vector/buttons。
 5. `adapters.virtual_gamepad.program_output::ProgramGamepadOutput.write()` 输入 vector、elapsed、TTL、buttons，输出完整 `program.state`；副作用为 named-pipe Host request。
@@ -4178,8 +4474,8 @@ def shutdown(self)
 1. `event_icon_probe.main()` 读取 `map_data/A1/config.json`，按 DPR 将小地图逻辑中心转换为物理截图矩形；如果传入 `--image`，仍加载配置用于输出一致的诊断上下文，但跳过实时截图。
 2. 实时模式下 `SquareScreenCapture.capture()` 返回 raw minimap frame；静态模式下 `cv2.imread()` 读取每个 `--image` 指定图片。两种输入都必须是未经过定位特征图后处理的事件图标层。
 3. 未传 `--portal-feature-detector` 时，`event_icon_probe.probe_frame()` 对每个 `--template` 调用 `core.events.detectors.template_matcher.match_single_template()`，执行多尺度灰度+边缘匹配。
-4. 传入 `--portal-feature-detector` 时，脚本调用 `core.events.types.portal.minimap_feature_matcher.build_feature_templates()` 从模板中抠出蓝色本体二值特征，再调用 `match_portal_features()` 在 raw frame 的蓝色二值图上匹配。
-5. 传入 `--portal-shape-color-detector` 时，脚本调用 `core.events.types.portal.minimap_shape_color.match_portal_shape_color()`，同时输出蓝色核心、白/灰外环、组合形状 mask、debug 框图和候选裁剪。
+4. 传入 `--portal-feature-detector` 时，脚本调用 `features.torchlight.portal.minimap_feature_matcher.build_feature_templates()` 从模板中抠出蓝色本体二值特征，再调用 `match_portal_features()` 在 raw frame 的蓝色二值图上匹配。
+5. 传入 `--portal-shape-color-detector` 时，脚本调用 `features.torchlight.portal.minimap_shape_color.match_portal_shape_color()`，同时输出蓝色核心、白/灰外环、组合形状 mask、debug 框图和候选裁剪。
 6. `core.events.detectors.template_matcher.merge_hits()`、`minimap_feature_matcher.merge_feature_hits()` 或 `minimap_shape_color.merge_shape_color_hits()` 合并不同模板/尺度对同一图标的重复命中。
 7. 脚本保存 raw/debug 图片并打印每个 accepted/rejected hit；若无 accepted hit，则打印每个模板的 best candidate、feature detector 空结果或 shape+color reject reasons，用于确认失败发生在背景模板匹配、蓝色本体特征、外环/轮廓过滤、颜色过滤还是后续事件定位层。
 
@@ -4197,13 +4493,13 @@ def shutdown(self)
 3. `EventManagerDialog.refresh()` 调用 `build_tui_event_options()` 枚举完整事件包，并从 `EventCoordinator.tasks()` 读取运行时任务；导航循环中的实时更新改走 `refresh_tasks()`，只读取运行时任务。
 4. 用户勾选全局/单个事件时，dialog 更新 `EventSystemConfig` 内存态并发出 `config_changed`。
 5. `NavigationModeWidget._on_event_config_changed()` 将配置写回 coordinator，清空旧事件 marker，并打印事件配置日志。
-6. 用户点击“测试传送门”时，`EventManagerDialog.test_portal_requested` 触发 `NavigationModeWidget._run_portal_manual_test()`；按钮状态由 `ManualEventTestController` 同步，导航循环未运行时先启动定位循环。
-7. 用户点击“刷新传送门状态”时，`EventManagerDialog.reset_portal_requested` 触发 `NavigationModeWidget._reset_portal_event_state()`；该函数停止手动 portal 测试、调用 `EventCoordinator.reset_event_type("portal")` 清空 portal 任务/聚类/冷却状态，并刷新任务表和地图 marker。
+6. 用户点击“测试事件流程”时，`EventManagerDialog.manual_test_requested` 触发 `NavigationModeWidget._run_manual_event_test()`；按钮状态由 `ManualEventTestController` 同步，导航循环未运行时先启动定位循环。
+7. 用户点击“刷新事件状态”时，`EventManagerDialog.reset_events_requested` 触发 `NavigationModeWidget._reset_event_state()`；该函数停止手工事件测试，枚举当前配置与 registry 中的事件类型并逐一调用 `EventCoordinator.reset_event_type()`，随后刷新任务表和地图 marker。
 8. 导航循环定位成功后构造 `EventTick` 并调用 `EventCoordinator.observe()`；该阶段只检测 raw minimap 图标、合并 memory、把最新任务快照写入 `tick.event_tasks`、选择显示任务，不执行 handler。
-9. 自动导航或手动事件测试启用时，GUI runtime 构造 `NavigationUpdateContext` 并调用 `NavigationTaskController.update_context()`，控制器从 `EventCoordinator.tasks()` 获取 pending/running event tasks，并把它们作为动态必经点和 required/exit 一起调度；手动传送门测试通过 `manual_event_only=True` 只选择事件任务。
+9. 自动导航或手动事件测试启用时，UI runtime 构造 `NavigationUpdateContext` 并调用 `NavigationTaskController.update_context()`，控制器从 `EventCoordinator.tasks()` 获取 pending/running event tasks，并把它们作为动态必经点和 required/exit 一起调度；手工测试通过 `manual_event_only=True` 只选择事件任务。
 10. 被选中的事件任务通过 `EventCoordinator.run_task(task_id, tick)` 推进 handler；handler 返回 `MOVE_TO` 时复用 `MovementExecutor.step()` 规划事件路径和 subgoal，返回 `PRESS_KEY/CLICK_SCREEN` 时直接转成 `NavigationIntent`。
 11. `NavigationRuntimeFrameLoop._execute_navigation_intent()` 统一消费事件和普通导航的移动/点击/按键；终态事件 action 会让手动测试按钮自动停止，自动导航则从下一帧按当前位置重新调度 required/event/exit。
-12. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，在地图上绘制事件圆点和状态文本；当前 path/subgoal 复用路线 overlay 绘制。
+12. `NavigationModeWidget._render_event_overlay()` 从 `EventCoordinator.overlays()` 读取启用事件任务，并让注入的 overlay provider 把业务调试状态转换为 `EventCircleOverlay`；通用 renderer 只绘制事件圆点、状态文本和领域中立图元。
 13. 用户点击保存时，`_save_event_config()` 调用 `save_event_config()` 写入当前地图 `event_config.json`。
 
 ### Flow: 事件工作台保存与版本化
@@ -4264,11 +4560,11 @@ def shutdown(self)
 
 `utils/portal_screen_probe.py`：独立大画面实体识别探针，依赖 Windows 窗口枚举、DPI awareness、`SquareScreenCapture` 和 OpenCV HSV/轮廓分析。当前只作为传送门事件第二阶段确认技术资产；当传送门实体离开视野或被遮挡时，零 accepted 是正确输出。
 
-`utils/install_perception_ocr_model.py`：显式可执行的可选 OCR 模型安装器。脚本先把项目根目录加入 `sys.path`，然后根据 `rapidocr_models` 清单将命名 ONNX 模型下载到指定本地目录；只有临时下载文件的 SHA-256 与清单一致时才通过同目录 `os.replace()` 原子安装。它不会在感知包导入或每帧推理时运行，目标目录 `assets/perception_models/` 不进入 Git。
+`tools/probes/install_perception_ocr_model.py`：显式可执行的可选 OCR 模型安装器。脚本先把项目 `src` 加入 `sys.path`，然后根据 `rapidocr_models` 清单将命名 ONNX 模型下载到指定本地目录；只有临时下载文件的 SHA-256 与清单一致时才通过同目录 `os.replace()` 原子安装。它不会在感知包导入或每帧推理时运行，目标目录 `resources/assets/perception_models/` 不进入 Git。
 
 ### Optional integration: `rapidocr-onnxruntime`
 
-`core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the runtime integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. Recognition models are separate explicit resources: `rapidocr_models.resolve_rapidocr_engine_options()` verifies a named local ONNX file and produces construction options, while `utils/install_perception_ocr_model.py` owns the only download path. Therefore the provider itself has no network request, fixed timeout, retry loop, screen capture, or background service. A missing package, missing `RapidOCR` export, uninstalled/corrupt selected model, or engine initialization failure becomes `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output becomes `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
+`core/perception/providers/rapidocr.py::RapidOcrProvider._create_default_backend()` is the runtime integration point. Dependency configuration is `requirements-ocr.txt`, deliberately separate from `requirements.txt`; package import and ONNX model creation occur lazily on the first `recognize()` call. Recognition models are separate explicit resources: `rapidocr_models.resolve_rapidocr_engine_options()` verifies a named local ONNX file and produces construction options, while `tools/probes/install_perception_ocr_model.py` owns the only download path. Therefore the provider itself has no network request, fixed timeout, retry loop, screen capture, or background service. A missing package, missing `RapidOCR` export, uninstalled/corrupt selected model, or engine initialization failure becomes `ProviderUnavailableError`; a per-frame backend exception or malformed `(rows, timings)` output becomes `ProviderError` and reaches `DetectorRunner`, which records that one algorithm instance's error while allowing others to run. Applications that need a retry policy own it above this pure provider boundary.
 
 The provider's supported call settings come from one OCR profile instance's `provider_parameters`: optional `roi`, result `language` label, and `backend_options` passed to RapidOCR. `language` is not a model-selection command. UI/application composition must intentionally resolve a named model, instantiate `RapidOcrProvider`, and inject it; the catalog descriptor `ocr.rapidocr_onnxruntime` remains `unavailable` by default even if both package and model exist, so importing the generic perception core can never start a model unexpectedly.
 
@@ -4492,16 +4788,16 @@ The runtime task table reads from `EventCoordinator.tasks()` and shows task ID, 
 
 The save button writes only the current map's `event_config.json`. This keeps per-map event strategy separate from global code and avoids one map's event settings affecting another map.
 
-The “测试传送门” button is not a one-off movement probe. It toggles `ManualEventTestController`, enables handler execution in the normal navigation loop, and runs the same portal `detect -> localize -> schedule -> MOVE_TO -> PRESS_KEY -> COMPLETE/FAIL` pipeline used by automatic navigation. The button text changes to “停止传送门测试” while that pipeline is active.
+The generic “测试事件流程” button is not a one-off movement probe. It toggles `ManualEventTestController`, enables handler execution in the normal navigation loop, and runs registered event definitions through the same `detect -> localize -> schedule -> action -> COMPLETE/FAIL` pipeline used by automatic navigation. The button text changes to “停止事件流程测试” while that pipeline is active.
 
-The “刷新传送门状态” button is a runtime-only reset for repeated portal testing. It clears current `portal` tasks, completed/ignored cooldown state, and portal localization clusters through `EventCoordinator.reset_event_type("portal")`; it does not edit the event configuration file or disable portal detection.
+The “刷新事件状态” button is a runtime-only reset. It enumerates event types from the active registry and configuration, clears each type's tasks/cooldown/localization clusters through `EventCoordinator.reset_event_type()`, and does not edit the event configuration file.
 
 ## 13. Portal Event Current Behavior
 The current portal event is minimap-first. `PortalMinimapDetector` exposes multiple selectable minimap recognition modes in the event manager: `template`, `feature`, `feature_then_template`, and `shape_color`. As of 2026-06-04 the default is `shape_color`, because runtime logs showed the older `feature_then_template` path frequently emitted blue-body matches that could stabilize into nearby duplicate portal tasks. `shape_color` checks the blue/cyan portal body plus the white/gray outer ring, combined shape, edge, and HSV color similarity before the hit becomes a candidate. Every accepted hit still passes `portal_color_check()` before becoming an `EventDetection`; `minimap_nms_radius` then suppresses nearby local duplicate hits before wall-registration projection. The detector emits only local minimap candidates and never creates a trusted global coordinate. `feature_detector_enabled` is retained only for legacy config compatibility; new tuning should use `detector_mode`.
 
 `NavigationCore.localize()` stores `last_frame_registration` whenever player localization succeeds. `EventCoordinator` passes local detections and that registration to `EventPositionStabilizer`, which projects each candidate with `frame_origin_global + local_minimap_pos * draw_scale`, clusters samples by event type and map distance, and emits an `EventObservation` only after `stable_frames` samples stay within `stable_variance`. `EventMemory` only creates/updates tasks from these stable global observations. The frame registration draw scale is the map-package scale, not a user-adjusted offset or stale navigation config value.
 
-When auto navigation or manual portal test mode is enabled, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. The handler returns `EventAction.move_to(global_pos)`; `NavigationTaskController` converts that to a `MOVE_MAP` intent through the shared `MovementExecutor`, so portal movement uses the same A*/guide-anchor/fallback/click-throttle behavior as required points and exit movement. During the final approach where `distance > interact_radius`, the handler marks the action with `metadata.force_repeat_click=True`; `MovementExecutor.step()` then allows another real click after the normal click cooldown even if the subgoal has not changed, preventing a near-target stall such as staying 7px away from a 1px interaction radius. Once the player is within `interact_radius`, the handler first emits one forced mapped portal-point click (`metadata.force_click_target=True`), waits `portal_point_click_wait_ms`, then sends `D` through `MotionController.press_key()` and enters `wait_result`. The forced click goes through `MotionController.click_map_target_once()` so it targets the mapped portal point rather than using movement minimum radius. The schema still has an `interaction="click"` choice, but current handler behavior forces key interaction and treats main-view confirmation as a retained probe/asset path rather than the active portal flow.
+When auto navigation or generic manual-event mode selects a Portal task, `PortalEventHandler` moves the character toward the minimap-derived portal point until the player is within `arrival_radius`. The handler returns `EventAction.move_to(global_pos)`; `NavigationTaskController` converts that to a `MOVE_MAP` intent through the shared `MovementExecutor`, so portal movement uses the same A*/guide-anchor/fallback/click-throttle behavior as required points and exit movement. During the final approach where `distance > interact_radius`, the handler marks the action with `metadata.force_repeat_click=True`; `MovementExecutor.step()` then allows another real click after the normal click cooldown even if the subgoal has not changed, preventing a near-target stall such as staying 7px away from a 1px interaction radius. Once the player is within `interact_radius`, the handler first emits one forced mapped portal-point click (`metadata.force_click_target=True`), waits `portal_point_click_wait_ms`, then sends `D` through `MotionController.press_key()` and enters `wait_result`. The forced click goes through `MotionController.click_map_target_once()` so it targets the mapped portal point rather than using movement minimum radius. The schema still has an `interaction="click"` choice, but current handler behavior forces key interaction and treats main-view confirmation as a retained probe/asset path rather than the active portal flow.
 
 After interaction, completion is not a fixed timer. The handler waits at least `post_interact_wait_ms`, then asks navigation for a full-map localization frame while it is waiting for teleport completion; this uses the same full-map template path as navigation start and bypasses normal jump rejection because a portal teleport is an expected large movement. The handler returns a teleport completion if the player has landed within `exit_complete_radius` of another active known portal task and is closer to that task than to the entry portal, if the player's global position changes by at least `teleport_min_distance`, or if the raw minimap patch around the player differs from the pre-interaction patch by at least `environment_change_threshold`. The known-exit branch is checked first because close paired portals can be far below `teleport_min_distance`. If none of these checks pass before `teleport_timeout_ms`, the task fails and may retry.
 
@@ -4536,7 +4832,7 @@ Phase 4 requires an explicit completion strategy per event. Portal uses a telepo
 
 After the presentation overlay package split, route QGraphics overlay item construction lives in `gui/modes/navigation/presentation/route_overlay.py`, and event marker overlay construction lives in `gui/modes/navigation/presentation/event_overlay.py`. The old root-level `route_overlay.py` / `event_overlay.py` wrappers have been deleted. `NavigationModeWidget` still owns when overlays refresh and still exposes the original private methods, but no longer contains the long per-item drawing loops for route and event markers.
 
-After the event-adapter cleanup, `gui/modes/navigation/event_adapter.py` owns event registry bootstrapping, config summary strings, default game-window lookup, `EventTick` construction, and coordinator status text. The old UI-level event-action helper predicates were removed because implementation references now flow through `NavigationTaskController` and core `EventAction -> NavigationIntent` translation. `NavigationModeWidget` still owns when to initialize the event system and when to call `EventCoordinator.observe()`.
+After the event-adapter cleanup, `ui/modes/navigation/event_adapter.py` owns generic event registry construction from an injected factory, config summary strings, `EventTick` construction, and coordinator status text. `MainWindow` expands `ui/modes/torchlight/navigation.py::TorchlightNavigationComposition` into registry/window/overlay dependencies; a standalone navigation widget receives an empty `EventRegistry`, no game window, and no business overlays. The old UI-level event-action helper predicates were removed because implementation references now flow through `NavigationTaskController` and core `EventAction -> NavigationIntent` translation. `NavigationModeWidget` still owns when to initialize the event system and when to call `EventCoordinator.observe()`.
 
 After the navigation map package split, `gui/modes/navigation/map/config_store.py` owns project/map path resolution, map-name listing, `NavConfig` JSON load/save, default-config fallback, and merge saves; `gui/modes/navigation/map/capture_geometry.py` owns logical-to-physical center conversion and capture geometry calculation. The old `gui/modes/navigation/map_runtime.py` compatibility facade has been deleted. Saving navigation config merges into the existing map `config.json` instead of overwriting it, preserving mapping-only fields such as `stitcher_params` that are needed to keep drawing and navigation environments comparable. `NavigationModeWidget` still owns user feedback, `NavigationCore` construction, button enabling, and applying loaded config to runtime services.
 
@@ -4556,7 +4852,7 @@ After the initial capture-center split, `gui/modes/navigation/map/capture_geomet
 
 After the config lifecycle split, `gui/modes/navigation/config/lifecycle.py::NavigationConfigLifecycle` owns the full navigation config sequence: parameter-change runtime sync, current-map config save, default config save, applying runtime config, refreshing debug overlay/game-view rect callbacks, dirty status, and save result presentation. `gui/modes/navigation/presentation/config_save_state.py` still owns only the concrete status-label/QMessageBox text. `NavigationModeWidget` keeps `_apply_config_to_core()`, `_configure_navigation_task_controller()`, `_save_nav_config()`, and `_save_nav_default_config()` as compatibility wrappers.
 
-After the event-management presentation split, `gui/modes/navigation/presentation/event_management_state.py` owns only user-facing QMessageBox/status-label text for event config save, portal state reset, and portal manual test start/stop. After the event lifecycle split, `gui/modes/navigation/events/lifecycle.py::NavigationEventLifecycle` owns the surrounding workflow: event config IO, `EventCoordinator.reset_event_type("portal")`, manual-test controller state, movement/event-approach reset, motion/input window mode, overlay refresh, dialog task refresh, and event logs. `NavigationModeWidget` keeps `_save_event_config()`, `_reset_portal_event_state()`, `_reset_event_move_runtime()`, `_run_portal_manual_test()`, and `_set_portal_manual_test_active()` as compatibility wrappers.
+After the event-management presentation split, `ui/modes/navigation/presentation/event_management_state.py` owns only user-facing QMessageBox/status-label text for event config save, generic event reset, and manual-event test start/stop. `ui/modes/navigation/events/lifecycle.py::NavigationEventLifecycle` owns event config IO, registry/config-driven `reset_event_type()` calls, manual-test controller state, movement/event-approach reset, motion/input window mode, overlay refresh, dialog task refresh, and event logs. `NavigationModeWidget` keeps `_save_event_config()`, `_reset_event_state()`, `_reset_event_move_runtime()`, `_run_manual_event_test()`, and `_set_manual_event_test_active()` as thin wrappers.
 
 After the event dialog/bootstrap split, `gui/modes/navigation/events/dialog_lifecycle.py::NavigationEventDialogLifecycle` owns event-dialog creation, signal wiring, context refresh, toggle behavior, and manual-test button synchronization. `gui/modes/navigation/events/bootstrap.py::initialize_navigation_event_system()` owns map-load-time event runtime construction: load event config, create `EventCoordinator`, create `GameWindowCaptureProvider`, refresh the event dialog, and log initialization. `NavigationModeWidget._initialize_event_system()` only writes the returned runtime objects back to widget fields.
 
@@ -4580,7 +4876,7 @@ After the localization result migration, `gui/modes/navigation/runtime/localizat
 
 After the minimap sample-capture split, `gui/modes/navigation/runtime/minimap_sample_capture.py` owns detector sample persistence: frame normalization to BGR, safe map-name directory creation, PNG writing through `cv2.imencode().tofile()`, and same-stem JSON metadata. `NavigationRuntimeFrameLoop` now also writes `_latest_minimap_frame/_latest_minimap_capture_rect/_latest_minimap_player_local_pos` immediately after localization capture, so the toolbar action can save the exact latest monitored minimap region without re-running event detection. If no cached frame exists, `NavigationModeWidget.save_minimap_sample()` falls back to one immediate capture using the current navigation monitor geometry.
 
-After the intent-consumption split, `gui/modes/navigation/runtime/intent_consumption.py::consume_navigation_intent()` owns the route-overlay-after intent sequence: force-relocalize short-circuit, real-input execution callback, manual event test terminal stop, and ARRIVED/FAILED terminal shutdown. `NavigationRuntimeFrameLoop` supplies the concrete callbacks (`event_log`, `NavigationCore.request_global_relocalization()`, `_execute_navigation_intent()`, `_set_portal_manual_test_active()`, input window mode restore, button reset, and status presentation), so no hook/event bus has been introduced.
+After the intent-consumption split, `ui/modes/navigation/runtime/intent_consumption.py::consume_navigation_intent()` owns the route-overlay-after intent sequence: force-relocalize short-circuit, real-input execution callback, manual event test terminal stop, and ARRIVED/FAILED terminal shutdown. `NavigationRuntimeFrameLoop` supplies the concrete callbacks (`event_log`, `NavigationCore.request_global_relocalization()`, `_execute_navigation_intent()`, `_set_manual_event_test_active()`, input window mode restore, button reset, and status presentation), so no game-specific hook has been introduced.
 
 After the runtime command lifecycle split, `gui/modes/navigation/runtime/command_lifecycle.py::NavigationRuntimeCommandLifecycle` owns the navigation command state machine around user buttons: start navigation, stop runtime, start/stop auto navigation, guard messages, task-controller route start, timer start, motion control, game-input window mode, button rollback, and paused/started status text. `NavigationModeWidget` keeps the old slots (`toggle_navigation()`, `stop_runtime()`, `toggle_auto_navigation()`, `_can_start_auto_navigation()`, `_set_game_input_window_mode()`) as wrappers so external callers and signal wiring remain stable.
 
@@ -4615,7 +4911,7 @@ Option B's useful idea, route progress and guide-anchor consumption, was absorbe
 
 `docs/plans/2026-05-24-navigation-task-queue-option-c-implementation-plan.md` remains the implementation record. The current source has already passed the planned cleanup boundary: the old ordinary navigator module, old event path mover module, old event action executor module, and their dedicated ordinary-navigator test have been removed; `NavigationModeWidget.navigation_loop()` is only a compatibility wrapper that calls `_navigation_loop_unified()`.
 
-Reusable capabilities already present: `MovementExecutor` is reusable A* + guide-anchor + fallback movement for route and event targets; `core/routing/route_progress/` is now the single reusable route progress/projection implementation used by `RouteContext`, `routing.geometry`, and `routing.anchors.progress`; `RouteContext` remains the navigation-task route runtime context; `core/routing/geometry.py` remains the route math surface; `core/routing/pathfinder/` is reusable A* with grid, snap, coordinates, and search modules separated; `core/routing/anchors/` is reusable guide-anchor planning with progress/corridor/planner modules separated; `core/input/motion_mapping.py` is reusable map-to-screen click math; `core/events/detectors/template_matcher.py` is reusable template matching; `core/events/types/portal/minimap_feature_matcher/` is a reusable pattern for small minimap icons whose stable feature is a colored body rather than full background pixels; `core/events/types/portal/minimap_shape_color/` is a stricter reusable probe pattern for icons with colored core plus light outer-ring/shape constraints; `core/events/types/portal/minimap_hit_filter.py`, `environment_signature.py`, and `completion_detector.py` now hold portal helper logic that used to be embedded in detector/handler files. `core/events/window_finder.py` and `core/input/win32_driver.py` are reusable Windows input/window primitives; `NavConfig` and `EventSystemConfig` are separate runtime configuration contracts. Reusable capabilities now extracted from GUI include route overlay rendering, event overlay rendering, navigation capture geometry, navigation viewport geometry, mapping save/load config IO, mapping display rendering, mapping UI layout construction, mapping parameter control adapters, advanced-settings parameter mapping, color-picker HSV range math, and color-picker image marker rendering. Reusable capabilities still trapped in GUI include larger dialog layout composition and some owner-based composition wrappers.
+Reusable capabilities already present: `MovementExecutor` is reusable A* + guide-anchor + fallback movement for route and event targets; `core/routing/route_progress/` is now the single reusable route progress/projection implementation used by `RouteContext`, `routing.geometry`, and `routing.anchors.progress`; `RouteContext` remains the navigation-task route runtime context; `core/routing/geometry.py` remains the route math surface; `core/routing/pathfinder/` is reusable A* with grid, snap, coordinates, and search modules separated; `core/routing/anchors/` is reusable guide-anchor planning with progress/corridor/planner modules separated; `core/input/motion_mapping.py` is reusable map-to-screen click math; `core/events/detectors/template_matcher.py` is reusable template matching; `features/torchlight/portal/minimap_feature_matcher/` is a reusable pattern for small minimap icons whose stable feature is a colored body rather than full background pixels; `features/torchlight/portal/minimap_shape_color/` is a stricter reusable probe pattern for icons with colored core plus light outer-ring/shape constraints; `features/torchlight/portal/minimap_hit_filter.py`, `environment_signature.py`, and `completion_detector.py` now hold portal helper logic that used to be embedded in detector/handler files. `core/events/window_finder.py` and `core/input/win32_driver.py` are reusable Windows input/window primitives; `NavConfig` and `EventSystemConfig` are separate runtime configuration contracts. Reusable capabilities now extracted from GUI include route overlay rendering, event overlay rendering, navigation capture geometry, navigation viewport geometry, mapping save/load config IO, mapping display rendering, mapping UI layout construction, mapping parameter control adapters, advanced-settings parameter mapping, color-picker HSV range math, and color-picker image marker rendering. Reusable capabilities still trapped in GUI include larger dialog layout composition and some owner-based composition wrappers.
 
 Recommended refactor order is now: treat the current core/gui cleanup as an acceptance phase. The two GUI composition roots (`gui/modes/navigation/widget.py` and `gui/modes/mapping_widget.py`) are kept as public class entrypoints, and remaining internal wrappers are kept only where they serve Qt signals/timers, lifecycle targets, public slots, or ordering facades. The old top-level compatibility shells have already been removed on both core and GUI sides. Legacy cleanup already completed in this area: color-picker preview artifacts no longer write to CWD, advanced-settings parameter snapshots now write to `configs/advanced_settings/`, the unused `gui/widgets_fixed.py` backup has been removed after reference audit, and old `k_ratio/y_bias` fields are kept for config compatibility but hidden from the navigation parameter UI.
 
@@ -4774,7 +5070,7 @@ PerceptionEngine.detect(frame, profile)
 
 `core/perception/providers/rapidocr_models.py` - Source-controlled, provider-composition-only catalog for optional RapidOCR recognition assets. `RapidOcrModelSpec` validates manifest metadata; `get_rapidocr_model_spec()` and `list_rapidocr_model_specs()` make model IDs explicit; `verify_rapidocr_model_file()` streams a local ONNX file through SHA-256; and `resolve_rapidocr_engine_options()` returns a new `RapidOcrProvider` option mapping only after a selected model is present and valid. The current entry is PP-OCRv6 multilingual small, chosen for Traditional Chinese coverage. The module imports no RapidOCR runtime, does no network I/O, and contains no target, game, action, or workflow policy. It rejects a caller-provided `rec_model_path` so the resolved model cannot bypass its own integrity check.
 
-`utils/install_perception_ocr_model.py` - Explicit operator-facing installer for the model catalog. The direct CLI bootstrap adds the project root before importing `core`; `install_rapidocr_model()` returns a valid existing file or writes a same-directory `.part` download, verifies SHA-256, then atomically replaces the final ONNX file. It removes only its own temporary file on failure and never overwrites an old model until the replacement verifies. `assets/perception_models/` is ignored, so this utility is the deliberate asset acquisition boundary rather than an import-time or inference-time side effect.
+`tools/probes/install_perception_ocr_model.py` - Explicit operator-facing installer for the model catalog. The direct CLI bootstrap adds `src` before importing `auto_modules`; `install_rapidocr_model()` returns a valid existing file or writes a same-directory `.part` download, verifies SHA-256, then atomically replaces the final ONNX file. It removes only its own temporary file on failure and never overwrites an old model until the replacement verifies. `resources/assets/perception_models/` is ignored, so this utility is the deliberate asset acquisition boundary rather than an import-time or inference-time side effect.
 
 `core/perception/providers/registry.py` - Capability-safe provider catalog. `ProviderRegistry.register(descriptor, provider)` rejects duplicate IDs, rejects implementations for unavailable descriptors, and rejects missing implementations for available/experimental descriptors; it stores but never invokes an object provider. `descriptor(id)` raises `UnknownProviderError`; `descriptors(capability=None)` preserves registration order and filters by enum capability; `resolve(id, capability=None)` first validates the known descriptor, then expected capability, then availability before returning the identical object. It does not inspect Protocol conformance or transform raw evidence, which remains an adapter responsibility.
 

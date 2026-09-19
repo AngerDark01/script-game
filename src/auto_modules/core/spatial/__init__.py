@@ -16,3 +16,6 @@ __all__ = [
     "fit_affine_transform",
     "physical_screen_point",
 ]
+from .monitor_binding import CaptureRect, MonitorBinding
+
+__all__ = ["CaptureRect", "MonitorBinding"]

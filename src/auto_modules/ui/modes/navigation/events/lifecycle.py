@@ -10,11 +10,11 @@ from ..presentation import (
     show_event_config_save_failed,
     show_event_config_saved,
     show_event_state_reset,
-    show_portal_manual_test_started,
-    show_portal_manual_test_stopped,
+    show_manual_event_test_started,
+    show_manual_event_test_stopped,
     warn_event_config_missing,
     warn_event_system_missing,
-    warn_portal_manual_test_missing_screen_center,
+    warn_manual_event_test_missing_screen_center,
 )
 
 
@@ -26,7 +26,7 @@ class NavigationEventLifecycleTargets:
     nav_timer: object
     motion_controller: object
     navigation_task_controller: object
-    portal_test_controller: object
+    manual_test_controller: object
     get_map_folder_path: Callable[[], str | None]
     get_event_config: Callable[[], object]
     get_event_coordinator: Callable[[], object]
@@ -44,7 +44,7 @@ class NavigationEventLifecycleTargets:
 
 
 class NavigationEventLifecycle:
-    """Own event config save and portal manual-test runtime transitions."""
+    """Own event config save and manual event-test runtime transitions."""
 
     def __init__(self, targets: NavigationEventLifecycleTargets) -> None:
         self.targets = targets
@@ -64,9 +64,6 @@ class NavigationEventLifecycle:
         show_event_config_save_failed(self.targets.parent)
         return False
 
-    def reset_portal_event_state(self, now_ms: int) -> bool:
-        return self.reset_event_state(now_ms=now_ms)
-
     def reset_event_state(self, now_ms: int) -> bool:
         event_coordinator = self.targets.get_event_coordinator()
         event_config = self.targets.get_event_config()
@@ -74,8 +71,8 @@ class NavigationEventLifecycle:
             warn_event_system_missing(self.targets.parent)
             return False
 
-        if self.targets.portal_test_controller.active:
-            self.set_portal_manual_test_active(False, reason="event state reset")
+        if self.targets.manual_test_controller.active:
+            self.set_manual_event_test_active(False, reason="event state reset")
 
         self.targets.discard_async_event_results("event state reset")
         event_types = _configured_event_types(event_coordinator, event_config)
@@ -90,50 +87,50 @@ class NavigationEventLifecycle:
         show_event_state_reset(self.targets.status_label, removed_total)
         return True
 
-    def run_portal_manual_test(self) -> bool:
-        if self.targets.portal_test_controller.active:
-            self.set_portal_manual_test_active(False, reason="button stop")
+    def run_manual_event_test(self) -> bool:
+        if self.targets.manual_test_controller.active:
+            self.set_manual_event_test_active(False, reason="button stop")
             return False
 
         if not self.targets.get_event_coordinator() or not self.targets.get_nav_core():
-            self.targets.portal_test_controller.reset_button()
+            self.targets.manual_test_controller.reset_button()
             warn_event_system_missing(self.targets.parent)
             return False
 
         nav_config = self.targets.get_nav_config()
         if not nav_config or not nav_config.game_screen_center:
-            self.targets.portal_test_controller.reset_button()
-            warn_portal_manual_test_missing_screen_center(self.targets.parent)
+            self.targets.manual_test_controller.reset_button()
+            warn_manual_event_test_missing_screen_center(self.targets.parent)
             return False
 
         if not self.targets.nav_timer.isActive():
             self.targets.start_button.setChecked(True)
             self.targets.toggle_navigation()
             if not self.targets.nav_timer.isActive():
-                self.targets.portal_test_controller.reset_button()
+                self.targets.manual_test_controller.reset_button()
                 return False
 
-        self.set_portal_manual_test_active(True, reason="button start")
+        self.set_manual_event_test_active(True, reason="button start")
         return True
 
-    def set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
+    def set_manual_event_test_active(self, active: bool, reason: str = "") -> None:
         if active:
-            start_event_log_session("portal_manual_test")
+            start_event_log_session("manual_event_test")
             self.targets.navigation_task_controller.load_route(self._main_route())
             self.targets.navigation_task_controller.start()
-            self.targets.portal_test_controller.start()
+            self.targets.manual_test_controller.start()
             self.targets.set_game_input_window_mode(True)
             self.targets.motion_controller.set_control_enabled(True)
-            event_log("portal manual event test started", reason=reason)
-            show_portal_manual_test_started(self.targets.status_label)
+            event_log("manual event test started", reason=reason)
+            show_manual_event_test_started(self.targets.status_label)
             return
 
-        self.targets.portal_test_controller.stop()
+        self.targets.manual_test_controller.stop()
         self.reset_event_move_runtime()
         if not self.targets.get_auto_navigation_enabled():
             self.targets.set_game_input_window_mode(False)
-        event_log("portal manual event test stopped", reason=reason)
-        show_portal_manual_test_stopped(self.targets.status_label)
+        event_log("manual event test stopped", reason=reason)
+        show_manual_event_test_stopped(self.targets.status_label)
 
     def reset_event_move_runtime(self) -> None:
         self.targets.navigation_task_controller.movement.reset()

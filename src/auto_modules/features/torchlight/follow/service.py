@@ -10,7 +10,6 @@ from auto_modules.features.torchlight.follow.workers import vision_worker,actor_
 from auto_modules.adapters.host.follow_transport import FollowTransport
 from auto_modules.adapters.virtual_gamepad import host_clock_ms
 from auto_modules.adapters.windows.hotkeys import HotkeyTriggerSource
-from auto_modules.core.communication import Capability, PeerId
 from auto_modules.core.communication import SharedEvent
 
 
@@ -152,17 +151,9 @@ class FollowService:
         if manager is None:
             raise RuntimeError("shared follow requires a communication manager")
         peer_id = str(self.config.recipient_device or self.config.leader_device or "").strip()
-        leases = []
         try:
             if not peer_id:
                 raise RuntimeError("shared follow requires a configured peer device")
-            peer = PeerId(peer_id)
-            leases.extend([
-                manager.acquire(peer, Capability.POSITION_SUBSCRIBE),
-                manager.acquire(peer, Capability.EVENT_SUBSCRIBE),
-            ])
-            if self.config.role == "B":
-                leases.append(manager.acquire(peer, Capability.POSITION_PUBLISH))
             transport = FollowTransport(
                 None,
                 manager=manager,
@@ -217,8 +208,6 @@ class FollowService:
             if self.shared_transport is not None:
                 self.shared_transport.close()
                 self.shared_transport = None
-            for lease in leases:
-                lease.close()
 
     def status(self):
         for worker,queue in self.statuses.items():

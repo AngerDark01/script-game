@@ -13,16 +13,14 @@ def connect_event_dialog_signals(
     *,
     on_config_changed,
     on_save_requested,
-    on_test_portal_requested,
-    on_reset_portal_requested,
+    on_manual_test_requested,
     on_reset_events_requested,
 ) -> None:
     if dialog is None:
         return
     _connect_once(dialog, "config_changed", dialog.config_changed, on_config_changed)
     _connect_once(dialog, "save_requested", dialog.save_requested, on_save_requested)
-    _connect_once(dialog, "test_portal_requested", dialog.test_portal_requested, on_test_portal_requested)
-    _connect_once(dialog, "reset_portal_requested", dialog.reset_portal_requested, on_reset_portal_requested)
+    _connect_once(dialog, "manual_test_requested", dialog.manual_test_requested, on_manual_test_requested)
     _connect_once(dialog, "reset_events_requested", dialog.reset_events_requested, on_reset_events_requested)
 
 

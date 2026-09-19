@@ -22,10 +22,10 @@ if str(ROOT / "src") not in sys.path:
 
 from auto_modules.adapters.platform import SquareScreenCapture
 from auto_modules.core.events.detectors.template_matcher import TemplateMatchHit, load_template, match_single_template, merge_hits
-from auto_modules.core.events.types.portal.assets import PORTAL_MINIMAP_TEMPLATES
-from auto_modules.core.events.types.portal.minimap_feature_matcher import build_feature_templates, match_portal_features
-from auto_modules.core.events.types.portal.minimap_hit_filter import portal_color_check
-from auto_modules.core.events.types.portal.minimap_shape_color import (
+from auto_modules.features.torchlight.portal.assets import PORTAL_MINIMAP_TEMPLATES
+from auto_modules.features.torchlight.portal.minimap_feature_matcher import build_feature_templates, match_portal_features
+from auto_modules.features.torchlight.portal.minimap_hit_filter import portal_color_check
+from auto_modules.features.torchlight.portal.minimap_shape_color import (
     PortalShapeColorParams,
     match_portal_shape_color,
 )

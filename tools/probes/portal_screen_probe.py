@@ -22,7 +22,7 @@ if str(ROOT / "src") not in sys.path:
 
 from auto_modules.adapters.platform import SquareScreenCapture
 from auto_modules.adapters.windows.window_finder import find_game_window, primary_screen_rect, set_process_dpi_awareness
-from auto_modules.core.events.types.portal.main_view_confirmer import (
+from auto_modules.features.torchlight.portal.main_view_confirmer import (
     PortalMainViewCandidate,
     build_blue_glow_mask,
     detect_portal_candidates,

@@ -1,5 +1,17 @@
-"""Reusable action-event definitions, routing, and execution."""
+"""Generic event automation runtimes.
 
+The package contains domain-neutral, bounded runtimes that turn declarative
+steps into event actions. Game features may wrap these runtimes with their own
+configuration and policies.
+"""
+
+from .action_sequence import (
+    ActionSequenceDefinition,
+    ActionSequenceHandler,
+    BUTTONS,
+    button_mask,
+    inputs_mask,
+)
 from .definitions import (
     EventDefinitionRepository,
     ExecutableEventDefinition,
@@ -18,4 +30,9 @@ __all__ = [
     "EventRouter",
     "EventExecutionRuntime",
     "EventStateFrame",
+    "ActionSequenceDefinition",
+    "ActionSequenceHandler",
+    "BUTTONS",
+    "button_mask",
+    "inputs_mask",
 ]

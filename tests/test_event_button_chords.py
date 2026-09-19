@@ -1,6 +1,6 @@
 import pytest
 
-from auto_modules.core.events.follow_chain import FollowChainDefinition, button_mask
+from auto_modules.core.events.automation import ActionSequenceDefinition, button_mask
 from auto_modules.core.events.models import EventTask, EventTick, EventActionType
 
 
@@ -20,7 +20,7 @@ def test_invalid_or_ambiguous_chord_is_rejected(step):
 
 
 def test_chord_releases_before_next_button_without_localization():
-    definition = FollowChainDefinition('skill', [
+    definition = ActionSequenceDefinition('skill', [
         {'op': 'button', 'buttons': ['A', 'RB'], 'ms': 80},
         {'op': 'wait', 'ms': 20},
         {'op': 'button', 'button': 'X', 'ms': 60},
@@ -37,7 +37,7 @@ def test_chord_releases_before_next_button_without_localization():
 
 def test_running_chord_does_not_change_when_source_configuration_is_edited():
     buttons = ['A', 'RB']
-    definition = FollowChainDefinition('skill', [
+    definition = ActionSequenceDefinition('skill', [
         {'op': 'button', 'buttons': buttons, 'ms': 80},
     ])
     buttons[:] = ['X']

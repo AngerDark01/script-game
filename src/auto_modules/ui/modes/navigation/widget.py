@@ -27,7 +27,6 @@ from .composition import (
 from .event_adapter import (
     build_event_tick,
     create_default_event_registry,
-    find_default_game_window_rect,
 )
 from .input import GameInputWindowMode
 from .map import (
@@ -69,7 +68,15 @@ class NavigationModeWidget(QWidget):
     - 屏幕中心校准
     """
 
-    def __init__(self, app_context, main_window):
+    def __init__(
+        self,
+        app_context,
+        main_window,
+        *,
+        event_registry_factory=None,
+        game_window_finder=None,
+        event_overlay_providers=(),
+    ):
         """Initialize the navigation page composition root."""
         super().__init__()
         self.app_context = app_context
@@ -105,7 +112,9 @@ class NavigationModeWidget(QWidget):
             motion_controller=self.motion_controller,
             enable_game_input_mode=lambda: self._set_game_input_window_mode(True),
         )
-        self.event_registry = create_default_event_registry()
+        self.event_registry = create_default_event_registry(event_registry_factory)
+        self.game_window_finder = game_window_finder or (lambda: None)
+        self.event_overlay_providers = tuple(event_overlay_providers or ())
         self.event_config = None
         self.event_coordinator = None
         self.event_async_observer = None
@@ -299,14 +308,14 @@ class NavigationModeWidget(QWidget):
     def _save_event_config(self):
         self.event_lifecycle.save_event_config()
 
-    def _reset_portal_event_state(self):
-        self.event_lifecycle.reset_portal_event_state(now_ms=int(time.time() * 1000))
-
     def _reset_event_state(self):
         self.event_lifecycle.reset_event_state(now_ms=int(time.time() * 1000))
 
     def _find_game_window_rect(self):
-        return find_default_game_window_rect()
+        try:
+            return self.game_window_finder()
+        except Exception:
+            return None
 
     def _build_event_tick(self, now_ms, frame, player_pos, localized_pos, conf):
         return build_event_tick(
@@ -324,11 +333,11 @@ class NavigationModeWidget(QWidget):
     def _reset_event_move_runtime(self):
         self.event_lifecycle.reset_event_move_runtime()
 
-    def _run_portal_manual_test(self):
-        self.event_lifecycle.run_portal_manual_test()
+    def _run_manual_event_test(self):
+        self.event_lifecycle.run_manual_event_test()
 
-    def _set_portal_manual_test_active(self, active: bool, reason: str = "") -> None:
-        self.event_lifecycle.set_portal_manual_test_active(active, reason=reason)
+    def _set_manual_event_test_active(self, active: bool, reason: str = "") -> None:
+        self.event_lifecycle.set_manual_event_test_active(active, reason=reason)
 
     def _refresh_event_dialog_tasks(self):
         self.event_dialog_lifecycle.refresh_tasks()

@@ -43,6 +43,7 @@ class NavigationMapDisplayLifecycle:
             owner.nav_core,
             owner.event_coordinator,
             owner.event_overlay_items,
+            overlay_providers=owner.event_overlay_providers,
         )
 
     def render_route_overlay(

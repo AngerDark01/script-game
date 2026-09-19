@@ -20,7 +20,13 @@ from .status_presenter import (
     show_navigation_relocalizing,
     show_navigation_runtime_status,
 )
-from .event_overlay import clear_event_overlay, global_to_scene, render_event_overlay
+from .event_overlay import (
+    EventCircleOverlay,
+    EventOverlayContext,
+    clear_event_overlay,
+    global_to_scene,
+    render_event_overlay,
+)
 from .route_overlay import clear_route_overlay, render_route_overlay
 from .viewport_overlay import screen_overlay_geometry
 from .dialog_host import show_owned_dialog, toggle_owned_dialog
@@ -50,12 +56,11 @@ from .event_management_state import (
     show_event_config_save_failed,
     show_event_config_saved,
     show_event_state_reset,
-    show_portal_event_state_reset,
-    show_portal_manual_test_started,
-    show_portal_manual_test_stopped,
+    show_manual_event_test_started,
+    show_manual_event_test_stopped,
     warn_event_config_missing,
     warn_event_system_missing,
-    warn_portal_manual_test_missing_screen_center,
+    warn_manual_event_test_missing_screen_center,
 )
 from .navigation_command_state import (
     show_auto_navigation_started,
@@ -84,6 +89,8 @@ __all__ = [
     "create_initial_hint_marker",
     "create_last_position_marker",
     "create_map_scene_items",
+    "EventCircleOverlay",
+    "EventOverlayContext",
     "global_to_scene",
     "hide_item",
     "mark_nav_params_dirty",
@@ -112,9 +119,8 @@ __all__ = [
     "show_navigation_started",
     "show_move_target_set",
     "show_owned_dialog",
-    "show_portal_event_state_reset",
-    "show_portal_manual_test_started",
-    "show_portal_manual_test_stopped",
+    "show_manual_event_test_started",
+    "show_manual_event_test_stopped",
     "show_route_command_status",
     "show_screen_center_calibrated",
     "toggle_owned_dialog",
@@ -133,7 +139,7 @@ __all__ = [
     "warn_navigation_map_config_incomplete",
     "warn_navigation_missing_screen_center",
     "warn_overlay_map_config_incomplete",
-    "warn_portal_manual_test_missing_screen_center",
+    "warn_manual_event_test_missing_screen_center",
     "warn_move_target_requires_localization",
     "warn_route_save_failed",
 ]

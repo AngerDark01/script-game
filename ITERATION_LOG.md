@@ -1,5 +1,27 @@
 # Iteration Log
 
+## [SYNC] 2026-09-19 — 通信层重构任务 1-9
+
+### A. SYNC 范围声明
+**触发任务：** 按已审核通信层设计落地通用契约、共享 Host session、持久信任、能力集合和地图扩展点。
+**直接变更文件：** `src/auto_modules/core/communication/*`、`src/auto_modules/application/communication/*`、`src/auto_modules/adapters/host/*`、`src/auto_modules/features/torchlight/follow/service.py`、`src/auto_modules/application/event_workbench/service.py`、`services/lan_input_sync/src/LanInputSync/*`、通信测试和协议文档。
+**预计连带影响：** Follow/Event Workbench 的 Host 生命周期、`sync.share.*` drain 消费路径、C# LAN `Session` 能力授权、重连 fencing、CODEBASE 架构和协议说明。
+
+### C. SYNC 结果
+**连带重读文件：** `core/communication/*`、`application/communication/*`、`adapters/host/*`、
+`application/event_workbench/service.py`、`features/torchlight/follow/service.py`、
+`services/lan_input_sync/src/LanInputSync/{IdentityStore,PeerTrustStore,SessionCapabilities,LanSyncService*}.cs`。
+**CODEBASE.md 更新内容：** 新增通信运行时模块职责、Follow/Event 数据流、C# 能力集合和风险登记。
+**ARCHITECTURE_GUIDE.md / README.md / protocol-v1.md 更新内容：** 明确一个 peer 一个物理
+session、多 capability 复用、持久信任/自动恢复 fence、旧命令兼容期和 map 扩展点边界。
+**覆盖进度更新：** 本轮新增通信文件已完成针对性深读；C# 生产编译因当前机器无 .NET SDK
+保持 `(partial)`，已通过源码审查和 Python fake/loopback 测试替代验证。
+**修订的旧结论：** 原来 `DataOnly` 被视为 session 类型；现在确认它只是 capability 集合
+在兼容期的派生视图，输入、位置和事件可以共享同一物理 session。
+**新增 Finding：** P1 风险已记录在 CODEBASE.md：Host drain 字段兼容和 C# lane 前缀复用
+需要后续协议版本收敛。
+
+
 ## [Round 1] 2026-05-19
 
 ### A. 本轮目标（阅读前声明）
@@ -5607,3 +5629,408 @@ contracts remain reusable.
 **Next work:** run the C# test matrix in a machine with .NET 8 SDK, then handle
 the three independent Pathfinder policy failures in a separate behavior-focused
 task. Do not use the migration tag as a substitute for that diagnosis.
+
+## [SYNC] 2026-09-18 - post-reorg active-path audit
+
+### A. SYNC scope declaration
+
+**Trigger:** resume work from the completed layered repository layout before
+planning the PoE2 live-terrain page. Confirm the current checkout is based on
+`0c507ef`, audit active code/tool/ProjectReference/test/document paths, and do
+not revive the pre-reorganization root layout.
+
+**Baseline:** `HEAD` is `0c507ef` on `feat/offline-installer`; no pre-existing
+working-tree changes were overwritten. The protected tag name
+`pre-reorg/2026-09-18` remains untouched. The local tag currently resolves to
+`c9e96c7891d029d9593f8fa9aa21a753ea56352e`, which differs from the handoff's
+reported object `be698389`; this discrepancy is recorded without rewriting the
+tag.
+
+**Directly changed files:**
+
+- `src/auto_modules/adapters/perception/rapidocr_models.py`
+- `tools/probes/install_perception_ocr_model.py`
+- `CODEBASE.md`
+- `docs/PERCEPTION_ENGINE_CHECKPOINT.md`
+
+The C# Host `ProjectReference` was checked against the filesystem and kept at
+`../../../../lan_input_sync/...`, which correctly resolves to
+`services/lan_input_sync/...` from the new `services/virtual_gamepad/...`
+location; no source change was needed there.
+
+### C. SYNC result
+
+- Active production Python imports are `auto_modules.*`; no `from/import core`,
+  `gui`, `workflows`, or `logging_system` imports remain in `src`, `services`,
+  `tools`, or `tests`.
+- The RapidOCR model error message and current checkpoint/CODEBASE entries now
+  point to `tools/probes/install_perception_ocr_model.py` and
+  `resources/assets/perception_models/`, matching the reorganization.
+- Historical plans and archived architecture documents retain their original
+  paths intentionally; they are historical records, not executable current
+  instructions.
+- CodeGraph confirms the current UI extension point remains
+  `src/auto_modules/ui/main_window.py` -> `MainWindow.setup_ui()` /
+  `QStackedWidget`, while offline map loading remains separate from the live
+  PoE2 business adapter. The new feature must be planned against these current
+  paths only.
+
+**Verification:**
+
+- `python -m compileall -q src tests tools packaging`: passed.
+- `python -m pytest tests/test_perception_rapidocr_models.py -q`: **7 passed**.
+- `python -m pytest tests/virtual_gamepad_scripts/test_start_virtual_gamepad.py tests/virtual_gamepad_scripts/test_live_gamepad_probe.py -q`: **6 passed**.
+- `git diff --check`: passed; only existing LF/CRLF normalization warnings remain.
+- No real Host process, game, input, or LAN synchronization was started.
+
+## [SYNC] 2026-09-19 - PoE2 实时地形预览第一阶段
+
+### A. SYNC 范围声明
+
+**触发任务：** 按底层通用能力、上层业务组合的设计规则，完成 PoE2
+实时地形的第一阶段：初始化、手动抓取、校验、内存转换和只读展示。
+
+**边界：** 不改造离线绘图地图包，不接入自动跟随、玩家定位、路径规划、
+动态障碍、Xbox/虚拟手柄、Host 或 LAN；真实游戏采集保持显式手动操作。
+
+### B. 直接变更
+
+- `src/auto_modules/adapters/poe2_live_terrain/`：正式运行时适配器，包含
+  外部 `live_preview.py` 命令边界、native `yx` 网格转换、不可变快照契约和
+  进程内存储。
+- `tools/experiments/poe2_live_terrain/`：只保留到正式适配器的兼容导出，
+  避免实验目录和运行时出现两套实现。
+- `src/auto_modules/ui/modes/poe2_live_terrain/`：注入式页面、状态控制、
+  metadata 展示和 `ScalableMapWidget` 只读渲染。
+- `src/auto_modules/ui/main_window.py`：追加独立第 8 个页面，保持既有页面
+  索引不变；关闭时只清理本页内存状态。
+- 新增适配器契约、native grid、内存服务、presenter、页面和主窗口聚焦测试。
+
+### C. 验证与安全边界
+
+- `Poe2CaptureAdapter` 只接受 `tool=manual-live-terrain-capture` 的新 manifest，
+  拒绝 checkpoint、失败命令、未变化旧 manifest，以及逃出 producer output 的
+  NPZ 路径。
+- NPZ 以 `allow_pickle=False` 读取，数组保持原生 `height x width` / `yx` 方向，
+  进入 `TerrainSnapshot` 后复制并设为只读；失败抓取会先清除旧快照。
+- 当前已通过 PoE2 页面、适配器、契约、转换、内存服务和主窗口聚焦测试；最终
+  compileall、组合测试及 `git diff --check` 在本轮收尾时重新执行。
+- 本轮未启动 PoE2、Host、LAN 或任何真实输入；真实游戏内效果仍需显式验收。
+
+## [SYNC] 2026-09-19 - PoE2 手动测试运行链路与日志
+
+### A. 本轮增量
+
+- `logging_utils.py` 为 PoE2 边界建立独立日志文件：
+  `data/logs/poe2_live_terrain.log`。
+- 采集命令、会话状态、manifest 校验、NPZ 转换、内存替换、UI 操作、
+  测试归档和异常均记录为带 `step=` 的日志事件。
+- 新增显式 `TerrainDebugArchive`，主窗口临时注入到
+  `data/poe2_live_terrain_test/`，保存转换后的 `latest.npz` 和
+  `latest.json`；页面渲染仍只读取本次内存快照。
+- 主窗口已经启动并保持运行，未自动触发 PoE2 初始化或采集。
+
+### B. 验证
+
+- `python -m compileall -q src tests tools packaging`：通过。
+- PoE2 适配器、归档、页面、主窗口和既有地图页面组合测试：**20 passed**。
+- Serena 诊断：新增服务和归档逻辑无业务类型错误；PySide6/NumPy 的提示是
+  Serena 当前解释器未加载项目运行时依赖，实际测试环境已通过。
+- 未启动 PoE2、Host、LAN 或真实输入；用户可在已启动窗口中手动验证完整链路。
+
+## [SYNC] 2026-09-19 - 原生地形转旧绘图视觉格式
+
+### A. 发现
+
+实际 `latest.npz` 的 `known_mask/explored_map` 覆盖整个原生矩形，不能直接沿用
+旧地图的“已探索区域”渲染，否则包围矩形会整块变成白色。原生契约中真正代表
+地图形状的是 `cell_state == 1` 的可行走区域；`cell_state == 0` 同时包含内部
+阻挡和区域外背景。
+
+### B. 实现
+
+- `presenter.py` 现在以已知可行走格作为深灰底面。
+- 使用显式黑色 padding 的形态学边界生成白色轮廓，保留房间/通道内部边界，
+  区域外和未知格保持黑色。
+- 原始 `TerrainSnapshot`、内存快照和本地归档数组均不变，转换只发生在 UI
+  展示适配器。
+
+### C. 验证
+
+- 使用当前 `data/poe2_live_terrain_test/latest.npz` 生成的预览已经呈现为图一
+  的黑底、灰面、白色轮廓风格。
+- presenter、页面、适配器、归档和会话测试：**18 passed**。
+- `compileall`：通过；主窗口已重启并加载新 presenter。
+
+## [SYNC] 2026-09-19 - PoE2 单人定位、独立监控与轨迹显示
+
+### A. SYNC 范围声明
+
+**触发任务：** 完成 PoE2 单人实时定位验证链路：从 native terrain 构建定位参考，
+识别小地图人物真实局部坐标，首帧全局匹配、后续局部跟踪和恢复，在完整地图上
+显示人物 marker/轨迹；同时落实 PoE2 独立监控配置边界。
+
+**直接变更文件：**
+
+- `src/auto_modules/core/localization/`：观测契约、全局/局部状态机和确认轨迹（前一批次已完成，本轮复核其调用边界）。
+- `src/auto_modules/core/spatial/monitor_binding.py`、`src/auto_modules/core/spatial/__init__.py`：通用截图矩形契约。
+- `src/auto_modules/adapters/poe2_live_terrain/monitor_config.py`、`monitor_source.py`、`__init__.py`：PoE2 独立配置与区域截图适配。
+- `tools/experiments/poe2_live_terrain/terrain_reference.py`、`calibration.py`、`player_policy.py`、`runtime.py`、`__init__.py`：PoE2 业务组合和默认 HSV/模板适配。
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`、`presenter.py`、`monitor_dialog.py`：页面监控生命周期、预览、状态、marker/轨迹和独立配置窗口。
+- `src/auto_modules/ui/main_window.py`：组合根注入 PoE2 runtime、截图源和配置存储。
+- `tests/`：新增引擎、配置、运行时和 UI 聚焦覆盖。
+
+**预计连带影响：** PoE2 主窗口第 8 页和关闭生命周期；`TerrainSnapshot` 捕获后新增
+定位参考转换；不修改 `NavigationCore`、`NavConfig`、导航页、Gamepad/LAN、Host 或输入适配器。
+
+### B. 影响扩散与本轮发现
+
+- `(verified)` `build_reference()` 只消费 `TerrainSnapshot.cell_state/known_mask`，
+  生成不可变 `walkable_mask/wall_layer/explored_map`；UI `QPixmap` 不进入定位链路。
+- `(verified)` `select_single_player()` 对高于阈值的候选要求恰好一个；无候选或多候选
+  都返回 `None`，因此不会以小地图中心伪造人物位置。
+- `(verified)` `Poe2LocalizationRuntime.tick()` 的顺序是 capture -> observation ->
+  单人选择 -> `MapLocalizer.update()` -> 仅 fresh 结果追加 `TrajectoryBuffer` -> 发布
+  `Poe2LocalizationState`；失败原因包含 `player_not_detected`、`local_match_failed`、
+  `global_match_failed` 等。
+- `(verified)` 首帧 `_global_match()` 在完整 terrain reference 上匹配，后续 `_local_match()`
+  只在预测人物附近的显式半径内匹配；`MapLocalizer` 在局部失败帧不偷偷全局 fallback，
+  下一帧进入恢复全局匹配。
+- `(verified)` `Poe2MonitorConfigStore` 只读写 PoE2 自己的 `monitor.json`，原子替换临时文件；
+  不读取 `NavConfig`、`app_context.monitor_region` 或导航目录。
+- `(partial)` 默认 wall/template 比例、Y 方向和 HSV 人物阈值仍需真实 PoE2 样本校准；
+  默认 runtime 具备显式失败状态，但本轮没有运行中的 PoE2 进程，未宣称实机定位成功。
+
+**修订的旧结论：** 原来断点写的是“页面尚无实时监控、人物定位或轨迹”；本轮已实现
+代码和合成测试，状态改为“代码批次完成，等待真实 PoE2 小地图校准与实机验收”。
+
+### C. 验证与安全边界
+
+- `python -m pytest tests/test_localization_observations.py tests/test_map_localizer.py tests/test_localization_trajectory.py tests/test_localization_result.py tests/test_phase_tracker.py tests/test_local_matcher.py tests/test_monitor_binding.py tests/poe2_live_terrain tests/test_poe2_monitor_dialog.py tests/test_poe2_live_terrain_page.py tests/test_poe2_live_terrain_presenter.py tests/test_poe2_live_terrain_monitoring.py tests/test_main_window_poe2_terrain_page.py -q`：**50 passed**。
+- `python -m compileall -q src tests tools packaging`：通过。
+- `git diff --check`：通过；仅有工作区既有 LF/CRLF 规范化提示。
+- Serena：新增纯 Python 引擎/配置文件无诊断；当前 Serena 语言服务器对 PySide6、numpy、cv2
+  的 import 提示属于解释器环境提示，实际运行测试已加载依赖并通过。
+- 未启动 PoE2、Host、LAN 或任何 Xbox/键盘/鼠标输入；未执行网络同步。真实验证仍由用户
+  手动打开游戏、配置小地图矩形后进行。
+
+完整回归结果为 `448 passed, 2 skipped, 4 failed, 10 subtests passed`。失败来自既有
+`pydirectinput` distribution metadata 缺失和 `PathFinder` 三个行为断言；本轮没有修改
+分发解析或路径规划模块，PoE2 focused suite 仍为 `50 passed`。
+
+### D. 下一轮计划
+
+1. 在真实 PoE2 中配置小地图矩形并记录截图尺寸、人物图标候选特征和 HSV 阈值。
+2. 用实机样本校准 native terrain 与 minimap 的比例、X/Y 方向、Y 翻转和 marker offset。
+3. 记录首帧 global、local tracking、recovery 的置信度与耗时，必要时只调整 PoE2 业务参数。
+4. 继续保持路线规划、自动跟随、多人身份选择和真实输入为后续阶段，不把这些策略下沉到引擎。
+## [SYNC] 2026-09-19 - 通用引擎与 Torchlight 业务域边界收敛
+
+### A. 本轮范围声明
+
+- 将 `core/events/follow_chain.py` 的可复用动作链运行时收敛为通用
+  `core/events/automation/action_sequence.py`，保留仅用于迁移兼容的别名。
+- 将 Torchlight 事件定义注册收口到 `features/torchlight/composition.py`，
+  导航 UI 只依赖业务组合入口，不直接拥有 Portal/Loot 定义。
+- 将 Follow UI 归入 `ui/modes/torchlight/follow/`，同步主窗口、事件工作台和
+  现有测试引用。
+- 复核并更新 `CODEBASE.md`、`ARCHITECTURE_GUIDE.md`、`src/auto_modules/ui/modes/ARCHITECTURE.md`
+  中受影响的架构描述。
+
+### B. 读取目标
+
+- `src/auto_modules/core/events/follow_chain.py`
+- `src/auto_modules/features/torchlight/{composition.py,follow/*}`
+- `src/auto_modules/ui/modes/{follow/*,events/workbench.py,navigation/event_adapter.py}`
+- `src/auto_modules/ui/main_window.py`
+- 跟随、事件链和架构边界测试
+
+### C. SYNC 结果
+
+**直接变更：**
+
+- Portal、Loot、Follow、FollowerPlanner、Follow replay/benchmark 已从通用层迁至
+  `features/torchlight/`；PoE2 runtime/calibration/policy/reference 已从实验目录
+  提升到 `features/poe2/live_terrain/`，旧实验包只保留兼容导出。
+- `core/events/automation/action_sequence.py` 现承载通用、有界、tick 驱动的声明式
+  动作序列；`features/torchlight/skills/follow_chain.py` 提供业务 facade，旧
+  `core/events/follow_chain.py` 仅保留兼容别名。
+- `features/torchlight/composition.py` 是 Portal/Loot 注册入口；`MainWindow` 将该工厂
+  注入 `NavigationModeWidget`，导航模块在无注入时只创建空的通用 `EventRegistry`。
+- Follow 页面和编辑器迁至 `ui/modes/torchlight/follow/`；主窗口、事件工作台和测试
+  已同步导入路径。
+- 修复 `features/torchlight/follow/__init__.py` 重复内容，恢复
+  `core.events.automation` 原有 repository/router/execution 公共导出，避免扩大重构
+  影响面。
+
+**连带重读文件：**
+
+- `core/events/{registry.py,event_lifecycle.py,automation/__init__.py}`
+- `features/torchlight/follow/{config.py,workers.py,service.py}`
+- `ui/{main_window.py,modes/navigation/widget.py,modes/events/workbench.py}`
+- 跟随、事件、PoE2、路径和架构边界测试
+
+**CodeGraph：** 已同步并验证调用面；`ActionSequenceDefinition` 的生产调用只来自
+通用自动化导出、迁移兼容层、Torchlight skill facade 和编辑器验证；`FollowPage`
+只由 Torchlight UI public API 和 `MainWindow` 使用。
+
+**验证：**
+
+- 架构边界与 Follow 聚焦：`42 passed`。
+- PoE2、事件感知、路径聚焦：`46 passed`。
+- 事件自动化聚焦：`81 passed`。
+- `python -m compileall -q src tests tools packaging`：通过。
+- 全量：`470 passed, 2 skipped, 4 failed, 10 subtests passed`。四个失败均与迁移前
+  已知基线一致：一个为本机缺失 `pydirectinput` distribution metadata，三个为既有
+  `PathFinder` 行为断言；本轮未改发布依赖选择或通用 Pathfinder。
+
+**修订旧结论：** 先前文档将 Portal/Loot 描述为 `core.events.types` 的“通用事件类型”，
+并将 PoE2 业务 runtime 描述为由 `tools/experiments` 承载。当前权威结论为：这些都是
+游戏业务组合；通用层只保留可脱离游戏术语复用的感知、事件、定位、导航和动作能力。
+
+**安全边界：** 本轮没有启动 Host、LAN、游戏进程或任何键盘、鼠标、Xbox 输出；只运行
+静态编译、offscreen/单元/loopback 测试和 CodeGraph 索引。
+
+## [SYNC] 2026-09-19 - 导航 UI 的游戏业务边界彻底收敛
+
+### A. SYNC 范围声明
+
+**触发任务：** 在 Portal、Loot、Follow 已迁入 `features/torchlight/` 的基础上，继续清理
+通用导航 UI 中残留的 Torchlight 窗口名、Portal 手工测试状态机和 Loot 专用覆盖层，确保
+通用层只消费显式注入的窗口查找器、事件调试能力和领域中立的可视化描述。
+
+**直接变更文件（预计）：**
+
+- `src/auto_modules/ui/modes/navigation/event_adapter.py`
+- `src/auto_modules/ui/modes/navigation/events/`
+- `src/auto_modules/ui/modes/navigation/presentation/event_overlay.py`
+- `src/auto_modules/ui/modes/navigation/composition/lifecycles.py`
+- `src/auto_modules/ui/modes/navigation/runtime/`
+- `src/auto_modules/ui/modes/navigation/widget.py`
+- `src/auto_modules/ui/main_window.py`
+- `src/auto_modules/ui/modes/torchlight/` 与 `features/torchlight/` 中必要的业务适配入口
+- `tests/test_architecture_boundaries.py` 及相关导航/事件聚焦测试
+
+**预计连带影响：** 导航事件配置对话框、手工事件测试启停、导航帧循环的调试状态、
+事件覆盖层绘制和主窗口组合注入；不改变识别、定位、路径规划、控制器输出、Host 或 LAN
+协议，也不触发任何真实输入或网络同步。
+
+### B. 第一轮边界复核结果
+
+- `(verified)` `event_adapter.find_default_game_window_rect()` 在通用导航模块中写死
+  `Torchlight/UnrealWindow`；窗口选择必须改为组合根注入。
+- `(verified)` 通用导航生命周期、帧循环和 widget 仍以 `portal_test_controller`、
+  `run_portal_manual_test` 等业务名称管理一套本质上可通用的“手工事件测试会话”。
+- `(verified)` `presentation/event_overlay.py` 直接读取 `loot` 配置并绘制玩家中心排除圆，
+  这是 Torchlight Loot 的调试策略，不应由通用导航展示层识别事件类型。
+- `(verified)` `core` Python 源码中已无 Portal/Loot/Torchlight/PoE2 业务词；当前剩余
+  泄漏集中在 UI 组合边界，而非底层引擎。
+
+**修订的旧结论：** “导航 UI 已经完全不拥有 Torchlight 业务”仅对事件定义注册成立；
+窗口识别、Portal 手工测试和 Loot 覆盖层仍需继续拆分。
+
+**覆盖进度更新：** 本轮完整复核了 `navigation/event_adapter.py`、`events/lifecycle.py`、
+`events/dialog_lifecycle.py`、`presentation/event_overlay.py`、`runtime/frame_loop.py`，并复核
+`widget.py`、`composition/lifecycles.py`、`main_window.py` 的相关调用段。`CODEBASE.md` 将在
+接口定型并通过测试后覆盖更新，避免写入即将废弃的临时边界。
+
+### A. 第二轮目标（实现前声明）
+
+**目标文件：** 事件管理对话框与信号适配、手工测试控制器、导航生命周期组合、事件覆盖
+模型/协调器，以及 Torchlight Portal/Loot 定义。
+
+**本轮想弄清楚：** 哪些现有 Portal 命名只是通用会话控制，哪些确属业务 UI；Loot 中心
+遮罩能否通过领域中立 overlay 契约由业务定义提供，从而让通用展示层只画图元而不读取
+业务配置。
+
+### B. 第二轮契约复核结果
+
+- `(verified)` `ManualEventTestController` 本身仅同步按钮与 active 状态，没有 Portal
+  语义；Portal 只存在于调用方命名、日志和文案，因此应整体重命名为通用手工事件会话。
+- `(verified)` `EventManagerDialog` 的配置表单生成是 schema 驱动的，但紧凑字段集合和
+  摘要字段集合仍写死 Torchlight Portal/Loot 参数；应由业务 definition 的 schema 元数据
+  标注 `compact`/`summary`，对话框只解释通用显示元数据。
+- `(verified)` 当前 core `EventOverlayModel` 只描述任务点位；Loot 玩家中心遮罩不是任务，
+  不应伪装为 core 事件任务。更合适的边界是导航 UI 接受可注入的领域中立 overlay
+  provider，Torchlight UI provider 把 Loot 配置转换为圆形图元描述。
+- `(verified)` 事件管理 footer 同时存在 `reset_portal_requested` 和
+  `reset_events_requested`，但“刷新事件状态”按钮实际只发后者；前者已是无效兼容信号，
+  可在同一批次删除。
+
+**覆盖进度更新：** 完整复核了事件对话框 dialog/layout、panel adapter、手工测试控制器、
+core overlay/coordinator presentation，以及 Loot definition 的配置 schema 和公开工厂行为。
+
+### A. 第三轮目标（修改前声明）
+
+**目标文件：** `schema_form.py`、Portal/Loot definition、导航 display/command 生命周期、
+Torchlight UI 组合入口和主窗口注入点，以及现有对话框/导航测试。
+
+**本轮想弄清楚：** 保持现有 UI 行为与测试兼容所需的最小公开契约，并把所有业务词从
+`ui/modes/navigation` 与通用事件对话框中清除后再实施原子修改。
+
+### C. 第三轮实现结果
+
+- `(verified)` `NavigationModeWidget` 现在通过构造参数接收 `game_window_finder`、
+  `event_registry_factory` 和 `event_overlay_providers`；缺省值分别为无窗口、空 registry
+  和无附加图元，独立使用时不再隐式选择任何游戏。
+- `(verified)` Portal 专用手工测试命名已收敛为通用 `manual_event_test` 会话；事件对话框、
+  生命周期、命令生命周期和帧循环均不再出现具体事件名。
+- `(verified)` 事件 schema 新增通用 `compact`/`summary` 显示提示；具体字段集合由
+  Torchlight Portal/Loot definition 声明，通用对话框不再维护业务参数白名单。
+- `(verified)` 通用导航新增 `EventOverlayContext`/`EventCircleOverlay` 与 provider 注入点；
+  Loot 中心遮罩解释已移动到 `ui/modes/torchlight/navigation.py`。
+- `(verified)` Torchlight UI 组合对象集中提供事件 registry 工厂、游戏窗口查找器和 Loot
+  overlay provider；`MainWindow` 只在应用组合根展开这些依赖。
+
+**验证：** 受影响模块 `compileall` 通过；架构边界、导航 UI、紧凑操作、导航 intent 与
+hook 聚焦测试 **20 passed**。对 `core`、通用 navigation UI 和通用 event manager 的
+业务词扫描无输出。
+
+**覆盖进度更新：** 新增并复核 `core/events/config_schema.py`、
+`ui/modes/torchlight/navigation.py`；重读并更新事件对话框、导航事件/显示/命令/帧循环和
+Portal/Loot definition 的相关算法与调用边界。
+
+### A. 第四轮目标（收尾检查前声明）
+
+**目标文件/范围：** 旧导入路径、旧缓存目录、所有 Torchlight/PoE2 feature 公共导出、
+相关测试导入、当前权威架构文档和完整工作区 diff。
+
+**本轮想弄清楚：** 是否还存在“源码已迁移但兼容入口/测试/文档仍把实验或旧 core 路径
+当权威入口”的残留，并在不覆盖用户其他修改的前提下完成清理和文档同步。
+
+### C. 第四轮收尾结果
+
+- `(verified)` 生产源码、测试和工具中已无旧 Portal/Loot/Follow import 路径；PoE2 正式
+  测试已从 `tools.experiments` 兼容导出切换到 `features.poe2.live_terrain`。
+- `(verified)` `core.routing` 公开 `LaggedTrajectoryTarget`；Follow 业务与测试改用稳定包入口。
+- `(verified)` 旧 `core/diagnostics`、`application/follow`、`core/events/types/portal|loot`、
+  `ui/modes/follow` 和 `core/lan_follow` 源码/缓存目录已清理；回退标签
+  `pre-reorg/2026-09-18` 保持不变。
+- `(verified)` `CODEBASE.md` 已同步目录图、模块边界、函数算法和事件管理数据流；Portal
+  feature 文档不再把旧 core 路径描述为当前实现，历史 `docs/architecture` 明确标为快照。
+- `(verified)` CodeGraph 已重新同步到 812 files / 9,470 nodes / 24,670 edges，并确认
+  `TorchlightNavigationComposition -> NavigationModeWidget -> EventOverlayContext` 调用面。
+
+**最终验证：**
+
+- Follow/架构聚焦：**41 passed**。
+- PoE2 聚焦：**35 passed**。
+- Portal/Loot/Event 聚焦：**24 passed**；较宽 Portal/Loot/Navigation 组合为 **40 passed**。
+- `python -m compileall -q src tests tools packaging`：通过。
+- 全量：**487 passed, 2 skipped, 4 failed, 10 subtests passed**。四个失败与已知基线一致：
+  本机缺少 `pydirectinput` distribution metadata，以及 `PathFinder` 的 blocked-corner、
+  unexplored-area、strict thin-wall 三个既有断言；本轮没有修改其实现。
+- `git diff --check`：通过，仅显示工作区既有 LF/CRLF 规范化提示。
+
+**安全边界：** 未启动游戏、Host 或 LAN；未发送鼠标、键盘、虚拟手柄或网络同步输入。
+
+**Git 边界：** 已保留可用基线标签。当前同一工作区还有通信重构及用户 PoE2/配置改动，
+并且 `ui/main_window.py` 等文件存在重叠；本轮没有把这些不同所有权的修改混入一个新提交。
+
+## [SYNC] 2026-09-19 — 通信运行时 UI 装配与接收隔离
+
+### A. SYNC 范围声明
+
+**触发任务：** 完成通信层重构的 UI 注入、共享接收和生命周期验证。
+**直接变更文件：** `ui/composition/services.py`、`ui/composition/__init__.py`、`ui/main_window.py`、`ui/modes/torchlight/follow/page.py`、`ui/modes/events/workbench.py`、相关通信适配与测试。
+**预计连带影响：** FollowService/EventWorkbenchService 调用方、Host bridge/transport 接收路径、manager 的 capability lease 与 dispatcher、窗口关闭时的 Host 资源所有权。

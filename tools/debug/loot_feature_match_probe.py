@@ -19,15 +19,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from auto_modules.core.events.types.loot.assets import (  # noqa: E402
+from auto_modules.features.torchlight.loot.assets import (  # noqa: E402
     LOOT_MINIMAP_TEMPLATES,
     LOOT_PLAYER_MARKER_EXCLUDE_TEMPLATES,
 )
-from auto_modules.core.events.types.loot.config import LootEventConfig  # noqa: E402
-from auto_modules.core.events.types.loot.detection.images import to_bgr  # noqa: E402
-from auto_modules.core.events.types.loot.detection.roi import BBox, expand_bbox_to_size, loot_seed_bboxes  # noqa: E402
-from auto_modules.core.events.types.loot.detection.scoring import clamp01, loot_color_score  # noqa: E402
-from auto_modules.core.events.types.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
+from auto_modules.features.torchlight.loot.config import LootEventConfig  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.images import to_bgr  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.roi import BBox, expand_bbox_to_size, loot_seed_bboxes  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.scoring import clamp01, loot_color_score  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}

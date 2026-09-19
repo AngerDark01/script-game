@@ -7,6 +7,12 @@
 - Mapping mode: capture minimap frames and build map packages.
 - Navigation mode: load map packages, localize the player, edit route targets, run navigation, and show overlays.
 
+Game-specific modes live below a game namespace. The Torchlight follow page and its
+editors are under `ui/modes/torchlight/follow`; Torchlight navigation adapters are
+under `ui/modes/torchlight/navigation.py`. Generic navigation receives registry,
+window-finder, and overlay-provider contracts by injection and does not name or
+instantiate concrete games or event types.
+
 ## Large-File Priority
 
 ### `navigation_mode.py` - 1525 lines

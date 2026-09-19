@@ -19,8 +19,8 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from auto_modules.core.events.models import EventTick  # noqa: E402
-from auto_modules.core.events.types.loot import LootEventDefinition  # noqa: E402
-from auto_modules.core.events.types.loot.config import LootEventConfig  # noqa: E402
+from auto_modules.features.torchlight.loot import LootEventDefinition  # noqa: E402
+from auto_modules.features.torchlight.loot.config import LootEventConfig  # noqa: E402
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def silence_loot_event_logs() -> None:
-    import auto_modules.core.events.types.loot.minimap_detector as minimap_detector
+    import auto_modules.features.torchlight.loot.minimap_detector as minimap_detector
 
     minimap_detector.event_log = lambda *args, **kwargs: None
 

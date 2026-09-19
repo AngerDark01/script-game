@@ -11,8 +11,8 @@ from typing import Callable, Protocol
 from urllib.request import urlopen
 
 # This file is also a directly executable utility.  Python otherwise places
-# only ``utils/`` on sys.path, while the project-level ``core`` package lives
-# one directory above it.
+# only ``tools/probes/`` on sys.path; the production package lives under
+# ``src/auto_modules/`` and is added explicitly below.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT / "src"))

@@ -1,4 +1,4 @@
-from auto_modules.core.events.follow_chain import FollowChainDefinition
+from auto_modules.core.events.automation import ActionSequenceDefinition
 from auto_modules.core.events.models import EventTask, EventTick, EventActionType
 from auto_modules.core.events.hooks.registry import EventHookRegistry
 import pytest
@@ -8,7 +8,7 @@ def test_chain_button_wait_condition_hook_and_complete():
     hooks = EventHookRegistry()
     seen = []
     hooks.register('done', lambda c: seen.append(c.event_type))
-    definition = FollowChainDefinition('return', [dict(op='button', button='A', ms=100),
+    definition = ActionSequenceDefinition('return', [dict(op='button', button='A', ms=100),
         dict(op='wait', ms=50), dict(op='condition', name='ok', then=3, **{'else':4}),
         dict(op='emit',name='done')], hooks=hooks)
     h = definition.create_handler({})
@@ -21,7 +21,7 @@ def test_chain_button_wait_condition_hook_and_complete():
 
 
 def test_loop_is_bounded_and_cancel_clears_progress():
-    h = FollowChainDefinition('loop',[dict(op='condition',name='missing',**{'else':0})]).create_handler({})
+    h = ActionSequenceDefinition('loop',[dict(op='condition',name='missing',**{'else':0})]).create_handler({})
     task = EventTask('t','loop',(0,0),0,0)
     h.start(task)
     for stamp in range(20): result = h.update(EventTick(stamp),task)
@@ -31,7 +31,7 @@ def test_loop_is_bounded_and_cancel_clears_progress():
 
 
 def test_chain_definition_accepts_a_bounded_parallel_step():
-    definition = FollowChainDefinition('combo', [{
+    definition = ActionSequenceDefinition('combo', [{
         'op': 'parallel', 'ms': 1000,
         'tracks': [
             {'buttons': ['LS_RIGHT'], 'mode': 'continuous', 'delay_ms': 0},
@@ -43,7 +43,7 @@ def test_chain_definition_accepts_a_bounded_parallel_step():
 
 def test_chain_definition_rejects_nested_parallel_step():
     with pytest.raises(ValueError):
-        FollowChainDefinition('nested', [{
+        ActionSequenceDefinition('nested', [{
             'op': 'parallel', 'ms': 100,
             'tracks': [{'op': 'parallel', 'buttons': ['A'], 'mode': 'once'}],
         }])

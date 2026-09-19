@@ -16,13 +16,13 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from auto_modules.core.events.memory import EventMemory  # noqa: E402
 from auto_modules.core.events.models import EventObservation, EventTask, EventTick  # noqa: E402
-from auto_modules.core.events.types.loot import LootEventDefinition  # noqa: E402
-from auto_modules.core.events.types.loot.assets import LOOT_MINIMAP_TEMPLATES, LOOT_PLAYER_MARKER_EXCLUDE_TEMPLATES  # noqa: E402
-from auto_modules.core.events.types.loot.config import LootEventConfig  # noqa: E402
-from auto_modules.core.events.types.loot.detection.images import pad_small_frame, unpad_bbox  # noqa: E402
-from auto_modules.core.events.types.loot.detection.pipeline import _pad_bboxes, detect_loot_candidates, detect_loot_presence  # noqa: E402
-from auto_modules.core.events.types.loot.detection.roi import apply_player_center_mask, build_loot_roi_mask  # noqa: E402
-from auto_modules.core.events.types.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
+from auto_modules.features.torchlight.loot import LootEventDefinition  # noqa: E402
+from auto_modules.features.torchlight.loot.assets import LOOT_MINIMAP_TEMPLATES, LOOT_PLAYER_MARKER_EXCLUDE_TEMPLATES  # noqa: E402
+from auto_modules.features.torchlight.loot.config import LootEventConfig  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.images import pad_small_frame, unpad_bbox  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.pipeline import _pad_bboxes, detect_loot_candidates, detect_loot_presence  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.roi import apply_player_center_mask, build_loot_roi_mask  # noqa: E402
+from auto_modules.features.torchlight.loot.detection.templates import load_loot_templates, prepare_scaled_templates  # noqa: E402
 
 
 def main() -> None:

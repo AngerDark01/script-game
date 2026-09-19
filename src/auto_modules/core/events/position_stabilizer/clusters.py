@@ -69,7 +69,7 @@ def find_cluster(
         if cluster.event_type != event_type or not cluster.samples:
             continue
         # Do not merge two icons detected in the same minimap frame. Paired
-        # portals can be close together, but they must remain separate tasks.
+        # Nearby same-type targets may still be distinct and must remain separate tasks.
         if cluster.last_seen_ms and cluster.last_seen_ms == int(now_ms):
             continue
         distance = _distance(cluster.center(), global_pos)

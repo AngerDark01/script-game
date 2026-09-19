@@ -2,7 +2,11 @@
 
 ## Current Role
 
-`gui/modes/navigation_mode.py` is the navigation mode widget. It currently acts as:
+`ui/modes/navigation/widget.py` is the game-neutral navigation page composition
+root. Most concrete lifecycle and presentation work is delegated to sibling
+packages; the widget owns state references, injection points, and thin UI slots.
+
+It currently coordinates:
 
 - QWidget shell and top toolbar builder.
 - Map list and map loader.
@@ -172,21 +176,26 @@ Methods:
 - `_refresh_event_dialog`
 - `_on_event_config_changed`
 - `_save_event_config`
-- `_reset_portal_event_state`
+- `_reset_event_state`
 - `_find_game_window_rect`
 - `_build_event_tick`
 - `_reset_event_move_runtime`
-- `_run_portal_manual_test`
-- `_set_portal_manual_test_active`
+- `_run_manual_event_test`
+- `_set_manual_event_test_active`
 - `_event_status_text`
 
 Current helper coverage:
 
-- `navigation/event_adapter.py` already owns default registry creation, config summary, game-window lookup, `EventTick` creation, and status text.
+- `navigation/event_adapter.py` owns generic registry construction from an injected
+  composition factory, config summary, `EventTick` creation, and status text.
+- `NavigationModeWidget` receives the game-window finder and optional overlay
+  providers explicitly. The application root injects the active game composition.
 
 Remaining problem:
 
-The widget still owns event dialog wiring, event config persistence, manual portal test state, event runtime reset, and status messaging.
+The generic event lifecycles own dialog wiring, config persistence, manual event
+test state, event runtime reset, and status messaging. They do not know concrete
+event types; game-specific debug overlays and window rules are injected.
 
 Target module:
 
@@ -204,7 +213,7 @@ class NavigationEventPanelAdapter:
     def save_config(self) -> bool: ...
     def reset_event_type(self, event_type: str) -> int: ...
     def build_tick(self, now_ms, frame, player_pos, localized_pos, confidence) -> EventTick: ...
-    def start_manual_test(self, event_type: str) -> bool: ...
+    def start_manual_test(self) -> bool: ...
     def stop_manual_test(self, reason: str = "") -> None: ...
 ```
 

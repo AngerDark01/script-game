@@ -33,4 +33,4 @@ def should_keep_active_task_after_forced_relocalization(registration, active_tas
     if not active_task_id or not str(active_task_id).startswith("event:"):
         return False
     metadata = getattr(registration, "metadata", {}) or {}
-    return str(metadata.get("forced_reason") or "") == "portal_wait_result"
+    return str(metadata.get("forced_reason") or "") == "event_wait_result"

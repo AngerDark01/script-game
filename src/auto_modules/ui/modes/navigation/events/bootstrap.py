@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from auto_modules.core.events.capture_provider import GameWindowCaptureProvider
-from auto_modules.core.events.config import load_event_config
+from auto_modules.core.events.config import apply_registered_event_defaults, load_event_config
 from auto_modules.core.events.coordinator import EventCoordinator
 from auto_modules.core.events.debug import event_log
 
@@ -35,7 +35,10 @@ def initialize_navigation_event_system(
             event_capture_provider=None,
         )
 
-    event_config = load_event_config(map_folder_path)
+    event_config = apply_registered_event_defaults(
+        event_registry,
+        load_event_config(map_folder_path),
+    )
     event_coordinator = EventCoordinator(event_registry, event_config)
     event_capture_provider = GameWindowCaptureProvider(
         screen_capture,

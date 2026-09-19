@@ -20,30 +20,6 @@ from .hooks import EventHookPanel
 from .task_table import configure_task_table
 
 
-COMPACT_PARAM_KEYS = (
-    "navigation_approach_enabled",
-    "detector_mode",
-    "minimap_threshold",
-    "max_candidates",
-    "minimap_nms_radius",
-    "weighted_threshold",
-    "template_weight",
-    "shape_weight",
-    "color_weight",
-    "player_center_mask_enabled",
-    "player_center_mask_radius",
-    "pickup_radius",
-    "pickup_key",
-    "diagnostic_capture_enabled",
-    "diagnostic_capture_interval_ms",
-    "localization_cluster_radius",
-    "dedupe_radius",
-    "target_update_mode",
-    "target_update_max_drift",
-    "player_center_mask_overlay_enabled",
-)
-
-
 def build_event_manager_ui(dialog) -> None:
     """Build the event manager dialog shell and attach expected attributes."""
     layout = QVBoxLayout(dialog)
@@ -168,17 +144,17 @@ def _build_footer(dialog, layout: QVBoxLayout) -> None:
     footer = QHBoxLayout()
     dialog.status_label = QLabel("未加载地图")
     dialog.refresh_button = QPushButton("刷新")
-    dialog.reset_portal_button = QPushButton("刷新事件状态")
-    dialog.test_portal_button = QPushButton("测试传送门")
-    dialog.test_portal_button.setCheckable(True)
+    dialog.reset_events_button = QPushButton("刷新事件状态")
+    dialog.manual_test_button = QPushButton("测试事件流程")
+    dialog.manual_test_button.setCheckable(True)
     dialog.save_button = QPushButton("保存配置")
     dialog.refresh_button.clicked.connect(dialog.refresh)
-    dialog.reset_portal_button.clicked.connect(dialog.reset_events_requested.emit)
-    dialog.test_portal_button.clicked.connect(lambda _checked=False: dialog.test_portal_requested.emit())
+    dialog.reset_events_button.clicked.connect(dialog.reset_events_requested.emit)
+    dialog.manual_test_button.clicked.connect(lambda _checked=False: dialog.manual_test_requested.emit())
     dialog.save_button.clicked.connect(dialog.save_requested.emit)
     footer.addWidget(dialog.status_label, 1)
     footer.addWidget(dialog.refresh_button)
-    footer.addWidget(dialog.reset_portal_button)
-    footer.addWidget(dialog.test_portal_button)
+    footer.addWidget(dialog.reset_events_button)
+    footer.addWidget(dialog.manual_test_button)
     footer.addWidget(dialog.save_button)
     layout.addLayout(footer)

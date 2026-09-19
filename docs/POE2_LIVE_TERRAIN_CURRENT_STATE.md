@@ -6,7 +6,7 @@
 
 最后更新：2026-09-19
 
-当前状态：**引擎批次 1 已完成，等待继续 PoE2 实验接入**
+当前状态：**代码批次已完成，等待真实 PoE2 小地图校准与实机验收**
 
 ## 当前阶段目标
 
@@ -66,9 +66,9 @@ PoE2 多人业务：以后增加当前控制角色选择策略
 
 ## 分层规则
 
-### 实验室/业务层
+### PoE2 业务层
 
-PoE2 实验目录负责业务组合和 PoE2 规则：
+`src/auto_modules/features/poe2/live_terrain/` 负责正式业务组合和 PoE2 规则：
 
 - native terrain 快照如何转换成 PoE2 定位参考图；
 - PoE2 小地图的监控配置；
@@ -78,7 +78,8 @@ PoE2 实验目录负责业务组合和 PoE2 规则：
 - PoE2 页面如何显示实时小地图、人物 marker、轨迹和诊断信息；
 - 实机日志和样本归档。
 
-实验代码暂放在 `tools/experiments/poe2_live_terrain/`。它只能组合引擎能力，不能复制一套定位或截图引擎。
+`tools/experiments/poe2_live_terrain/` 只保留兼容导出，生产代码和正式测试均以
+`features/poe2/live_terrain/` 为入口。PoE2 业务只能组合引擎能力，不能复制定位或截图引擎。
 
 ### 引擎层
 
@@ -98,7 +99,7 @@ PoE2 实验目录负责业务组合和 PoE2 规则：
 
 ## 已完成内容
 
-### 2026-09-19 本阶段开发批次 1
+### 2026-09-19 本阶段开发批次 1-2
 
 已完成计划 Task 1-3，代码只进入通用引擎层，尚未接入 PoE2 或 UI：
 
@@ -116,7 +117,35 @@ compileall passed
 Serena diagnostics: no diagnostics
 ```
 
-本批次没有修改 `NavigationCore`、导航页、PoE2 页面、输入或网络代码。
+本批次没有修改 `NavigationCore`、导航页、输入或网络代码。
+
+批次 2 已完成 PoE2 实验组合和独立监控边界：
+
+- `terrain_reference.py`：从 `TerrainSnapshot` 原生数组构建不可变的定位参考层；未知区域不会被当作可行走区域，展示 pixmap 不参与定位；
+- `calibration.py`：显式保存小地图尺寸、比例、轴向、Y 翻转、偏移和人物局部 marker；
+- `player_policy.py`：单人业务只接受唯一的高置信度候选，多候选高置信度时 fail closed；
+- `runtime.py`：组合截图、HSV 人物候选、首帧全局 matcher、后续局部 matcher、恢复状态和确认轨迹；没有候选时不调用定位、不使用中心坐标；
+- `core/spatial/monitor_binding.py`：通用屏幕矩形契约；
+- `poe2_live_terrain/monitor_config.py`、`monitor_source.py`：PoE2 独立配置持久化和区域截图适配，不读取 `NavConfig`；
+- `monitor_dialog.py`：PoE2 独立监控配置窗口，监控运行期间锁定配置；
+- `page.py` / `presenter.py`：实时小地图预览、开始/停止监控、定位状态、完整地图人物 marker 与确认轨迹；
+- `main_window.py`：在组合根注入 PoE2 runtime 和独立配置存储，保持现有页面索引与手柄/LAN 生命周期。
+
+批次 2 验证结果：
+
+```text
+50 passed
+compileall passed
+Serena diagnostics: 新增 Python 业务/引擎文件无诊断；PySide6、numpy、cv2 的缺失提示来自 Serena 当前语言服务器环境，运行时测试已通过。
+```
+
+完整回归补充：`448 passed, 2 skipped, 4 failed, 10 subtests passed`。失败项均为
+本工作区既有问题，与本阶段 PoE2 代码无调用关系：
+
+- `tests/test_distribution.py::test_dependency_selection_excludes_unrelated_editable_project`
+  因当前 Python 环境缺少 `pydirectinput` distribution metadata；
+- `tests/test_pathfinder.py` 的三个角点穿越、未探索区和细墙行为断言失败，涉及既有
+  `PathFinder` 实现，本阶段没有修改 `core.routing` 或路径规划代码。
 
 ### 实时地形采集和展示
 
@@ -130,13 +159,14 @@ Serena diagnostics: no diagnostics
 ### 当前 UI
 
 - 主窗口已有“PoE2 地形”页面。
-- 页面目前支持初始化、手动获取地图、清空地图和地图展示。
-- 当前页面还没有真实小地图监控循环、人物定位、轨迹显示或定位状态机。
+- 页面支持初始化、手动获取地图、清空地图、独立监控配置、开始/停止监控和地图展示。
+- 监控循环显示原始小地图预览、候选定位来源、置信度、局部/全局坐标、帧耗时、完整地图人物 marker 和确认轨迹。
+- 运行时使用真实截图前仍需在“监控配置”中绑定小地图矩形，并通过实机确认比例、轴向和人物识别阈值。
 - 主窗口仍保留开发工作台页面，以及正式的手柄和局域网页面。
 
 ### 当前验证
 
-- PoE2 地形采集和展示的 focused tests 已通过。
+- PoE2 地形采集、监控配置、定位运行时和 UI 的 focused tests 已通过。
 - 现有地形样本尺寸为 `2416 x 2277`。
 - 地图显示规则已经确认：可行走区域深灰、可行走边界白色、未知/区域外黑色。
 - 该显示规则只用于展示，不能直接当作定位或寻路契约。
@@ -170,14 +200,14 @@ Serena diagnostics: no diagnostics
 
 这些模块不能导入 PoE2、导航页或游戏对象名称。
 
-## 本阶段的 PoE2 实验业务
+## PoE2 正式业务域
 
-计划新增或调整：
+当前正式入口：
 
-- `tools/experiments/poe2_live_terrain/terrain_reference.py`：把 `TerrainSnapshot` 转成定位用参考数据，不从 `QPixmap` 反推；
-- `tools/experiments/poe2_live_terrain/calibration.py`：保存小地图像素到地图参考像素的比例、方向和偏移；
-- `tools/experiments/poe2_live_terrain/player_policy.py`：单人场景选择唯一可信人物候选；
-- `tools/experiments/poe2_live_terrain/runtime.py`：组合截图、识别、全局/局部定位、轨迹和日志；
+- `features/poe2/live_terrain/terrain_reference.py`：把 `TerrainSnapshot` 转成定位用参考数据，不从 `QPixmap` 反推；
+- `features/poe2/live_terrain/calibration.py`：保存小地图像素到地图参考像素的比例、方向和偏移；
+- `features/poe2/live_terrain/player_policy.py`：单人场景选择唯一可信人物候选；
+- `features/poe2/live_terrain/runtime.py`：组合截图、识别、全局/局部定位、轨迹和日志；
 - `src/auto_modules/ui/modes/poe2_live_terrain/page.py`：增加实时小地图预览、开始/停止监控、定位状态和人物显示；
 - PoE2 页面关闭时停止截图循环并释放帧缓存。
 
@@ -212,8 +242,8 @@ UI 通过注入协议使用实验 runtime，不在通用 UI 组件中写 PoE2 �
 
 真实 PoE2、桌面截图和人物移动只在明确的手动验收阶段执行；默认单元测试使用合成帧和 fake capture，不发送真实输入。
 
-## 下一次继续入口
+## 实机验收入口
 
-从 [2026-09-19-poe2-single-player-localization-implementation-plan.md](plans/2026-09-19-poe2-single-player-localization-implementation-plan.md) 的 Task 4 开始：先实现 PoE2 terrain reference，再实现单人候选选择与校准，然后接入实验 runtime 和页面监控显示。
+代码入口已经完成。下一次直接按“单人实机验收步骤”执行，记录监控矩形、截图尺寸、人物候选特征、地图/小地图比例、首帧全局置信度、局部跟踪耗时和失败恢复行为。实机验收不发送 Xbox、键盘、鼠标或网络输入。
 
 本文件在以下事件后必须更新：引擎契约确认、实验目录职责变化、真实样本校准完成、首帧定位验证、轨迹验证、定位失败规则变化或阶段范围变化。

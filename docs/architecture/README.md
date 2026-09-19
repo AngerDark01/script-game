@@ -1,6 +1,10 @@
 # 架构文档独立目录
 
-这个目录只承载本轮生成/整理的架构说明文档，不包含源码、调试图片、地图数据或运行产物。
+这个目录保存历史架构扫描快照，不包含源码、调试图片、地图数据或运行产物。快照中的
+`core/events/types/portal|loot`、`gui/` 等路径反映迁移前结构，不再是当前权威路径。
+
+当前权威架构请优先阅读仓库根目录的 `ARCHITECTURE_GUIDE.md`、`CODEBASE.md`、
+`ITERATION_LOG.md`，以及 `src/auto_modules/features/<game>/` 下的业务域文档。
 
 ## 目录结构
 
@@ -10,7 +14,7 @@ architecture_docs/
 └── zh-CN/      # 中文复刻版本，按同样相对路径组织
 ```
 
-## 中文入口
+## 历史中文入口
 
 - [中文总览](zh-CN/ARCHITECTURE_GUIDE.md)
 - [中文迭代日志](zh-CN/ARCHITECTURE_ITERATION_LOG.md)
@@ -29,4 +33,3 @@ architecture_docs/
 
 - [Original Guide](original/ARCHITECTURE_GUIDE.md)
 - [Original Iteration Log](original/ARCHITECTURE_ITERATION_LOG.md)
-

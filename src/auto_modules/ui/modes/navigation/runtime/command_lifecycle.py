@@ -27,7 +27,7 @@ class NavigationRuntimeCommandLifecycleTargets:
     motion_controller: object
     navigation_task_controller: object
     game_input_window_mode: object
-    portal_test_controller: object
+    manual_test_controller: object
     get_map_folder_path: Callable[[], str | None]
     get_nav_core: Callable[[], object]
     get_nav_config: Callable[[], object]
@@ -38,7 +38,7 @@ class NavigationRuntimeCommandLifecycleTargets:
     set_current_player_local_pos: Callable[[object], None]
     use_unified_navigation_loop: Callable[[], None]
     apply_config_to_runtime: Callable[[], object]
-    stop_portal_manual_test: Callable[[str], None]
+    stop_manual_event_test: Callable[[str], None]
     render_route_overlay: Callable[[], None]
     start_event_observer: Callable[[], None]
     stop_event_observer: Callable[[], None]
@@ -127,8 +127,8 @@ class NavigationRuntimeCommandLifecycle:
             nav_core.is_first_frame_localized = False
 
         self.targets.set_auto_navigation_enabled(False)
-        if getattr(self.targets.portal_test_controller, "active", False):
-            self.targets.stop_portal_manual_test("navigation stopped")
+        if getattr(self.targets.manual_test_controller, "active", False):
+            self.targets.stop_manual_event_test("navigation stopped")
 
         self.targets.navigation_task_controller.stop()
         self.set_game_input_window_mode(False)

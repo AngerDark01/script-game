@@ -40,15 +40,14 @@ def initialize_navigation_pre_signal_lifecycles(owner) -> None:
             main_window=owner.main_window,
             get_event_dialog=lambda: owner.event_dialog,
             set_event_dialog=lambda dialog: setattr(owner, "event_dialog", dialog),
-            get_portal_test_controller=lambda: getattr(owner, "portal_test_controller", None),
+            get_manual_test_controller=lambda: getattr(owner, "manual_test_controller", None),
             get_event_registry=lambda: owner.event_registry,
             get_event_config=lambda: owner.event_config,
             get_event_coordinator=lambda: owner.event_coordinator,
             get_map_name=lambda: owner.map_combo.currentText() if owner.map_combo else "",
             on_config_changed=owner._on_event_config_changed,
             on_save_requested=owner._save_event_config,
-            on_test_portal_requested=owner._run_portal_manual_test,
-            on_reset_portal_requested=owner._reset_portal_event_state,
+            on_manual_test_requested=owner._run_manual_event_test,
             on_reset_events_requested=owner._reset_event_state,
         )
     )
@@ -129,10 +128,10 @@ def initialize_navigation_runtime_lifecycles(owner) -> None:
     owner.nav_timer = QTimer()
     owner.nav_timer.timeout.connect(owner.navigation_loop)
     owner._ensure_event_dialog()
-    owner.portal_test_controller = ManualEventTestController(
-        owner.event_dialog.test_portal_button if owner.event_dialog else None,
-        "测试传送门",
-        "停止传送门测试",
+    owner.manual_test_controller = ManualEventTestController(
+        owner.event_dialog.manual_test_button if owner.event_dialog else None,
+        "测试事件流程",
+        "停止事件流程测试",
     )
     owner.command_lifecycle = NavigationRuntimeCommandLifecycle(
         NavigationRuntimeCommandLifecycleTargets(
@@ -144,7 +143,7 @@ def initialize_navigation_runtime_lifecycles(owner) -> None:
             motion_controller=owner.motion_controller,
             navigation_task_controller=owner.navigation_task_controller,
             game_input_window_mode=owner.game_input_window_mode,
-            portal_test_controller=owner.portal_test_controller,
+            manual_test_controller=owner.manual_test_controller,
             get_map_folder_path=lambda: owner.map_folder_path,
             get_nav_core=lambda: owner.nav_core,
             get_nav_config=lambda: owner.nav_config,
@@ -155,7 +154,7 @@ def initialize_navigation_runtime_lifecycles(owner) -> None:
             set_current_player_local_pos=lambda value: setattr(owner, "_current_player_local_pos", value),
             use_unified_navigation_loop=owner._use_unified_navigation_loop,
             apply_config_to_runtime=owner._apply_config_to_core,
-            stop_portal_manual_test=lambda reason: owner._set_portal_manual_test_active(False, reason=reason),
+            stop_manual_event_test=lambda reason: owner._set_manual_event_test_active(False, reason=reason),
             render_route_overlay=owner._render_route_overlay,
             start_event_observer=owner._start_event_async_observer,
             stop_event_observer=owner._stop_event_async_observer,
@@ -169,7 +168,7 @@ def initialize_navigation_runtime_lifecycles(owner) -> None:
             nav_timer=owner.nav_timer,
             motion_controller=owner.motion_controller,
             navigation_task_controller=owner.navigation_task_controller,
-            portal_test_controller=owner.portal_test_controller,
+            manual_test_controller=owner.manual_test_controller,
             get_map_folder_path=lambda: owner.map_folder_path,
             get_event_config=lambda: owner.event_config,
             get_event_coordinator=lambda: owner.event_coordinator,

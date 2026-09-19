@@ -101,8 +101,5 @@ def _float_point(point) -> tuple[float, float]:
 
 def _event_radius(event_task) -> float | None:
     metadata = getattr(event_task, "metadata", {}) or {}
-    if str(getattr(event_task, "event_type", "")) == "loot":
-        radius = metadata.get("pickup_radius")
-        if radius is not None:
-            return max(4.0, float(radius))
-    return None
+    radius = metadata.get("navigation_stop_radius")
+    return max(4.0, float(radius)) if radius is not None else None

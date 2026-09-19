@@ -95,6 +95,14 @@ moved behind these contracts. Both local and remote execution now pass through
 one `EventExecutionRuntime` and preserve independent state by source and
 controller.
 
+## Game-Domain Boundary
+
+具体游戏事件不属于 `core`。Portal、Loot、Torchlight follow/skill 规则分别由
+`features/torchlight/{portal,loot,follow,skills}` 组合通用识别、定位、导航任务、
+动作和事件生命周期。`core/events/automation/action_sequence.py` 只负责有界的
+声明式动作序列执行；旧 `core/events/follow_chain.py` 已删除。这样通用事件运行时
+不会携带 Torchlight 术语或策略。
+
 ## Immediate Split Candidates
 
 ### `core/stitcher_core.py`

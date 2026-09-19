@@ -46,7 +46,7 @@ class RuntimePathTests(unittest.TestCase):
                 self.assertEqual(GamepadHostManager._default_host_command(), [str(host)])
 
     def test_loot_diagnostics_are_user_data(self):
-        from auto_modules.core.events.types.loot.diagnostics import LootDiagnosticCapture
+        from auto_modules.features.torchlight.loot.diagnostics import LootDiagnosticCapture
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(os.environ, {'AUTO_MODULES_DATA_DIR': temporary}):
                 self.assertTrue(LootDiagnosticCapture().output_dir.is_relative_to(Path(temporary)))

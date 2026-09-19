@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
     QListWidget, QListWidgetItem, QTabWidget, QTableWidget, QTableWidgetItem, QComboBox, QTextEdit, QLineEdit)
 from auto_modules.paths import data_root
 from auto_modules.application.event_workbench import EventWorkbenchService
-from ..follow.editors import ChainEditor
+from .action_sequence_editor import ChainEditor
 
 KEY_OPTIONS = ['F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
                'W','A','S','D','Q','E','R','SPACE','UP','DOWN','LEFT','RIGHT']
@@ -18,12 +18,18 @@ CONTROLLER_SELECTIONS = {
 
 
 class EventWorkbenchPage(QWidget):
-    def __init__(self, parent=None, *, root=None, service=None):
+    def __init__(self, parent=None, *, root=None, service=None, communication_manager=None, communication_adapter=None):
         super().__init__(parent)
         config_root = Path(
             root or data_root() / 'events'
         )
-        self.service = service or EventWorkbenchService(config_root)
+        self.communication_manager = communication_manager
+        self.communication_adapter = communication_adapter
+        self.service = service or EventWorkbenchService(
+            config_root,
+            communication_manager=communication_manager,
+            communication_adapter=communication_adapter,
+        )
         self.events = self.service.load_local_events()
         self.remote_events = self.service.load_remote_events()
         self.routes_data = self.service.load_routes()

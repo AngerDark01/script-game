@@ -66,7 +66,7 @@ class NavigationRuntimeFrameLoop:
         intent = None
         if should_run_navigation_tasks(
             auto_navigation_enabled=owner.auto_navigation_enabled,
-            manual_event_test_active=owner.portal_test_controller.active,
+            manual_event_test_active=owner.manual_test_controller.active,
         ):
             lookahead = compute_navigation_lookahead(
                 capture_width=capture_rect["width"],
@@ -83,7 +83,7 @@ class NavigationRuntimeFrameLoop:
                 now_ms=now_ms,
                 lookahead_distance=lookahead,
                 manual_event_only=bool(
-                    owner.portal_test_controller.active and not owner.auto_navigation_enabled
+                    owner.manual_test_controller.active and not owner.auto_navigation_enabled
                 ),
             )
 
@@ -123,8 +123,8 @@ class NavigationRuntimeFrameLoop:
                 log_event=event_log,
                 show_relocalizing=lambda: show_navigation_relocalizing(owner.status_label),
                 execute_intent=self._execute_navigation_intent,
-                is_manual_event_test_active=lambda: owner.portal_test_controller.active,
-                stop_manual_event_test=lambda reason: owner._set_portal_manual_test_active(False, reason=reason),
+                is_manual_event_test_active=lambda: owner.manual_test_controller.active,
+                stop_manual_event_test=lambda reason: owner._set_manual_event_test_active(False, reason=reason),
                 stop_navigation_tasks=owner.navigation_task_controller.stop,
                 disable_game_input_mode=lambda: owner._set_game_input_window_mode(False),
                 reset_auto_navigation_button=lambda: owner.btn_auto_nav.setChecked(False),
