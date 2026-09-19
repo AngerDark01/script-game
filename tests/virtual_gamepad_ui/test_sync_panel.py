@@ -64,7 +64,7 @@ class SyncPanelTests(unittest.TestCase):
         self.panel.apply_settings()
         self.wait(lambda: not self.panel.busy)
         self.panel.shutdown()
-        self.wait(lambda: any(command == "sync.stop" for command, _ in Client.calls))
+        self.wait(lambda: any(command == "sync.suspend" for command, _ in Client.calls))
         self.assertGreater(Client.calls[-1][1]["_uiSequence"], Client.calls[0][1]["_uiSequence"])
         self.assertFalse(self.panel.isEnabled())
     def test_mode_actions_follow_applied_status_not_unsaved_selection(self):
@@ -80,6 +80,34 @@ class SyncPanelTests(unittest.TestCase):
         self.assertFalse(self.panel.receive_button.isEnabled())
         self.panel.render({"mode": "send", "networkReady": False})
         self.assertFalse(self.panel.send_button.isEnabled())
+    def test_selected_peer_updates_capabilities_on_one_session(self):
+        peer = {"deviceId": "peer-b", "name": "B", "controllers": [1, 2], "capabilities": ["input.send"]}
+        self.panel.render({"mode": "send", "networkReady": True, "peers": [peer]})
+        item = self.panel.peers.item(0)
+        self.panel.peers.setCurrentItem(item)
+        self.panel._select_peer_capabilities(item)
+        self.assertTrue(self.panel.cap_input.isChecked())
+        self.assertFalse(self.panel.cap_position.isChecked())
+        self.panel.cap_position.setChecked(True)
+        self.panel.cap_event.setChecked(True)
+        self.panel.start_peer()
+        self.wait(lambda: not self.panel.busy)
+        command, payload = Client.calls[0]
+        self.assertEqual(command, "sync.start")
+        self.assertEqual(payload["deviceId"], "peer-b")
+        self.assertEqual(payload["controllers"], [1, 2])
+        self.assertEqual(payload["capabilities"], ["input.send", "position.publish", "event.publish"])
+    def test_data_only_capabilities_do_not_claim_controllers(self):
+        self.panel.render({"mode": "share", "networkReady": True, "peers": [{"deviceId": "peer-b", "name": "B"}]})
+        self.panel.peers.setCurrentRow(0)
+        self.panel.cap_position.setChecked(False)
+        self.panel.cap_catalog.setChecked(False)
+        self.panel.start_peer()
+        self.wait(lambda: not self.panel.busy)
+        command, payload = Client.calls[0]
+        self.assertEqual(command, "sync.start")
+        self.assertEqual(payload["controllers"], [])
+        self.assertEqual(payload["capabilities"], ["event.publish"])
     def test_stop_supersedes_queued_start_and_ignores_late_status(self):
         entered, release = threading.Event(), threading.Event()
         class SlowClient(Client):
@@ -105,7 +133,7 @@ class SyncPanelTests(unittest.TestCase):
     def test_old_host_without_sync_does_not_block_shutdown(self):
         class OldClient(Client):
             def request(inner, command, payload):
-                raise RuntimeError("unknown_type: Unknown message type: sync.stop")
+                raise RuntimeError("unknown_type: Unknown message type: sync.suspend")
         self.panel.factory = OldClient
         result = []
         self.panel.shutdown_finished.connect(lambda ok, error: result.append(ok))

@@ -41,7 +41,7 @@ class _Request(QRunnable):
         except Exception as exc:
             # An older host that explicitly does not implement sync cannot have
             # an active LAN session. Do not mask connection/timeout failures.
-            if not (self.command == "sync.stop" and str(exc) == "unknown_type: Unknown message type: sync.stop"):
+            if not (self.command == "sync.suspend" and str(exc) == "unknown_type: Unknown message type: sync.suspend"):
                 result["error"] = str(exc)
         finally:
             if watchdog: watchdog.cancel()
@@ -107,7 +107,7 @@ class SyncPanel(QWidget):
         self.message.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.identity)
         layout.addWidget(self.message)
-        layout.addWidget(self._section('连接模式', '先选择本机角色，再保存设置；配对完成后仍需单独开启同步通道。'))
+        layout.addWidget(self._section('连接模式', '先选择本机角色，再保存设置。'))
         form = QFormLayout()
         self.mode = QComboBox()
         for label, value in (("关闭", "off"), ("发送手柄：用本机控制其他电脑", "send"), ("接收手柄：由主设备控制本机", "receive"), ("事件/位置共享（不接管手柄）", "share")):
@@ -146,7 +146,7 @@ class SyncPanel(QWidget):
         self.receive_button.setEnabled(False)
         self._button("停止全部同步", lambda: self.command("sync.stop"), buttons)
         layout.addLayout(buttons)
-        layout.addWidget(self._section('设备配对', '配对只建立可信设备关系，不会自动接管手柄。事件发送使用“事件/位置共享”模式；只有“发送手柄/接收手柄”模式才会传输手柄状态。'))
+        layout.addWidget(self._section('设备配对', '配对建立可信设备关系，不会自动接管手柄。'))
         pair_row = QHBoxLayout()
         self.code = QLabel("配对码：未开启")
         pair_row.addWidget(self.code)
@@ -179,15 +179,24 @@ class SyncPanel(QWidget):
         self._button("校验一致，确认配对", lambda: self.confirm(True), confirm_row)
         self._button("拒绝", lambda: self.confirm(False), confirm_row)
         layout.addLayout(confirm_row)
-        layout.addWidget(self._section('已配对设备', '选择设备后，再按需启动输入、事件或位置同步。'))
-        layout.addWidget(QLabel("已配对设备：选中设备，使用上方控制器范围开始同步"))
+        layout.addWidget(self._section('已配对设备', '选择设备后组合所需能力；再次应用会更新同一会话。'))
+        capability_row = QHBoxLayout()
+        self.cap_input = QCheckBox('手柄输入')
+        self.cap_position = QCheckBox('位置')
+        self.cap_event = QCheckBox('事件')
+        self.cap_catalog = QCheckBox('事件目录')
+        for check in (self.cap_input, self.cap_position, self.cap_event, self.cap_catalog):
+            check.setChecked(True)
+            capability_row.addWidget(check)
+        layout.addLayout(capability_row)
         self.peers = QListWidget()
         self.peers.setMinimumHeight(100)
+        self.peers.itemClicked.connect(self._select_peer_capabilities)
         layout.addWidget(self.peers)
         actions = QHBoxLayout()
-        self.send_button = self._button("启动全部事件通道", self.start_all_events, actions)
+        self.send_button = self._button("连接全部设备（数据）", self.start_all_events, actions)
         self.send_button.setEnabled(False)
-        self._button("启动选中设备", self.start_peer, actions)
+        self._button("连接/更新选中设备", self.start_peer, actions)
         self._button("停止选中设备", lambda: self.peer_command("sync.stop"), actions)
         self._button("重置连接状态", lambda: self.peer_command("sync.reset"), actions)
         self._button("移除选中设备", self.forget_peer, actions)
@@ -240,14 +249,41 @@ class SyncPanel(QWidget):
         if item: self.command("sync.confirm", {"requestId": item.data(Qt.ItemDataRole.UserRole)["requestId"], "allow": allow})
 
     def start_peer(self):
-        self.peer_command("sync.start", {"controllers": self.controllers()})
+        if self._status.get("mode") == "receive":
+            self.peer_command("sync.start", {"controllers": self.controllers()})
+            return
+        capabilities = self._selected_capabilities(include_input=self._status.get("mode") == "send")
+        if not capabilities:
+            self.message.setText("请选择至少一项会话能力。")
+            return
+        self.peer_command("sync.start", {"controllers": self.controllers() if "input.send" in capabilities else [],
+            "capabilities": capabilities})
+
+    def _selected_capabilities(self, *, include_input):
+        capabilities = []
+        if include_input and self.cap_input.isChecked(): capabilities.append("input.send")
+        if self.cap_position.isChecked(): capabilities.append("position.publish")
+        if self.cap_event.isChecked(): capabilities.append("event.publish")
+        if self.cap_catalog.isChecked(): capabilities.append("catalog.publish")
+        return capabilities
+
+    def _select_peer_capabilities(self, item):
+        capabilities = item.data(Qt.ItemDataRole.UserRole).get("capabilities") or []
+        if not capabilities: return
+        for check, name in ((self.cap_input, "input.send"), (self.cap_position, "position.publish"),
+                            (self.cap_event, "event.publish"), (self.cap_catalog, "catalog.publish")):
+            check.setChecked(name in capabilities)
 
     def start_all_events(self):
-        """Start one data-only event session for every paired peer."""
-        if self._status.get("mode") != "share":
-            self.message.setText("只有“位置与事件共享”模式支持同时启动全部事件通道。")
+        """Apply the selected data capabilities to every trusted peer."""
+        if self._status.get("mode") not in ("share", "send"):
+            self.message.setText("请先选择发送或共享模式。")
             return
-        self.command("sync.start", {"controllers": [], "broadcast": True})
+        capabilities = self._selected_capabilities(include_input=False)
+        if not capabilities:
+            self.message.setText("请选择至少一项数据能力。")
+            return
+        self.command("sync.start", {"controllers": [], "capabilities": capabilities, "broadcast": True})
 
     def peer_command(self, command, extra=None):
         item = self.peers.currentItem()
@@ -343,6 +379,7 @@ class SyncPanel(QWidget):
         self.code_button.setEnabled(ready and applied_mode in ("receive", "share"))
         self.pair_button.setEnabled(ready and applied_mode in ("send", "share"))
         self.send_button.setEnabled(ready and applied_mode in ("send", "share"))
+        self.cap_input.setEnabled(applied_mode == "send")
         pairing_state = status.get("pairingState", "idle")
         pairing_labels = {"connecting": "正在连接对方设备", "waiting-confirmation": "等待对方确认配对", "paired": "配对已完成", "failed": "配对失败"}
         if pairing_state in pairing_labels and not status.get("error"):
@@ -373,11 +410,11 @@ class SyncPanel(QWidget):
             elif p.get('connecting'):
                 state = '连接中'
             elif p.get('syncing'):
-                state = '事件通道已连接' if p.get('dataOnly') else '手柄通道已连接'
+                state = '会话已连接（' + ', '.join(p.get('capabilities') or []) + '）'
             elif p.get('connected'):
                 state = '已建立控制连接'
             else:
-                state = '已配对，未启动通道'
+                state = '已配对，未连接'
             return f"{p.get('name')} · {state} · C{p.get('controllers', [])} · RTT {p.get('rttMs', '—')}ms {p.get('error') or ''}"
         self._fill(self.peers, status.get("peers", []), peer_text, "deviceId")
 
@@ -402,5 +439,5 @@ class SyncPanel(QWidget):
             return
         # Newer sequence fences a command that was queued before shutdown.
         self._sequence += 1
-        QThreadPool.globalInstance().start(_Request(self.factory, self._signals, "sync.stop",
+        QThreadPool.globalInstance().start(_Request(self.factory, self._signals, "sync.suspend",
             {"_uiSource": self._source, "_uiSequence": self._sequence}, closing=True))

@@ -48,6 +48,19 @@ session、多 capability 复用、持久信任/自动恢复 fence、旧命令兼
 **覆盖进度更新：** 上述变更函数和新增 loopback 测试已重读；LAN 测试使用私有 .NET 8 SDK 验证为 `31 passed`。
 **新增 Finding：** 离线节点首次重连失败后必须保留恢复资格并再次进入有界退避；延迟回调还需以 generation、startVersion 和 `_connecting` 三重栅栏防止过期连接复活。
 
+## [SYNC] 2026-09-19 — UI 正常关闭与能力组合
+
+### A. SYNC 范围声明
+**触发任务：** 检查通信重构的 GUI 关闭/启动路径，避免把正常退出误当手动停止，并暴露同会话能力组合。
+**直接变更文件：** `SyncPanel`、`LanSyncService`、`ControllerRegistry`、对应 UI/Host/LAN 测试和协议说明。
+**预计连带影响：** UI 关闭回调、Host `sync.*` 路由、接收端进程内暂停栅栏、持久化恢复和能力协商 Flow。
+
+### C. SYNC 结果
+**连带重读文件：** `GamepadPage.shutdown()`、`LanPage.shutdown()`、`SyncPanel._Request/start_peer/start_all_events/render/shutdown()`、`LanSyncService.Handle/ConfigureLocked/ValidateIncomingCapabilitiesLocked()`。
+**CODEBASE.md 更新内容：** 通信状态、LAN 面板能力组合与 suspend Flow；协议文档新增 `sync.suspend`。
+**覆盖进度更新：** 上述调用链和新增测试已深读；LAN 32 项、Host 57 项、UI 14 项通过。
+**修订的旧结论：** 原认为 `Dispose()` 保留偏好即可恢复；现确认 GUI 在其之前调用 `sync.stop` 清除偏好，已改用进程内 `sync.suspend`。普通配置仍应允许接收，所以暂停栅栏与 `_autoReconnectBlocked` 分离。
+
 ## [Round 1] 2026-05-19
 
 ### A. 本轮目标（阅读前声明）

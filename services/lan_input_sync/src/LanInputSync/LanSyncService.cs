@@ -50,6 +50,7 @@ public sealed partial class LanSyncService : ILanSyncService
     private readonly HashSet<string> _recoveryPeers = new();
     private readonly Dictionary<string, SessionCapability> _recoveryCapabilities = new();
     private readonly HashSet<string> _autoReconnectBlocked = new();
+    private readonly HashSet<string> _suspendedPeers = new();
     private readonly HashSet<string> _reconnectPending = new();
     private readonly ReconnectBackoff _reconnectBackoff = new();
 
@@ -238,6 +239,7 @@ public sealed partial class LanSyncService : ILanSyncService
                         var controllers = Controllers(payload, _preferences.Controllers, allowEmpty: _mode == "share");
                         if (_mode == "receive")
                         {
+                            _suspendedPeers.Clear();
                             foreach (var c in controllers) SetRemoteEnabled(c, true);
                         }
                         else
@@ -329,6 +331,16 @@ public sealed partial class LanSyncService : ILanSyncService
                         if (selected is null) { _generation++; _startVersions.Clear(); foreach (var peerId in _trusted.Keys) _connecting.Remove(peerId); }
                         else { _startVersions.Remove(selected); _connecting.Remove(selected); }
                         break;
+                    case "sync.suspend":
+                        // Closing the UI neutralizes this process without erasing
+                        // the trusted recovery preferences for the next launch.
+                        _autoReconnectBlocked.UnionWith(_trusted.Keys);
+                        _suspendedPeers.UnionWith(_trusted.Keys);
+                        foreach (var s in _sessions.Values.ToArray()) CloseLocked(s, "process_shutdown");
+                        Array.Fill(_remoteEnabled, false);
+                        foreach (var slot in _remote) slot.Reset();
+                        _generation++; _startVersions.Clear(); _connecting.Clear();
+                        break;
                     case "sync.reset":
                         // Reset only the active channel and its diagnostics;
                         // keep the trusted pairing so it can be started again.
@@ -392,6 +404,7 @@ public sealed partial class LanSyncService : ILanSyncService
         _recoveryPeers.UnionWith(configuredRecoveryPeers);
         foreach (var (peer, capabilities) in configuredCapabilities) _recoveryCapabilities[peer] = capabilities;
         _autoReconnectBlocked.ExceptWith(configuredRecoveryPeers);
+        _suspendedPeers.Clear();
         _shareBlockedPeers.Clear();
         _receivePositions = mode is "share" or "receive" && value.TryGetProperty("receivePositions", out var rp) && rp.GetBoolean();
         _receiveEvents = mode is "share" or "receive" && value.TryGetProperty("receiveEvents", out var re) && re.GetBoolean();

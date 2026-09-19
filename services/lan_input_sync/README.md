@@ -35,7 +35,7 @@ if (sync.OwnsController(1))
 
 `Peek` 是不消耗按钮队列的只读方法。宿主也可缓存上一份 `Consume` 结果供 UI 展示。接收模式下应停用该槽位本地键鼠映射拦截，本库自身不会安装键盘或鼠标钩子。
 
-启动默认 `off`。信任关系、最后地址/端口和恢复偏好分开保存；普通断线或进程重启会按
+首次启动默认 `off`，后续启动恢复上次保存的模式和授权。信任关系、最后地址/端口和恢复偏好分开保存；普通断线或进程重启会按
 `1s, 2s, 5s, 15s, 30s` 退避恢复已授权能力。用户执行 `sync.stop`、手动断开、急停或
 忘记设备时会清除该 peer 的自动恢复资格，必须再次显式 `sync.start`。界面应等到
 `status.networkReady == true` 才发起配对或开始。
@@ -47,13 +47,14 @@ if (sync.OwnsController(1))
 | 命令 | 参数 | 行为 |
 |---|---|---|
 | `sync.status` | `{}` | 查询状态，不消耗输入 |
-| `sync.configure` | `mode,name,bindAddress,port,controllers,rateHz` | mode 为 off/send/receive；controllers 为 [1]、[2] 或 [1,2]；rateHz 为 60 或 125。重新配置会先停止会话 |
+| `sync.configure` | `mode,name,bindAddress,port,controllers,rateHz,receivePositions,receiveEvents` | mode 为 off/send/receive/share；share 可不用 controller；rateHz 为 60 或 125。重新配置会先停止当前会话 |
 | `sync.pairing` | `{}` | 开放一次限时配对，显示设备码 |
 | `sync.pair` | `address,port,code` | 从发送端发起配对 |
 | `sync.confirm` | `requestId,allow` | 两端分别核对指纹后确认；allow=false 拒绝 |
 | `sync.start` | 发送端 `deviceId,controllers`，可选 `capabilities`；接收端 `controllers` | 旧命令映射到能力集合；接收端先授权，发送端再开始 |
 | `sync.start-data` | 旧客户端兼容别名 | 等价于 `position.*`、`event.*`、`catalog.*` 数据能力集合，不再建立独立物理通道 |
 | `sync.stop` | 可选 `deviceId` | 停止指定设备或全部同步；接收端同时撤销本地接收许可 |
+| `sync.suspend` | `{}` | UI 正常关闭时中立化当前进程会话并阻止同进程重连；保留信任与下次启动的恢复资格，不等同手动停止 |
 | `sync.forget` | `deviceId` | 先停止会话，再删除信任记录 |
 
 状态包含 `mode,networkReady,deviceId,name,bindAddress,addresses,port,rateHz,pairingCode,pairingExpiresUtc,controllers,remoteEnabled,peers,discovered,pending,error`。
@@ -74,6 +75,6 @@ if (sync.OwnsController(1))
 & D:/ACloud/dotnet-sdk2/dotnet.exe test D:/ACloud/auto_modules/services/lan_input_sync/tests/LanInputSync.Tests/LanInputSync.Tests.csproj
 ```
 
-当前 19 个测试通过，覆盖同机真实 TLS / LiteNetLib 双实例及三实例回环、多目标独立槽位、短按、发送端/接收端暂停、F9、源进程退出、错误设备码、单边确认不授信、证书替换、认证篡改/重放、旧 epoch、状态失联、源报告线程停顿、接收网络线程停顿、可靠按钮积压超时、全新会话恢复、配置与紧急停止竞态。多接收端测试同时验证一台停顿时另一台仍可更新，以及停止/移除指定设备不会取消其他设备正在建立的连接。
+当前 32 个测试通过，覆盖同机 TLS / LiteNetLib 双实例及三实例回环、多目标独立槽位、短按、安全超时、证书替换、能力增减与拒绝隔离、进程重启、UI 暂停、持续退避和手动停止栅栏。多接收端测试同时验证一台停顿时另一台仍可更新，以及停止/移除指定设备不会取消其他设备正在建立的连接。
 
 这些是同机进程内多实例网络测试，不代表两台实体电脑上的游戏测试已完成。实体局域网自动发现、防火墙体验、有线/Wi-Fi 延迟分位数、随机物理丢包/重传、四接收端和长时间运行仍需在实际设备验证。未宣称单向延迟、p95 或游戏内短按采样达标。网络故障注入目前是确定性消息抑制/线程停顿，而非完整链路损伤模拟器。

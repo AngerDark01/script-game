@@ -128,6 +128,8 @@ public sealed class LanIntegrationTests
         var router = new CommandRouter(registry, () => new HostStatus(RunState.Paused, true, true, ""));
         var response = router.Handle(ProtocolSerializer.Parse("""{"type":"sync.stop","payload":{}}"""));
         Assert.True(JsonDocument.Parse(response).RootElement.GetProperty("ok").GetBoolean());
+        response = router.Handle(ProtocolSerializer.Parse("""{"type":"sync.suspend","payload":{}}"""));
+        Assert.True(JsonDocument.Parse(response).RootElement.GetProperty("ok").GetBoolean());
     }
 
     [Theory]

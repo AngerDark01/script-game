@@ -261,6 +261,27 @@ public class LoopbackTests
     }
 
     [Fact]
+    public async Task UiSuspendNeutralizesNowAndRecoversOnNextLaunch()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        string receiverId = pair.ReceiverId;
+        Call(pair.Sender, "sync.start", new { deviceId = receiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        Call(pair.Sender, "sync.suspend");
+        Call(pair.Receiver, "sync.suspend");
+        await Until(() => !Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("syncing").GetBoolean());
+        await Task.Delay(1200);
+        Assert.False(Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("syncing").GetBoolean());
+        pair.Sender.Dispose(); pair.Receiver.Dispose();
+
+        using var receiver = new LanSyncService(pair.ReceiverDirectory);
+        using var sender = new LanSyncService(pair.SenderDirectory);
+        await Until(() => Call(sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(),
+            () => Call(sender, "sync.status").ToString(), 12000);
+        Assert.Equal(receiverId, Call(receiver, "sync.status").GetProperty("deviceId").GetString());
+    }
+
+    [Fact]
     public async Task SharedEventCatalogIsDeliveredWithoutControllerOwnership()
     {
         using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);

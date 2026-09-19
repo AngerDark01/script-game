@@ -150,7 +150,7 @@ public sealed partial class ControllerRegistry
         {
             if (_sync is null)
             {
-                if (command == "sync.stop") return new { ok = true, unavailable = true };
+                if (command is "sync.stop" or "sync.suspend") return new { ok = true, unavailable = true };
                 throw new InvalidOperationException("LAN sync is unavailable on this host.");
             }
             if (payload.TryGetProperty("_uiSource", out var sourceElement))

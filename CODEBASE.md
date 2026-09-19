@@ -137,7 +137,8 @@ FollowService._network_shared()
 返回 `capability-reject`，原数据会话继续运行。当前运行时的权威持久层是 `IdentityStore`
 管理的 `trusted.json` 和 `preferences.json`；独立 `PeerTrustStore` 尚未接入 `LanSyncService`。
 `ReconnectBackoff` 提供有界退避。正常进程退出保留 mode、接收许可及恢复偏好；普通断线
-立刻中立化输入，已信任 peer 重连时才恢复保存的许可；手动 stop/reset/forget/emergency
+立刻中立化输入，已信任 peer 重连时才恢复保存的许可；UI 关闭使用 `sync.suspend`
+中立化当前会话并仅栅栏当前进程的重连，保留下次启动的恢复偏好；手动 stop/reset/forget/emergency
 清除恢复资格。
 
 风险登记：
@@ -4421,11 +4422,17 @@ def shutdown(self)
 4. `LanSyncService.RunControlsAsync(sender)` 比对 requestId、flags、controllers、grants；匹配后更换本地授权和 baseline 状态，把 peer scope/恢复能力写入内存并由 `SavePreferencesLater()` 持久化到 `trusted.json`、`preferences.json`。拒绝响应只清除 pending 并写 peer error。
 5. `CollectPackets()` 仅对 `InputSend` 的 controllers 发加密输入，对 `PositionPublish` 独立节拍发位置；`ReceivePacket()` 对输入撤销后的旧 datagram 直接丢弃，已认证数据共享仍可继续。最终 `status.peers[].sessionId` 不变，接收侧被撤销输入为 Neutral。
 
+### Flow: LAN 面板按能力更新同一 peer（verified）
+1. `SyncPanel.start_peer()` 输入当前选中 peer 的 `deviceId:string` 和手柄范围 `controllers:int[]`；`_selected_capabilities()` 将四个复选状态映射为 `input.send/position.publish/event.publish/catalog.publish`，share 模式不能申请输入。
+2. `SyncPanel.peer_command()` 发送 `sync.start(deviceId,controllers,capabilities)` 到 Host；`LanSyncService.Handle()` 对已连接的同 peer 写 `capability-update`，对新 peer 仅建立一个 session；页面只显示当前能力列表，不拥有业务会话。
+3. `SyncPanel.shutdown()` 输入无，经 Host 发 `sync.suspend`；`LanSyncService.Handle()` 重置当前接收输入、关闭会话，并把 `_suspendedPeers` 设为进程内栅栏；`preferences.json` 的恢复资格保持。显式停止按钮仍发 `sync.stop`，清除恢复资格。
+
 ### Flow: 正常退出、重启恢复和手动停止（verified）
 1. `LanSyncService.Dispose()` 输入无；先标记进程关闭、关闭活动 socket/中立化内存输入，不调用 `EmergencyStop()`，磁盘上的信任、mode、接收许可及恢复能力保持原状。
 2. 新实例 `LanSyncService(dataDirectory)` 读取 `IdentityStore` 的 `preferences.json` 与 `trusted.json`，恢复 `Mode/ReceivePositions/ReceiveEvents/EnabledControllers/RecoveryCapabilities`；`NetworkLoop()` 建立本地监听，`ConfigureNetwork()` 为恢复 peer 排程退避连接。
 3. `ScheduleAutoReconnectLocked()` 在 generation、手动 block、可信 peer 和当前模式许可均成立时，取保存的 capability flags 及 controller scope 调用 `StartOutgoingAsync()`；新 TLS/UDP 会话生成全新 sessionId、密钥和 grants。
 4. `CloseLocked()` 对普通断线先重置接收输入并撤销当前输出，再允许信任设备重新协商已保存授权；`Handle("sync.stop"/"sync.reset"/"sync.forget")` 或 `EmergencyStop()` 清除目标的恢复资格并写偏好，后续旧任务受 generation/startVersion 栅栏阻止。
+5. `Handle("sync.suspend")` 仅关闭当前进程会话并使用 `_suspendedPeers` 阻止已信任设备在窗口关闭后立即回连；正常 `Dispose()` 不把这一临时栅栏写入磁盘，下次进程启动仍按保存的偏好恢复。
 
 ### Flow: 应用注入 Torchlight 事件组合
 1. `ui/main_window.py::MainWindow.setup_ui()` 调用 `build_torchlight_navigation_composition()`，取得 registry 工厂、游戏窗口查找器和 Loot overlay provider；不在通用导航包中导入游戏事件类。
@@ -4636,6 +4643,7 @@ The provider's supported call settings come from one OCR profile instance's `pro
 ### LAN persisted preferences and capability update
 
 `Preferences` 除 `Name/BindAddress/Port/Controllers/RateHz` 外保存 `RecoveryPeers:string[]?`、`RecoveryCapabilities:Dictionary<string,string[]>?`、`Mode:string`、`ReceivePositions:bool`、`ReceiveEvents:bool`、`EnabledControllers:int[]?`。旧文件缺省 mode 为 off。配对证书指纹由 `trusted.json` 的 `TrustedPeer.DeviceId` 固定；活跃密钥和 grant 不持久化。`capability-update` 的 `controllers` 与 flags 一起协商，`capability-ack` 必须匹配 requestId/flags/scope 并含两个 grants；`capability-reject` 只保留错误，不改变已授能力。
+`sync.suspend` 不写回上述恢复字段，进程内 `_suspendedPeers` 阻止重新接收；显式 `sync.stop` 才删除相应 `RecoveryPeers/RecoveryCapabilities`。
 
 ### Repository path contract
 

@@ -450,6 +450,7 @@ public sealed partial class LanSyncService
 
     private void ValidateIncomingCapabilitiesLocked(string peerId, SessionCapability capabilities)
     {
+        if (_suspendedPeers.Contains(peerId)) throw new InvalidOperationException("本进程已暂停该设备连接。");
         bool receivesInput = (capabilities & SessionCapability.InputReceive) != 0;
         if (receivesInput) RequireMode("receive");
         else if (_mode is not ("share" or "receive")) throw new InvalidOperationException("本机未允许共享数据会话。");
