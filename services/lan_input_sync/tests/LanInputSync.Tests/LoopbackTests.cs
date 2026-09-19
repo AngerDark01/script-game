@@ -39,6 +39,7 @@ public class LoopbackTests
         public LanSyncService Sender { get; }
         public LanSyncService Receiver { get; }
         public string SenderDirectory => Path.Combine(_directory, "sender");
+        public string ReceiverDirectory => Path.Combine(_directory, "receiver");
         public string ReceiverId => Call(Receiver, "sync.status").GetProperty("deviceId").GetString()!;
         public int SenderPort { get; } = FreePort();
         public int ReceiverPort { get; } = FreePort();
@@ -238,6 +239,25 @@ public class LoopbackTests
         Assert.Equal(sessionId, Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("sessionId").GetString());
         Call(pair.Sender, "sync.share.position", new { actorId = "B", mapId = "map", mapVersion = "v1", x = 8.0, y = 9.0, confidence = .9, ageMs = 0 });
         await Until(() => Call(pair.Receiver, "sync.status").GetProperty("sharedPositions").GetArrayLength() == 1, pair.Details);
+    }
+
+    [Fact]
+    public async Task OfflineTrustedPeerRetriesUntilItReturns()
+    {
+        using var pair = new Pair(); await pair.ConfigureAndPair(dataOnly: true);
+        string receiverId = pair.ReceiverId;
+        Call(pair.Sender, "sync.start", new { deviceId = receiverId });
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(), pair.Details);
+        pair.Receiver.Dispose();
+        await Until(() => !Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("syncing").GetBoolean());
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("error").GetString() is string error
+            && error != "control_disconnected" && error != "udp_disconnected",
+            () => Call(pair.Sender, "sync.status").ToString(), 5000);
+
+        using var returned = new LanSyncService(pair.ReceiverDirectory);
+        await Until(() => Call(pair.Sender, "sync.status").GetProperty("peers")[0].GetProperty("connected").GetBoolean(),
+            () => Call(pair.Sender, "sync.status").ToString(), 15000);
+        Assert.Equal(receiverId, Call(returned, "sync.status").GetProperty("deviceId").GetString());
     }
 
     [Fact]

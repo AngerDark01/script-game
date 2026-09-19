@@ -25,14 +25,28 @@ session、多 capability 复用、持久信任/自动恢复 fence、旧命令兼
 `LanSyncService.cs::Handle/ConfigureLocked/CloseLocked/Dispose`、`LanSyncService.Transport.cs::ReceivePacket`、
 `IdentityStore.cs::Preferences`、`communication_adapter.py::pump/ensure_connected` 和对应 loopback/fake tests。
 已修订“无 .NET SDK”的旧结论：系统默认 `dotnet` 不可用，但 `D:\ACloud\dotnet-sdk2\dotnet.exe`
-可用，LAN 30 项和 Host 57 项全部通过。数据会话可在不换 sessionId 的情况下增加/移除输入；
+可用，LAN 31 项和 Host 57 项全部通过。数据会话可在不换 sessionId 的情况下增加/移除输入；
 无接收授权时返回拒绝并保留数据会话。正常进程重启恢复已信任 session，手动 stop 不恢复；
-旧输入 watchdog 断线中立化契约仍由全套 LAN 测试验证。权威 LAN 信任文件为
+首轮恢复连接失败后继续退避，远端重新上线后自动连回；旧输入 watchdog 断线中立化契约
+仍由全套 LAN 测试验证。权威 LAN 信任文件为
 `trusted.json`/`preferences.json`，不是尚未接入运行时的 `PeerTrustStore`。
 通信 Python 聚焦测试通过；全量 pytest 492 passed、2 skipped、4 failed，失败为缺少
 `pydirectinput` 发布依赖和 3 项独立 Pathfinder 测试，不纳入本轮通信变更。
 **覆盖状态：** 本轮上述函数体和失败分支已深读；未重读的项目其余文件仍保持原有覆盖状态。
 
+
+## [SYNC] 2026-09-19 19:32 — 离线可信节点持续重连
+
+### A. SYNC 范围声明
+**触发任务：** 通信线程完成后遗留的离线可信节点重连修复收尾。
+**直接变更文件：** `LanSyncService.Control.cs`、`LanSyncService.cs`、`LoopbackTests.cs`、`CODEBASE.md`。
+**预计连带影响：** 出站连接失败后的退避调度、成功连接后的退避复位、可信节点恢复 Flow 及 LAN loopback 测试。
+
+### C. SYNC 结果
+**连带重读文件：** `LanSyncService.Control.cs`、`LanSyncService.cs`、`LoopbackTests.cs`、`CODEBASE.md`。
+**CODEBASE.md 更新内容：** §5 补全 `RunControlsAsync()` 与持续重连算法、失败行为和副作用；可信节点恢复 Flow 明确失败重调度与成功复位退避。
+**覆盖进度更新：** 上述变更函数和新增 loopback 测试已重读；LAN 测试使用私有 .NET 8 SDK 验证为 `31 passed`。
+**新增 Finding：** 离线节点首次重连失败后必须保留恢复资格并再次进入有界退避；延迟回调还需以 generation、startVersion 和 `_connecting` 三重栅栏防止过期连接复活。
 
 ## [Round 1] 2026-05-19
 

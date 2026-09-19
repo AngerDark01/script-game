@@ -1820,12 +1820,40 @@ def poll(self) -> tuple[tuple[SharedPosition, ...], tuple[SharedEvent, ...]]
 行为与算法：
 1. `publish()` 用 caller local clock 计算观测 age，拒绝负 age 或 `>=500ms` 数据，再把剩余期限转换为 Host clock deadline。
 2. `send_event()` 生成或接受 Host deadline，在发送前再次与 Host clock 比较；过期直接返回 `False` 且不触碰 client。
-3. `poll()` 记录 IPC 前后 local clock，从 `sync.share.drain` 分别解析 positions/events。
+3. 注入 manager 后，`poll()` 调用一次 `manager.pump()`，从本对象的 position/event 订阅 inbox 分别取出消息；兼容模式才由本对象直接调用 `sync.share.drain`。
 4. position 必须包含有限 age/x/y/confidence 且 confidence 在 `[0,1]`；用 IPC 开始时间减 age 重建 local timestamp，并在 IPC 返回后再次检查是否过期。
 5. event 的 remainingMs 必须在 `(0,500]`，换算 local deadline 后必须仍未过期；非法单条记录被丢弃，其他记录继续。
-副作用：调用 Host `sync.share.position`、`sync.share.event`、`sync.share.drain`；不直接拥有 socket。
+副作用：manager 路径经 capability lease 发布并由共享 Host adapter 统一 drain；兼容路径直接请求 Host `sync.share.*`；不直接拥有 socket。
 失败行为：单条 malformed inbound 捕获 `KeyError/TypeError/ValueError` 并丢弃；client request 异常向上传播。
 调用关系：Called by `features.torchlight.follow.service.FollowService._network()`；Calls injected client 和 Host-compatible clock。
+
+### `LanSyncService.RunControlsAsync(Session session, CancellationToken token) -> Task`
+```csharp
+private async Task RunControlsAsync(Session session, CancellationToken token)
+```
+算法实现：
+1. 为每会话启动唯一 TLS control writer，从 bounded `Session.Controls` 依序发送消息；reader 顺序解析 `type`。
+2. 接收端对 `capability-update` 反转 flags、检查 mode/接收许可、手柄范围与独占；失败只排队 `capability-reject`，成功撤销旧 grant 或生成新 grant，再排队含 `controllers/grants` 的 ack。
+3. 发送端对 ack 比对 requestId/flags/scope/grants，更新 `Controllers`、`Initialized`、恢复能力并异步持久化；reject 只清理 pending 和记录 peer error，不关闭数据会话。
+4. 对共享事件/目录仅在对应 session capability 存在时交给 `ReceiveSharedEventLocked()`；`permissions` 更新变化的 grant 并触发下次输入 baseline。
+5. 退出时取消 writer 并等待完成，外层 `StartOutgoingAsync()/AcceptClientAsync()` 负责 `CloseLocked()`。
+副作用：写 TLS、更新 `_remote`/`_trusted`/`_recoveryCapabilities` 和 `preferences.json`/`trusted.json`；不直接发送真实手柄输入。
+失败行为：授权不成立回 `capability-reject` 并保持原 session；requestId/grants 不匹配抛 `AuthenticationException`，控制链断开并中立化；队列溢出则关闭当前 session。
+调用关系：Called by `AcceptClientAsync()`、`StartOutgoingAsync()`；Calls `ValidateIncomingCapabilitiesLocked()`、`SavePreferencesLater()`、`ReceiveSharedEventLocked()`。
+
+### `LanSyncService.Dispose() -> void` and `ScheduleAutoReconnectLocked(string peerId, string reason) -> void`
+```csharp
+public void Dispose()
+private void ScheduleAutoReconnectLocked(string peerId, string reason)
+```
+算法实现：
+1. `Dispose()` 在 gate 中标记停止并同步重置内存输入，关闭每个 session，但不清除磁盘恢复资格；取消网络 worker，等待持久化队列完成后释放 identity。
+2. 新实例读取 `Preferences` 的 mode/许可/恢复列表，启动监听；`ConfigureNetwork()` 对每个恢复 peer 请求调度。
+3. 调度器拒绝已手动 block、遗忘、已在连接或 generation/startVersion 不匹配的 peer；取有界退避和保存的 capability set，按 input flag 选择 `start` 或 `start-data`。连接失败会再次调度，成功注册会话时重置退避。
+4. 延迟结束后再检查 fence，才调用 `StartOutgoingAsync()`；每次连接重新生成 sessionId、密钥与 grant。
+副作用：关闭 TLS/UDP 和线程；读取/保留 `preferences.json`、`trusted.json`，重新建立受信 LAN 会话。
+失败行为：取消/已停止直接退出；连接异常写 peer error 并由后续断开路径退避，手动 stop/reset/forget/emergency 不再自动调度。
+调用关系：Called by Host shutdown / `CloseLocked()` / `ConfigureNetwork()`；Calls `StartOutgoingAsync()` and `ReconnectBackoff.Next()`。
 
 ### `with_display_hints(schema: dict, *, compact: Iterable[str] = (), summary: Iterable[str] = ()) -> dict`
 行为：为通用事件配置 schema 标注紧凑视图和摘要视图字段。

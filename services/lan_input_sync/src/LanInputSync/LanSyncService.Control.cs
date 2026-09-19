@@ -283,6 +283,7 @@ public sealed partial class LanSyncService
             if (_sessions.TryGetValue(peer.DeviceId, out var activeSession) && activeSession.Active)
             { session.Crypto.Dispose(); throw new InvalidOperationException("设备已有活动连接，请勿双向同时发起。"); }
             _sessions[peer.DeviceId] = session; _peerErrors.Remove(peer.DeviceId); _error = null;
+            _reconnectBackoff.Reset(peer.DeviceId);
             _connecting.Remove(peer.DeviceId);
             _work.Enqueue(() =>
             {

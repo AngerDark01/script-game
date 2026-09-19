@@ -421,9 +421,18 @@ public sealed partial class LanSyncService : ILanSyncService
         Guid ticket = Guid.NewGuid(); _connecting.Add(key, ticket);
         _ = Task.Run(async () =>
         {
+            bool failed = false;
             try { await connect(); }
-            catch (Exception ex) { lock (_gate) { _error = ex.Message; _peerErrors[key] = ex.Message; if (key.StartsWith("pair:", StringComparison.Ordinal)) _pairingState = "failed"; } }
-            finally { lock (_gate) if (_connecting.GetValueOrDefault(key) == ticket) _connecting.Remove(key); }
+            catch (Exception ex) { lock (_gate) { failed = true; _error = ex.Message; _peerErrors[key] = ex.Message; if (key.StartsWith("pair:", StringComparison.Ordinal)) _pairingState = "failed"; } }
+            finally
+            {
+                lock (_gate)
+                {
+                    if (_connecting.GetValueOrDefault(key) == ticket) _connecting.Remove(key);
+                    if (failed && !key.StartsWith("pair:", StringComparison.Ordinal))
+                        ScheduleAutoReconnectLocked(key, "connect_failed");
+                }
+            }
         });
     }
 
@@ -447,7 +456,8 @@ public sealed partial class LanSyncService : ILanSyncService
             {
                 _reconnectPending.Remove(peerId);
                 if (_disposed || generation != _generation || _autoReconnectBlocked.Contains(peerId)
-                    || !_recoveryPeers.Contains(peerId) || !_trusted.ContainsKey(peerId)) return;
+                    || !_recoveryPeers.Contains(peerId) || !_trusted.ContainsKey(peerId)
+                    || _connecting.ContainsKey(peerId) || _startVersions.GetValueOrDefault(peerId) != startVersion) return;
                 var capabilities = _recoveryCapabilities.GetValueOrDefault(peerId, SessionCapabilities.Legacy(dataOnly, false));
                 dataOnly = (capabilities & SessionCapability.InputSend) == 0;
                 ScheduleConnection(peerId, () => StartOutgoingAsync(peer, generation, startVersion, _run.Token, dataOnly, capabilities));
