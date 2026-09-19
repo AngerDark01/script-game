@@ -16,18 +16,33 @@ Pairing control sequence:
 
 No input session exists during pairing. Pending confirmation expires after three minutes. TLS handshakes/initial messages have a ten-second deadline. Incoming TLS connections are capped at 16; pending pair requests at four. Unknown certificates are only provisionally accepted while pairing is open and cannot issue `start`.
 
-Subsequent TLS is certificate-pinned. Sender sends `{type:"start",controllers:[1,2]}`; receiver must already have enabled local permission for each selected slot. Overlapping owners are rejected. Receiver creates a session and replies with `{type:"session",sessionId,token,senderKey,receiverKey,port,grants:[g1,g2]}`. Each key is independently random, 256 bits. Token is random, used to associate LiteNetLib's initial connection; input authorization always additionally requires valid AEAD payloads.
+Subsequent TLS is certificate-pinned and does not require the pairing code. Sender sends legacy
+`{type:"start",controllers:[1,2]}` or the capability form
+`{type:"start",capabilities:["input.send","position.publish","event.publish"]}`.
+`start-data` remains a compatibility alias for the position/event/catalog capability set. The
+receiver must already have enabled local permission for each selected input slot; overlapping
+input owners are rejected. Receiver creates one session and replies with
+`{type:"session",capabilities:[...],sessionId,token,senderKey,receiverKey,port,grants:[g1,g2]}`.
+Each key is independently random, 256 bits. Token is random, used to associate LiteNetLib's
+initial connection; input authorization always additionally requires valid AEAD payloads.
 
 Event/position sharing uses the same paired TLS connection without owning a
-controller. A data-only session is started with `{type:"start-data"}` after
-both devices are configured for `share` mode and have enabled the corresponding
-data permission. `sync.share.catalog` publishes a versioned event definition
-catalog. The host exposes `sync.share.catalog_drain` as a catalog-only read
-queue; it never consumes pending shared trigger events. `sync.share.drain`
-continues to return trigger events (and retains its legacy catalog field for
-older clients). This separation allows the workbench to refresh read-only
-event definitions in the background without starting an event listener or
-interfering with remote event execution.
+controller. A data-only session is started with `{type:"start-data"}` or the
+capability form after both devices are configured for `share` mode and have
+enabled the corresponding data permission. Input and data capabilities may be
+negotiated on the same peer session; the legacy `DataOnly` field is derived
+from the capability set for old status consumers. `sync.share.catalog` publishes
+a versioned event definition catalog. The host exposes
+`sync.share.catalog_drain` as a catalog-only read queue; it never consumes
+pending shared trigger events. `sync.share.drain` continues to return trigger
+events (and retains its legacy catalog field for older clients). The Python
+Host adapter performs the one drain read and fans envelopes to multiple
+business subscribers.
+
+The `map.publish` and `map.subscribe` capabilities are reserved for a future
+versioned-resource lane. This version defines no map storage, chunk commit,
+merge, or UI behavior; unknown map topics must be ignored without closing an
+otherwise valid session.
 
 Receiver sends `{type:"permissions",grants:[g1,g2]}` to change local slot permission. Zero denies; reauthorization creates a new random nonzero grant. Sender transmits a fresh reliable baseline for a changed nonzero grant. TCP closure invalidates the associated UDP session. Stop uses closure plus immediate local neutralization rather than waiting for a delivered stop message.
 
@@ -46,7 +61,12 @@ All integers below are little-endian. Maximum encoded packet is 554 bytes; no ap
 
 Header is authenticated additional data. AES-GCM nonce is `lane + three zero bytes + uint64 sequence`. Keys differ by direction; sessions always use fresh keys, so nonce/key pairs do not repeat. Sequence starts at one and must not wrap. Receiver authenticates before updating per-lane replay state. Channels have independent counters, preventing a newer snapshot from suppressing an older-but-required reliable button record.
 
-Lane 0 uses LiteNetLib `Sequenced`. Payload: count byte followed by each selected slot: zero-based slot byte, uint32 grant, uint32 source epoch, uint32 button revision, enabled byte, pad report (uint16 buttons, uint8 LT/RT, int16 LX/LY/RX/RY).
+Lane 0 uses LiteNetLib `Sequenced`. Legacy input payload is a count byte followed by each selected
+slot: zero-based slot byte, uint32 grant, uint32 source epoch, uint32 button revision, enabled byte,
+pad report (uint16 buttons, uint8 LT/RT, int16 LX/LY/RX/RY). A capability-multiplexed data
+position payload is JSON on the same authenticated lane and is distinguished by its `{` prefix;
+its freshness is bounded to 500ms. This compatibility encoding can be replaced by a dedicated lane
+in a later protocol version without changing the logical capability contract.
 
 Lane 1 uses `ReliableOrdered`. Payload: slot byte, grant, epoch, revision, enabled byte, uint16 buttons, baseline byte. Receiver snapshots never directly overwrite the ordered button output. A real backend report consumes at most one queued button bitmap; down/up cannot be collapsed in the same backend submission.
 

@@ -35,7 +35,10 @@ if (sync.OwnsController(1))
 
 `Peek` 是不消耗按钮队列的只读方法。宿主也可缓存上一份 `Consume` 结果供 UI 展示。接收模式下应停用该槽位本地键鼠映射拦截，本库自身不会安装键盘或鼠标钩子。
 
-启动默认 `off`，历史配对和偏好可保留，但接收许可及运行会话不持久化。界面应等到 `status.networkReady == true` 才发起配对或开始。
+启动默认 `off`。信任关系、最后地址/端口和恢复偏好分开保存；普通断线或进程重启会按
+`1s, 2s, 5s, 15s, 30s` 退避恢复已授权能力。用户执行 `sync.stop`、手动断开、急停或
+忘记设备时会清除该 peer 的自动恢复资格，必须再次显式 `sync.start`。界面应等到
+`status.networkReady == true` 才发起配对或开始。
 
 ## 面板管理协议
 
@@ -48,13 +51,14 @@ if (sync.OwnsController(1))
 | `sync.pairing` | `{}` | 开放一次限时配对，显示设备码 |
 | `sync.pair` | `address,port,code` | 从发送端发起配对 |
 | `sync.confirm` | `requestId,allow` | 两端分别核对指纹后确认；allow=false 拒绝 |
-| `sync.start` | 发送端 `deviceId,controllers`；接收端 `controllers` | 接收端先授权，发送端再开始 |
+| `sync.start` | 发送端 `deviceId,controllers`，可选 `capabilities`；接收端 `controllers` | 旧命令映射到能力集合；接收端先授权，发送端再开始 |
+| `sync.start-data` | 旧客户端兼容别名 | 等价于 `position.*`、`event.*`、`catalog.*` 数据能力集合，不再建立独立物理通道 |
 | `sync.stop` | 可选 `deviceId` | 停止指定设备或全部同步；接收端同时撤销本地接收许可 |
 | `sync.forget` | `deviceId` | 先停止会话，再删除信任记录 |
 
 状态包含 `mode,networkReady,deviceId,name,bindAddress,addresses,port,rateHz,pairingCode,pairingExpiresUtc,controllers,remoteEnabled,peers,discovered,pending,error`。
 
-- peers: `{deviceId,name,address,port,connected,syncing,connecting,controllers,rttMs,error}`。
+- peers: `{deviceId,name,address,port,connected,syncing,connecting,capabilities,controllers,rttMs,error}`。
 - discovered: `{deviceId,name,address,port}`。
 - pending: `{requestId,deviceId,name,fingerprint,incoming,confirmed}`。
 
