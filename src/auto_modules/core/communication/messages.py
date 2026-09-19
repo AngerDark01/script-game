@@ -30,6 +30,12 @@ class MessageEnvelope:
     sequence: int | None = None
     sender: PeerId | None = None
     session_id: SessionId | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    version: str | None = None
+    manifest_hash: str | None = None
+    chunk_index: int | None = None
+    chunk_count: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.message_id, str) or not self.message_id.strip():
@@ -50,6 +56,20 @@ class MessageEnvelope:
                 raise ValueError("deadline_ms must be after created_at_ms")
         if self.sequence is not None:
             _integer(self.sequence, "sequence")
+        resource_values = (self.resource_type, self.resource_id, self.version, self.manifest_hash)
+        if any(value is not None for value in resource_values):
+            if self.delivery is not DeliveryMode.VERSIONED_RESOURCE:
+                raise ValueError("resource metadata requires versioned-resource delivery")
+            if any(not isinstance(value, str) or not value.strip() for value in resource_values):
+                raise ValueError("resource metadata fields must be non-empty strings")
+            if self.chunk_index is None or self.chunk_count is None:
+                raise ValueError("resource chunks require chunk_index and chunk_count")
+            _integer(self.chunk_index, "chunk_index")
+            _integer(self.chunk_count, "chunk_count", minimum=1)
+            if self.chunk_index >= self.chunk_count:
+                raise ValueError("chunk_index must be smaller than chunk_count")
+        elif self.chunk_index is not None or self.chunk_count is not None:
+            raise ValueError("chunk metadata requires resource metadata")
         if self.ttl_ms is not None and self.deadline_ms is not None:
             if self.deadline_ms > self.created_at_ms + self.ttl_ms:
                 raise ValueError("deadline_ms cannot exceed ttl expiry")
@@ -128,4 +148,3 @@ class MessageEnvelope:
             created_at_ms=now_ms,
             deadline_ms=deadline_ms,
         )
-
