@@ -18,3 +18,20 @@ def test_capture_uses_poe2_binding_only():
     frame = MonitorFrameSource(backend).capture(MonitorBinding(CaptureRect(5, 7, 32, 24)))
     assert frame.shape == (24, 32, 3)
     assert backend.calls == [(5, 7, 32, 24)]
+
+
+def test_circle_capture_masks_pixels_outside_effective_radius():
+    class OnesCapture(FakeCapture):
+        def capture(self, x, y, width, height):
+            self.calls.append((x, y, width, height))
+            return np.ones((height, width, 3), dtype=np.uint8)
+
+    backend = OnesCapture()
+    frame = MonitorFrameSource(backend).capture(
+        MonitorBinding(CaptureRect(0, 0, 5, 5)),
+        shape="circle",
+        radius=2.0,
+    )
+
+    assert frame[2, 2].tolist() == [1, 1, 1]
+    assert frame[0, 0].tolist() == [0, 0, 0]

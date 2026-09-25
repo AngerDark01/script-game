@@ -1,5 +1,11 @@
 # Architecture Iteration Log
 
+## [2026-09-24] PoE2 首帧业务门槛边界
+
+- 业务适配层 `features/poe2/.../composition.py` 负责 PoE2 的 75% 锚定接受政策；通用 `AnchoredRegistrationConfig` 仍保持 `minimum_confidence=0`、`minimum_score=0.50`、普通 coverage=0.65 的默认契约。
+- `minimum_score_when_anchored` 是可选窄接口：只有可信 memory anchor 且 `player_on_walkable` 时才替换 image-only score gate；它不改变无锚点候选、错误实例或普通局部跟踪的规则。
+- 诊断数据必须同时记录 confidence、score、coverage、anchor_error、角度、镜像和比例，防止把低视觉分数误报为内存位置错误。
+
 ## [SYNC] 2026-09-18 20:39 - 统一事件运行时与工作台边界收口
 
 ### A. SYNC 范围声明
@@ -1093,3 +1099,29 @@ and one reusable execution runtime. Put keyboard polling behind a trigger
 source adapter, route normalization behind a route repository/router, and Host
 or LAN delivery behind output adapters. Then make `EventWorkbenchPage` depend
 on a composed workbench service rather than constructing/parsing runtimes.
+
+## [SYNC] 2026-09-23 - PoE2 multiframe localization experiment
+
+### A. Scope
+
+- Review the completed `experimental/multiframe_localization` package and its PoE2 capture-test composition against the bottom-up generalization rule.
+- Confirm that recognition, displacement, shape scoring, registration lifecycle, navigation observation, UI, persistence, and side effects retain explicit ownership boundaries.
+
+### C. Result
+
+- (verified) The experiment composes existing canonical-wall, phase-displacement and anchored-registration capabilities; it does not duplicate controller output, path execution, Host, LAN, keyboard, or mouse behavior.
+- (verified) The feature-specific composition and memory anchor stay under `features/poe2`; generic-looking motion/evidence/scoring modules remain experimental until a second reuse case and real-game calibration justify promotion to `core`.
+- (verified) Mutable state is session-scoped: each experiment owns its window, submap, estimator, coordinator, worker and archive; formal and experimental runtimes do not share sessions.
+- (verified) Registration uses a bounded single worker and a four-part version token, so asynchronous results cannot cross map instances, recovery revisions, evidence versions or segments.
+- (verified) Navigation receives a domain-neutral, fail-closed observation only; the adapter cannot execute a route or emit device/network side effects.
+- Validation: focused PoE2 localization/UI/composition/displacement/architecture suite `261 passed`; compileall and diff checks passed. Real-game A/B calibration remains explicitly pending.
+## 2026-09-24 - PoE2 center capture invariant and adaptive similarity calibration
+
+- 通用空间层新增 `resize_binding_around_marker()`：只处理物理矩形、锚点和 DPI 元数据；PoE2 profile/UI 组合该能力，底层不感知游戏业务。
+- `Poe2MonitorConfig` 自身保证 center 模式 `capture_size == binding.width == binding.height`，避免页面、正式 runtime、测试台或直接 profile 加载产生不同截图尺寸。
+- PoE2 实验 registrar 继续自动搜索 angle/reflection/scale；真实 capture size 只调整可见范围和噪声排除，不把某台电脑实测的 `0.77` 固化为配置。
+- 实机 300px 首帧通过 `confidence=0.81177`，无输入或网络副作用；算法仍留在 PoE2 experimental 边界，等待多地图/多 UI scale 证据后再评估可下沉部分。
+
+### 2026-09-24 PoE2 首帧门槛调整
+
+PoE2 组合将首帧 `minimum_confidence` 调整为 `0.70`；通用 registrar、形状覆盖率门和其他业务组合保持不变。

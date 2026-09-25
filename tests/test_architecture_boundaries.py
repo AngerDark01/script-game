@@ -80,6 +80,22 @@ def test_production_code_does_not_import_tools():
     assert not found, "\n".join(found)
 
 
+def test_hybrid_localization_experiment_has_no_ui_or_input_execution_dependencies():
+    root = (
+        SOURCE
+        / "features"
+        / "poe2"
+        / "live_terrain"
+        / "experimental"
+        / "hybrid_localization"
+    )
+    found = _violations(
+        root,
+        r"(?:from|import) (?:PySide6|auto_modules\.(?:ui|application|adapters\.host|services\.lan|core\.gamepad))(?:\.|\s|$)",
+    )
+    assert not found, "\n".join(found)
+
+
 def test_game_feature_packages_are_importable_without_runtime_side_effects():
     import auto_modules.features.poe2
     import auto_modules.features.poe2.live_terrain
@@ -107,9 +123,10 @@ def test_poe2_live_terrain_business_has_one_feature_home():
 
 def test_poe2_ui_composition_owns_feature_assembly(tmp_path):
     import numpy as np
+    from auto_modules.core.vision import HSVRecognizer
 
     from auto_modules.features.poe2.live_terrain import (
-        Poe2LocalizationRuntime,
+        Poe2HybridProductRuntime,
         Poe2MonitorConfigStore,
         Poe2TerrainService,
     )
@@ -132,9 +149,33 @@ def test_poe2_ui_composition_owns_feature_assembly(tmp_path):
         writable_root=tmp_path,
     )
     assert isinstance(composition.service, Poe2TerrainService)
-    assert isinstance(composition.runtime, Poe2LocalizationRuntime)
+    assert isinstance(composition.runtime, Poe2HybridProductRuntime)
     assert isinstance(composition.config_store, Poe2MonitorConfigStore)
     assert composition.config_store.root == (tmp_path / "poe2_live_terrain").resolve()
+
+
+def test_poe2_composition_copies_mutable_hsv_recognizer_state(tmp_path):
+    import numpy as np
+
+    from auto_modules.core.vision import HSVRecognizer
+    from auto_modules.ui.modes.poe2 import build_poe2_live_terrain_composition
+
+    class Capture:
+        def capture(self, _x, _y, width, height):
+            return np.zeros((height, width, 3), dtype=np.uint8)
+
+    shared = HSVRecognizer()
+    composition = build_poe2_live_terrain_composition(
+        screen_capture=Capture(),
+        recognizer=shared,
+        writable_root=tmp_path,
+    )
+
+    dedicated = composition.capture_recognizer
+    assert isinstance(dedicated, HSVRecognizer)
+    assert dedicated is not shared
+    shared.player_hsv_min[:] = 0
+    assert dedicated.player_hsv_min.tolist() != [0, 0, 0]
 
 
 def test_torchlight_composition_owns_torchlight_event_registration():

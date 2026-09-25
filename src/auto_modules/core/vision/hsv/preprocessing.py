@@ -82,8 +82,8 @@ def preprocess_for_fog(recognizer, img):
     return scale_intensity(img_enhanced, alpha=1.1, beta=10)
 
 
-def raw_gray_for_matching(recognizer, img):
-    img_processed = recognizer.preprocess_image(img)
+def raw_gray_for_matching(recognizer, img, *, processed=None):
+    img_processed = processed if processed is not None else recognizer.preprocess_image(img)
     gray = to_gray(img_processed)
     h, w = gray.shape
     return subtract_mask(

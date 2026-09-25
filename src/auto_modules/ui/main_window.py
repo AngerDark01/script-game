@@ -201,6 +201,33 @@ class MainWindow(QMainWindow):
             service=poe2_live_terrain.service,
             runtime=poe2_live_terrain.runtime,
             config_store=poe2_live_terrain.config_store,
+            profile_store=getattr(poe2_live_terrain, "profile_store", None),
+            capture_test_service=getattr(poe2_live_terrain, "capture_test_service", None),
+            capture_test_archive=getattr(poe2_live_terrain, "capture_test_archive", None),
+            capture_sample_archive=getattr(poe2_live_terrain, "capture_sample_archive", None),
+            capture_stitching_archive=getattr(
+                poe2_live_terrain,
+                "capture_stitching_archive",
+                None,
+            ),
+            capture_stitching_session_factory=getattr(
+                poe2_live_terrain,
+                "capture_stitching_session_factory",
+                None,
+            ),
+            capture_preview=getattr(poe2_live_terrain, "capture_preview", None),
+            capture_recognizer=getattr(poe2_live_terrain, "capture_recognizer", None),
+            player_position_source=getattr(poe2_live_terrain, "player_position_source", None),
+            hybrid_localization_factory=getattr(
+                poe2_live_terrain,
+                "hybrid_localization_factory",
+                None,
+            ),
+            multiframe_localization_factory=getattr(
+                poe2_live_terrain,
+                "multiframe_localization_factory",
+                None,
+            ),
             parent=self,
         )
         self.stacked_widget.addWidget(self.poe2_terrain_page)

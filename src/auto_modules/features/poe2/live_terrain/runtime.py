@@ -7,7 +7,7 @@ side effects are owned here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from time import perf_counter, time
 from typing import Any, Callable, Iterable, cast
 
@@ -31,16 +31,31 @@ from .terrain_reference import build_reference
 
 
 @dataclass(frozen=True)
+class Poe2VisualEvidence:
+    """Mapping-compatible visual layers produced for one minimap frame."""
+
+    processed_frame: Any = None
+    match_mask: Any = None
+    wall_mask: Any = None
+    fog_mask: Any = None
+
+
+@dataclass(frozen=True)
 class Poe2FrameInput:
     raw_frame: Any
     observation: ObservationFrame
     selected: ObservationCandidate
     captured_at_ms: int
+    visual: Poe2VisualEvidence | None = None
 
 
 @dataclass(frozen=True)
 class Poe2LocalizationState:
     raw_frame: Any = None
+    processed_frame: Any = None
+    match_mask: Any = None
+    wall_mask: Any = None
+    fog_mask: Any = None
     observation: ObservationFrame | None = None
     selected_candidate: ObservationCandidate | None = None
     localization: LocalizationResult = LocalizationResult(None, 0.0, source="failed")
@@ -53,6 +68,7 @@ class Poe2LocalizationState:
     recognition_elapsed_ms: float = 0.0
     localization_elapsed_ms: float = 0.0
     failure_reason: str = "not_started"
+    recognition_diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def position(self) -> tuple[float, float] | None:
@@ -77,9 +93,13 @@ class Poe2LocalizationRuntime:
         local_match: Callable[[Any, tuple[float, float]], Any] | None = None,
         phase_predict: Callable[[Any, Any], tuple[float, float] | None] | None = None,
         calibration: Poe2Calibration | None = None,
-        min_confidence: float = 0.7,
+        # PoE2's minimap marker is intentionally small after capture scaling;
+        # the recognizer still rejects tiny components and the single-player
+        # policy fails closed on ambiguity.
+        min_confidence: float = 0.6,
         trajectory: TrajectoryBuffer | None = None,
         logger: Any | None = None,
+        preview_capture: Callable[[Any], Any] | None = None,
     ) -> None:
         if capture is None:
             raise ValueError("capture is required")
@@ -95,18 +115,28 @@ class Poe2LocalizationRuntime:
             )
         self.capture = capture
         self.recognizer = recognize
+        recognizer_source = getattr(recognize, "recognizer", recognize)
+        get_params = getattr(recognizer_source, "get_params", None)
+        initial_params = get_params() if callable(get_params) else None
+        self._default_recognizer_params = (
+            dict(initial_params) if isinstance(initial_params, dict) else {}
+        )
         self.localizer = localizer
         self.calibration = calibration
         self.reference: TerrainReference | None = None
+        self._snapshot = None
         self.min_confidence = float(min_confidence)
         self.trajectory = trajectory or TrajectoryBuffer()
         self.logger = logger
+        self.preview_capture = preview_capture
         self.active = False
         self._latest_confirmed_position = None
         self._last_state = Poe2LocalizationState()
         self._listeners: list[Callable[[Poe2LocalizationState], None]] = []
         self.search_radius = 96
         self.match_threshold = 0.25
+        self.selection_mode = "region"
+        self.center_position: tuple[int, int] | None = None
 
     @property
     def last_state(self) -> Poe2LocalizationState:
@@ -129,6 +159,7 @@ class Poe2LocalizationRuntime:
         reference: TerrainReference,
         calibration: Poe2Calibration | None = None,
     ) -> None:
+        self._snapshot = None
         self.reference = reference
         if calibration is not None:
             self.calibration = calibration
@@ -142,16 +173,45 @@ class Poe2LocalizationRuntime:
 
     def configure_snapshot(self, snapshot) -> None:
         """Build the localization reference from the captured terrain snapshot."""
-        self.configure_reference(build_reference(snapshot))
+        self._snapshot = snapshot
+        self._configure_snapshot_reference()
         if self.localizer is None:
             self.localizer = MapLocalizer(
                 global_match=self._global_match,
                 local_match=self._local_match,
             )
 
+    def _configure_snapshot_reference(self) -> None:
+        if self._snapshot is None:
+            return
+        reference = build_reference(self._snapshot)
+        self.reference = reference
+        if self.localizer is not None:
+            self.localizer.reset()
+        self.trajectory.reset()
+        self._latest_confirmed_position = None
+        self._log(
+            "step=runtime.reference_configured shape=%sx%s coordinate_space=native",
+            reference.height,
+            reference.width,
+        )
+
     def configure_monitor(self, config) -> None:
         self.search_radius = int(getattr(config, "search_radius", self.search_radius))
         self.match_threshold = float(getattr(config, "match_threshold", self.match_threshold))
+        self.selection_mode = str(getattr(config, "selection_mode", "region")).strip().lower()
+        binding = getattr(config, "binding", None)
+        marker = getattr(binding, "player_marker_position", None) if binding is not None else None
+        if marker is not None:
+            self.center_position = (int(marker[0]), int(marker[1]))
+        else:
+            self.center_position = None
+        params = getattr(config, "recognizer_params", None) or self._default_recognizer_params
+        source = getattr(self.recognizer, "recognizer", self.recognizer)
+        set_params = getattr(source, "set_params", None)
+        if callable(set_params):
+            set_params(dict(params))
+        self._log("step=runtime.monitor_configured coordinate_space=native")
 
     def start(self) -> None:
         self.active = True
@@ -176,7 +236,26 @@ class Poe2LocalizationRuntime:
         self._last_state = Poe2LocalizationState()
 
     def clear_frame(self) -> None:
-        self._last_state = replace(self._last_state, raw_frame=None)
+        self._last_state = replace(
+            self._last_state,
+            raw_frame=None,
+            processed_frame=None,
+            match_mask=None,
+            wall_mask=None,
+            fog_mask=None,
+        )
+
+    def capture_preview(self, config=None):
+        """Capture one calibration frame, including an unsaved editor config."""
+        if self.preview_capture is not None:
+            return self.preview_capture(config)
+        return self._capture_frame()
+
+    def get_recognizer_params(self) -> dict[str, Any]:
+        source = getattr(self.recognizer, "recognizer", self.recognizer)
+        get_params = getattr(source, "get_params", None)
+        value = get_params() if callable(get_params) else None
+        return dict(value) if isinstance(value, dict) else {}
 
     def tick(self, *, now_ms: int | None = None) -> Poe2LocalizationState:
         """Capture and process exactly one frame."""
@@ -193,7 +272,7 @@ class Poe2LocalizationRuntime:
 
         recognition_started = perf_counter()
         try:
-            observation = self._recognize(raw_frame, captured_at_ms)
+            observation = self._recognize_or_use_center(raw_frame, captured_at_ms)
             selected_frame = select_single_player_frame(
                 observation, min_confidence=self.min_confidence
             )
@@ -208,9 +287,41 @@ class Poe2LocalizationRuntime:
                 recognition_elapsed_ms=(perf_counter() - recognition_started) * 1000,
             )
         recognition_elapsed_ms = (perf_counter() - recognition_started) * 1000
+        recognition_diagnostics = self._recognition_diagnostics(observation)
         selected = selected_frame.selected
+        try:
+            visual = self._build_visual_evidence(
+                raw_frame,
+                selected.local_position if selected is not None else None,
+            )
+        except Exception as exc:
+            self._log("step=runtime.visual_processing_failed error=%s", exc)
+            return self._failure_state(
+                captured_at_ms,
+                started,
+                reason="visual_processing_failed",
+                raw_frame=raw_frame,
+                observation=selected_frame,
+                selected=selected,
+                recognition_elapsed_ms=recognition_elapsed_ms,
+                error=str(exc),
+                recognition_diagnostics=recognition_diagnostics,
+            )
         if selected is None:
-            self._log("step=runtime.player_not_detected candidates=%s", len(observation.candidates))
+            self._log(
+                "step=runtime.player_not_detected candidates=%s accepted=%s reason=%s "
+                "max_confidence=%.3f mask_pixels=%s hsv=%s-%s candidate_positions=%s "
+                "contour_areas=%s",
+                recognition_diagnostics["candidate_count"],
+                recognition_diagnostics["accepted_count"],
+                recognition_diagnostics["reason"],
+                recognition_diagnostics["max_confidence"],
+                recognition_diagnostics.get("mask_pixels", "-"),
+                recognition_diagnostics.get("hsv_min", "-"),
+                recognition_diagnostics.get("hsv_max", "-"),
+                recognition_diagnostics.get("candidate_positions", []),
+                recognition_diagnostics.get("contour_areas", []),
+            )
             return self._failure_state(
                 captured_at_ms,
                 started,
@@ -218,6 +329,8 @@ class Poe2LocalizationRuntime:
                 raw_frame=raw_frame,
                 observation=selected_frame,
                 recognition_elapsed_ms=recognition_elapsed_ms,
+                recognition_diagnostics=recognition_diagnostics,
+                visual=visual,
             )
         if self.localizer is None:
             return self._failure_state(
@@ -228,10 +341,18 @@ class Poe2LocalizationRuntime:
                 observation=selected_frame,
                 selected=selected,
                 recognition_elapsed_ms=recognition_elapsed_ms,
+                recognition_diagnostics=recognition_diagnostics,
+                visual=visual,
             )
 
         localization_started = perf_counter()
-        frame_input = Poe2FrameInput(raw_frame, selected_frame, selected, captured_at_ms)
+        frame_input = Poe2FrameInput(
+            raw_frame,
+            selected_frame,
+            selected,
+            captured_at_ms,
+            visual=visual,
+        )
         try:
             localization = self.localizer.update(frame_input)
         except Exception as exc:
@@ -246,6 +367,8 @@ class Poe2LocalizationRuntime:
                 recognition_elapsed_ms=recognition_elapsed_ms,
                 localization_elapsed_ms=(perf_counter() - localization_started) * 1000,
                 error=str(exc),
+                recognition_diagnostics=recognition_diagnostics,
+                visual=visual,
             )
         localization_elapsed_ms = (perf_counter() - localization_started) * 1000
         if localization.position is not None:
@@ -270,6 +393,8 @@ class Poe2LocalizationRuntime:
             recognition_elapsed_ms=recognition_elapsed_ms,
             localization_elapsed_ms=localization_elapsed_ms,
             failure_reason=reason,
+            recognition_diagnostics=recognition_diagnostics,
+            visual=visual,
         )
         self._publish(state)
         return state
@@ -295,18 +420,64 @@ class Poe2LocalizationRuntime:
             return None
         return np.where(mask > 0, 255, 0).astype(np.uint8)
 
+    def _build_visual_evidence(
+        self,
+        raw_frame,
+        player_position: tuple[int, int] | None,
+    ) -> Poe2VisualEvidence:
+        source = getattr(self.recognizer, "recognizer", self.recognizer)
+        preprocess = getattr(source, "preprocess_image", None)
+        extract_combined = getattr(source, "extract_combined", None)
+        processed = preprocess(raw_frame) if callable(preprocess) else raw_frame
+        if not callable(extract_combined):
+            wall_mask = self._wall_mask(raw_frame)
+            return Poe2VisualEvidence(
+                processed_frame=processed,
+                match_mask=wall_mask,
+                wall_mask=wall_mask,
+            )
+        match_mask, wall_mask, fog_mask = cast(
+            tuple[Any, Any, Any],
+            extract_combined(raw_frame, player_pos=player_position),
+        )
+        return Poe2VisualEvidence(
+            processed_frame=processed,
+            match_mask=self._normalize_mask(match_mask),
+            wall_mask=self._normalize_mask(wall_mask),
+            fog_mask=self._normalize_mask(fog_mask),
+        )
+
+    @staticmethod
+    def _normalize_mask(mask):
+        if mask is None:
+            return None
+        array = np.asarray(mask)
+        if array.ndim != 2 or array.size == 0:
+            return None
+        if array.dtype == np.bool_:
+            return array.astype(np.uint8) * 255
+        return np.clip(array, 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _match_mask(frame: Poe2FrameInput):
+        visual = getattr(frame, "visual", None)
+        return getattr(visual, "match_mask", None) if visual is not None else None
+
     def _candidate_delta(self, frame: Poe2FrameInput) -> tuple[float, float]:
         marker = self.calibration.player_local_position if self.calibration else None
         marker = marker or frame.selected.local_position
-        return (
+        delta = (
             (frame.selected.local_position[0] - marker[0]) * (self.calibration.scale_x if self.calibration else 1.0),
             (frame.selected.local_position[1] - marker[1]) * (self.calibration.scale_y if self.calibration else 1.0),
         )
+        return delta
 
     def _global_match(self, frame: Poe2FrameInput):
         if self.reference is None:
             return None
-        template = self._wall_mask(frame.raw_frame)
+        template = self._match_mask(frame)
+        if template is None:
+            template = self._wall_mask(frame.raw_frame)
         if template is None or int(np.count_nonzero(template)) < 8:
             return None
         target = self.reference.wall_layer
@@ -326,7 +497,9 @@ class Poe2LocalizationRuntime:
     def _local_match(self, frame: Poe2FrameInput, origin: tuple[float, float]):
         if self.reference is None:
             return None
-        template = self._wall_mask(frame.raw_frame)
+        template = self._match_mask(frame)
+        if template is None:
+            template = self._wall_mask(frame.raw_frame)
         if template is None or int(np.count_nonzero(template)) < 8:
             return None
         delta_x, delta_y = self._candidate_delta(frame)
@@ -376,6 +549,79 @@ class Poe2LocalizationRuntime:
                 normalized.append(ObservationCandidate(tuple(position), float(confidence)))
         return ObservationFrame(captured_at_ms=captured_at_ms, candidates=tuple(normalized), source="poe2")
 
+    def _recognize_or_use_center(self, raw_frame, captured_at_ms: int) -> ObservationFrame:
+        """Resolve the configured single-player center without image recognition.
+
+        Center mode is a deliberate geometric contract: the selected center is
+        the player's local minimap coordinate, so HSV/shape recognition must
+        not be called. Region mode keeps the multi-candidate recognition path.
+        """
+        if self.selection_mode != "center":
+            return self._recognize(raw_frame, captured_at_ms)
+
+        marker = self.center_position
+        if marker is None:
+            array = np.asarray(raw_frame)
+            if array.ndim < 2 or array.shape[0] <= 0 or array.shape[1] <= 0:
+                raise ValueError("center mode requires a non-empty captured frame")
+            marker = (int(array.shape[1] // 2), int(array.shape[0] // 2))
+        array = np.asarray(raw_frame)
+        if array.ndim >= 2:
+            width, height = int(array.shape[1]), int(array.shape[0])
+            marker = (
+                max(0, min(int(marker[0]), width - 1)),
+                max(0, min(int(marker[1]), height - 1)),
+            )
+        recognizer = cast(Any, self.recognizer)
+        if hasattr(recognizer, "last_diagnostics"):
+            recognizer.last_diagnostics = {
+                "mode": "center",
+                "reason": "center_configured",
+                "candidate_count": 1,
+                "candidate_positions": [list(marker)],
+                "mask_pixels": "not_used",
+            }
+        return ObservationFrame(
+            captured_at_ms=int(captured_at_ms),
+            candidates=(
+                ObservationCandidate(
+                    marker,
+                    1.0,
+                    identity_hint="poe2-configured-center",
+                    evidence={"mode": "center"},
+                ),
+            ),
+            selected_index=0,
+            source="configured-center",
+        )
+
+    def _recognition_diagnostics(self, observation: ObservationFrame) -> dict[str, Any]:
+        """Normalize recognizer diagnostics and add the policy decision."""
+        diagnostics = dict(getattr(self.recognizer, "last_diagnostics", {}) or {})
+        candidates = tuple(observation.candidates)
+        confidences = [float(candidate.confidence) for candidate in candidates]
+        accepted_count = sum(confidence >= self.min_confidence for confidence in confidences)
+        diagnostics.update(
+            {
+                "candidate_count": len(candidates),
+                "accepted_count": accepted_count,
+                "max_confidence": max(confidences, default=0.0),
+                "confidence_threshold": self.min_confidence,
+            }
+        )
+        if self.selection_mode == "center" or diagnostics.get("mode") == "center":
+            diagnostics["mode"] = "center"
+            diagnostics["reason"] = "center_configured"
+        elif not candidates:
+            diagnostics["reason"] = diagnostics.get("reason", "no_contour")
+        elif accepted_count == 0:
+            diagnostics["reason"] = "below_confidence"
+        elif accepted_count > 1:
+            diagnostics["reason"] = "ambiguous"
+        else:
+            diagnostics["reason"] = "ready"
+        return diagnostics
+
     def _failure_state(
         self,
         captured_at_ms: int,
@@ -388,6 +634,8 @@ class Poe2LocalizationRuntime:
         recognition_elapsed_ms: float = 0.0,
         localization_elapsed_ms: float = 0.0,
         error: str = "",
+        recognition_diagnostics: dict[str, Any] | None = None,
+        visual: Poe2VisualEvidence | None = None,
     ) -> Poe2LocalizationState:
         metadata = {"reason": reason}
         if error:
@@ -405,15 +653,34 @@ class Poe2LocalizationRuntime:
             recognition_elapsed_ms=recognition_elapsed_ms,
             localization_elapsed_ms=localization_elapsed_ms,
             failure_reason=reason,
+            recognition_diagnostics=recognition_diagnostics or {},
+            visual=visual,
         )
         self._publish(state)
         return state
 
-    def _state(self, *, raw_frame, observation, selected, localization, captured_at_ms, started,
-               recognition_elapsed_ms, localization_elapsed_ms, failure_reason):
+    def _state(
+        self,
+        *,
+        raw_frame,
+        observation,
+        selected,
+        localization,
+        captured_at_ms,
+        started,
+        recognition_elapsed_ms,
+        localization_elapsed_ms,
+        failure_reason,
+        recognition_diagnostics=None,
+        visual: Poe2VisualEvidence | None = None,
+    ):
         mode = self.mode.value if self.localizer is not None else LocalizationMode.NEED_GLOBAL.value
         state = Poe2LocalizationState(
             raw_frame=raw_frame,
+            processed_frame=visual.processed_frame if visual is not None else None,
+            match_mask=visual.match_mask if visual is not None else None,
+            wall_mask=visual.wall_mask if visual is not None else None,
+            fog_mask=visual.fog_mask if visual is not None else None,
             observation=observation,
             selected_candidate=selected,
             localization=localization,
@@ -426,6 +693,7 @@ class Poe2LocalizationRuntime:
             recognition_elapsed_ms=recognition_elapsed_ms,
             localization_elapsed_ms=localization_elapsed_ms,
             failure_reason=failure_reason,
+            recognition_diagnostics=dict(recognition_diagnostics or {}),
         )
         return state
 
@@ -452,18 +720,33 @@ class HSVPlayerObservationRecognizer:
     def __init__(self, recognizer: HSVRecognizer | None = None, *, min_area: float = 3.0) -> None:
         self.recognizer = recognizer or HSVRecognizer()
         self.min_area = float(min_area)
+        self.last_diagnostics: dict[str, Any] = {}
 
     def __call__(self, frame, captured_at_ms: int) -> ObservationFrame:
         mask = np.asarray(self.recognizer.extract_player(frame))
         candidates: list[ObservationCandidate] = []
+        contour_areas: list[float] = []
+        filtered_by_min_area = 0
+        zero_moment = 0
+        self.last_diagnostics = {
+            "hsv_min": np.asarray(self.recognizer.player_hsv_min).astype(int).tolist(),
+            "hsv_max": np.asarray(self.recognizer.player_hsv_max).astype(int).tolist(),
+            "min_area": self.min_area,
+            "mask_shape": tuple(int(value) for value in mask.shape),
+            "mask_pixels": int(np.count_nonzero(mask)) if mask.size else 0,
+        }
         if mask.ndim == 2 and mask.size:
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            self.last_diagnostics["contour_count"] = len(contours)
             for contour in contours:
                 area = float(cv2.contourArea(contour))
+                contour_areas.append(area)
                 if area < self.min_area:
+                    filtered_by_min_area += 1
                     continue
                 moments = cv2.moments(contour)
                 if moments["m00"] == 0:
+                    zero_moment += 1
                     continue
                 center = (
                     int(round(moments["m10"] / moments["m00"])),
@@ -478,6 +761,25 @@ class HSVPlayerObservationRecognizer:
                         evidence={"area": area},
                     )
                 )
+        else:
+            self.last_diagnostics["contour_count"] = 0
+        self.last_diagnostics.update(
+            {
+                "contour_areas": contour_areas,
+                "filtered_by_min_area": filtered_by_min_area,
+                "zero_moment": zero_moment,
+                "candidate_confidences": [float(item.confidence) for item in candidates],
+                "candidate_positions": [list(item.local_position) for item in candidates],
+                "max_area": max(contour_areas, default=0.0),
+                "reason": (
+                    "candidates_ready"
+                    if candidates
+                    else "no_contour"
+                    if not contour_areas
+                    else "below_min_area"
+                ),
+            }
+        )
         candidates.sort(key=lambda item: item.confidence, reverse=True)
         return ObservationFrame(
             captured_at_ms=int(captured_at_ms),
@@ -490,5 +792,6 @@ __all__ = [
     "Poe2FrameInput",
     "Poe2LocalizationRuntime",
     "Poe2LocalizationState",
+    "Poe2VisualEvidence",
     "HSVPlayerObservationRecognizer",
 ]

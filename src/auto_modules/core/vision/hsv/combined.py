@@ -13,11 +13,15 @@ from auto_modules.core.perception.preprocessing.masks import (
 )
 
 
-def extract_combined_masks(recognizer, img, player_pos=None):
-    wall_mask = recognizer.extract_walls(img, is_processed=False)
+def extract_combined_masks(recognizer, img, player_pos=None, *, processed_for_wall=None):
+    img_wall_processed = (
+        processed_for_wall
+        if processed_for_wall is not None
+        else recognizer._preprocess_for_wall(img)
+    )
+    wall_mask = recognizer.extract_walls(img_wall_processed, is_processed=True)
     fog_mask = recognizer.extract_fog(img, is_processed=False)
 
-    img_wall_processed = recognizer._preprocess_for_wall(img)
     gray = to_gray(img_wall_processed)
     edges = canny_edges(gray, low=recognizer.edge_low, high=recognizer.edge_high)
 

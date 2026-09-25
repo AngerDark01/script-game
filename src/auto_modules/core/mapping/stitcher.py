@@ -33,6 +33,28 @@ class MapStitcher:
     - 这样可以将累积误差降低 N 倍 (N=关键帧间隔)。
     """
 
+    @classmethod
+    def default_params(
+        cls,
+        *,
+        canvas_size=6000,
+        draw_scale=2.0,
+        wall_close_kernel_size=3,
+    ):
+        """Return a complete parameter contract without allocating canvas arrays."""
+        return {
+            "conf_thresh": 0.30,
+            "keyframe_thresh": 0.25,
+            "weight_add": 0.3,
+            "weight_cap": 5.0,
+            "draw_quality_gate": 0.35,
+            "use_precise_visibility_mask": True,
+            "precise_visibility_min_pixels": 16,
+            "wall_close_kernel_size": max(1, int(wall_close_kernel_size)),
+            "canvas_size": int(canvas_size),
+            "draw_scale": float(draw_scale),
+        }
+
     def __init__(self, canvas_size=6000, draw_scale=2.0, wall_close_kernel_size=3):
         self.canvas_size = int(canvas_size)
         self.draw_scale = float(draw_scale)
@@ -190,7 +212,13 @@ class MapStitcher:
         }
 
     def reset(self):
-        self.__init__(self.canvas_size, self.draw_scale)
+        params = self.get_params()
+        self.__init__(
+            params["canvas_size"],
+            params["draw_scale"],
+            params["wall_close_kernel_size"],
+        )
+        self.set_params(params)
 
     def get_cropped_map(self, margin=0):
         return render_cropped_map(self, margin=margin)

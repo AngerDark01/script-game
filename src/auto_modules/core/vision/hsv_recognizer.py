@@ -88,8 +88,8 @@ class HSVRecognizer:
     def preprocess_image(self, img):
         return self._preprocess_for_wall(img)
 
-    def get_raw_gray(self, img):
-        return raw_gray_for_matching(self, img)
+    def get_raw_gray(self, img, *, processed=None):
+        return raw_gray_for_matching(self, img, processed=processed)
 
     def extract_walls(self, img, is_processed=False):
         return extract_wall_mask(self, img, is_processed=is_processed)
@@ -105,6 +105,12 @@ class HSVRecognizer:
 
     def extract_combined(self, img, player_pos=None):
         return extract_combined_masks(self, img, player_pos=player_pos)
+
+    def extract_combined_with_processed(self, img, player_pos=None):
+        processed = self.preprocess_image(img)
+        return processed, extract_combined_masks(
+            self, img, player_pos=player_pos, processed_for_wall=processed
+        )
 
     def get_preprocessed_image(self, img):
         return self.preprocess_image(img)

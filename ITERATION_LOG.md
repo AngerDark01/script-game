@@ -1,5 +1,199 @@
 # Iteration Log
 
+## [2026-09-24] PoE2 首帧 75% 锚定门槛实机复验
+
+- 根因：最新 300px 首帧候选的内存锚点误差仅 0.325px、人物在可行走区域、方向 225°/比例 0.77 正常，但综合 confidence 0.786 被 PoE2 业务门槛 0.80 拒绝；图像分数 0.396、forward coverage 0.509 也被原视觉质量门槛拦截。
+- 修复：PoE2 组合将 `minimum_confidence` 调为 0.75；新增可选 `minimum_score_when_anchored`，仅在锚点 <= 8px 且人物在 walkable 时使用 0.35；可信锚点 coverage 门槛调为 0.50。通用 registrar 默认值没有改变。
+- 实机复验：当前 PathOfExile 进程重新初始化/取图/取内存锚点后返回 `local_tracking/anchored_absolute`，position=(352.24,671.70)，confidence=0.7858，angle=225°，reflection=true，scale=0.77，anchor_error=0.325，forward_coverage=0.5089。
+- 验证：`25 passed`（composition + absolute registrar），端到端真实脚本通过；无任何输入或网络副作用。
+
+## [SYNC] 2026-09-23 — 单帧定位接入正式 PoE2 页面
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户确认数据采集页实机首帧成功，要求将同一套参数和定位链路正式接入 PoE2 实时地形定位页面。
+**直接变更文件：** `src/auto_modules/ui/modes/poe2_live_terrain/page.py`、`tests/test_poe2_composition.py`。
+**预计连带影响：** 正式页 runtime 状态诊断展示、PoE2 composition factory 的实测参数契约；不接入 A/B 多帧、输入设备或网络。
+
+### C. SYNC 结果
+
+- `(verified)` 正式页原本已经通过 `Poe2HybridProductRuntime` 调用 `build_poe2_hybrid_localization_experiment()`；本轮增加正式 runtime 回归，直接构造 snapshot 并断言 registrar 使用 `minimum_confidence=0.80`、`anchor_weight=0.65`、`anchor_disambiguation_gap=1.0`、45° 粗角度和 `0.35..2.45` 比例范围。
+- `(verified)` 正式页识别诊断现在显示最佳 `confidence`、几何分、角度、比例、anchor 误差和覆盖率，不再只显示候选数/角度；数据采集页和正式页使用同一诊断字段。
+- `(verified)` 正式页、composition、主窗口相关聚焦测试 `16 passed`；之前数据采集页单帧入口测试 `22 passed` 保持通过。
+
+**修订旧结论：** 单帧算法并非只停留在数据采集页；正式页已使用同一 factory。本轮补充了正式 runtime 的参数契约回归和完整诊断展示，防止后续装配回退。
+
+**覆盖进度更新：** `page.py` 的 capture/configure/start/tick/render 链路与 `composition.py` 的正式 factory 注入已复核；正式页仍只做定位和可视化，不执行路线、Xbox、键鼠、Host 或 LAN 输入。
+
+## [实机验收] 2026-09-23 — 数据采集页单帧定位首轮运行
+
+### 运行证据
+
+- 地图实例：`MapFlotsam:14A7A83E`；内存人物坐标：`(285.50, 418.50)`。
+- 首帧 absolute registration：`status=anchored_candidate`、`angle=219°`、`reflect=true`、`scale=0.75`、`anchor_error=1.961`、`best_anchored_score/confidence=0.822475`，通过 `minimum_confidence=0.80`。
+- 后续状态：`source=visual_f2f`、`mode=local_tracking`、内存读取次数始终为 `1`；没有 `absolute_registration_failed`、`recovery_required` 或重复全局搜索。
+- 本次采样期间 `shift=(0,0)`、`global_shift=(0,-0)`，说明人物未产生可观测移动；marker 保持在 `(287.4304, 418.8476)` 是预期行为，不代表跟踪卡死。
+- 视觉帧间质量大多为 `0.956~1.000`，页面截图中的 `0.965` 是当前帧质量，不是首帧绝对置信度；首帧置信度已在日志中单独记录为 `0.822`。
+
+### 结论
+
+本轮已证明真实页面链路为“内存 anchor 首帧配准 → visual_f2f 局部跟踪”，方向/镜像/比例与人物位置一致，未发生多余内存读取。下一次只需在保持同一 session 的情况下移动人物，观察 `shift/global_shift`、地图 marker 和 trajectory 是否变化；无需再次调整首帧参数。
+
+## [SYNC] 2026-09-23 — 数据采集页开放单帧首帧定位入口
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户需要在“数据采集测试”页面直接验证已校准的首帧内存锚点 + 局部几何匹配，而不是误启动旧的 A/B 多帧实验。
+**直接变更文件：** `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`、`tests/test_poe2_capture_test_page.py`（行为由现有回归覆盖）。
+**预计连带影响：** 数据采集页按钮布局、hybrid session 与多帧 session 的互斥采样、首帧状态/位置展示；正式 PoE2 页面和绘图模式不变。
+
+### C. SYNC 结果
+
+- `(verified)` 数据采集页顶部新增“开始首帧定位”和“停止首帧定位”按钮，直接调用现有 `start_hybrid_localization()` / `stop_hybrid_localization()`；按钮状态随地图、session 和 timer 生命周期同步。
+- `(verified)` 首帧定位启动时会停止采集页预览、独立截图监控和 A/B 多帧 session，避免同一截图源被多个 timer 同时消费；A/B 入口仍保留在“定位控制”窗口，二者不会混用。
+- `(verified)` 页面新增可见首帧状态文本，实时显示 mode、source、confidence、内存读取次数、角度、比例、coverage、anchor error 和失败原因；地图 overlay 使用同一 hybrid registration transform。
+- `(verified)` 22 个数据采集页/监控窗口/定位控制/PoE2 composition 测试通过。
+
+**修订旧结论：** 原先“可以在数据采集页测试”容易造成误解：可见的“定位控制”实际是 A/B 多帧；本轮补上了明确的单帧按钮，之后测试入口和用户目标一致。
+
+**覆盖进度更新：** `capture_test_page.py` 的单帧启动、停止、状态展示和互斥采样链路已复核；单帧算法仍由 PoE2 hybrid factory 注入，页面不复制匹配逻辑。
+
+## [SYNC] 2026-09-23 — PoE2 单帧锚点几何参数显式接线
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户要求直接使用当前 PoE2 首帧样本完成实验，并把达到 80% 以上置信度的比例、几何匹配权重和局部搜索参数接入实际实验链路。
+**直接变更文件：** `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/composition.py`、`src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`、`tests/test_poe2_composition.py`。
+**预计连带影响：** PoE2 正式页的 hybrid factory、单帧 registrar diagnostics、首帧定位回归测试；不影响绘图模式、A/B 多帧首帧策略、输入设备或网络。
+
+### C. SYNC 结果
+
+- `(verified)` 真实样本 `20260923-125356-431876-MapFlotsam-14A7A83E` 的内存 anchor 为 `(285.49999, 418.50000)`，截图为 `200x200`，同实例 native 地图为 `2968x2277`。
+- `(verified)` 实验报告 `data/poe2_live_terrain_test/probe_results/single-frame-20260923-tuned/report.json` 选择 `219° / reflect=true / scale=0.75`，anchor error `3.225`，forward coverage `0.7973`，anchored confidence `0.8182775`，状态为 `anchored_candidate`。
+- `(verified)` PoE2 composition 不再依赖 registrar 类默认值，`build_poe2_hybrid_localization_experiment()` 显式注入经过该真实样本校准的 `AnchoredRegistrationConfig`：局部窗口 `150/110`、顶部动态区排除 `40`、人物清理半径 `22`、anchor 权重 `0.65`、anchor 消歧间隔 `1.0`、最小视觉分 `0.50`、普通/锚定覆盖门 `0.65/0.60`，比例和角度仍由 `0.35..2.45`、45° 粗搜后细化自动搜索。
+- `(verified)` registrar diagnostics 增加 `confidence` 字段，与 `best_anchored_score` 使用同一数值；页面现有 runtime 日志会输出该置信度及角度、比例、anchor error 等诊断。
+- `(verified)` PoE2 composition 额外启用 `minimum_confidence=0.80`；低于 0.80 的候选直接返回 `rejected`，不会把“看起来有候选”发布成可信人物位置。通用 registrar 默认保持 `0.0`，不破坏合成/单元几何夹具。
+- `(verified)` composition 回归新增显式参数断言，并增加低于 0.80 的拒绝测试；PoE2 单帧、hybrid 集成和探针测试 `28 passed`，未发送任何输入或网络同步。
+
+**修订旧结论：** 之前只能证明探针默认参数通过；现在确认实际 PoE2 页面工厂也使用同一组参数，避免页面运行时悄悄回到未校准默认值。
+
+**覆盖进度更新：** `experimental/hybrid_localization/composition.py`、`absolute_registrar.py` 和 `tests/test_poe2_composition.py` 已重读并同步到 CODEBASE；当前真实证据仍是单地图单首帧，不外推为跨地图 80% 生产准确率。
+
+## [IMPLEMENTATION] 2026-09-21 — PoE2 数据采集测试页
+
+### 范围
+
+用户批准方案 A：在 PoE2 页面内部增加独立“数据采集测试”页签，用于反复查看小地图截图、初始化/获取原生地图并显式保存测试数据。此页不启动定位、不执行输入，不修改绘图模式。
+
+### 完成内容
+
+- `ui/modes/poe2/composition.py` 新增独立采集测试 service、归档对象、截图预览回调和专属 recognizer 注入；实时定位 service 保持独立。
+- 新增 `ui/modes/poe2_live_terrain/capture_test_page.py`，提供截图刷新/定时预览、初始化、获取、显式保存、清空和错误清理。
+- `Poe2LiveTerrainPage` 内部增加 `实时地形定位` 与 `数据采集测试` 两个页签；没有测试依赖的旧注入场景仍保持单页兼容。
+- `MainWindow` 只在 composition 提供测试依赖时注入第二页签；关闭和隐藏时停止测试页定时器。
+- 更新 `CODEBASE.md`、设计文档和实施计划，记录状态隔离与后续方向校准扩展点。
+
+### 验证
+
+```text
+10 个页面/composition/MainWindow 回归测试通过
+PoE2 live-terrain 套件和架构边界：75 passed
+```
+
+### 后续断点
+
+下一阶段在此测试页上接入方向/尺度诊断：使用保存的截图与当前 `TerrainSnapshot`，先做 45° 粗搜索，再做角度与比例细化；不得把 PoE2 方向策略下沉到通用定位状态机。
+
+## [SYNC] 2026-09-21 — PoE2 与绘图模式视觉能力全量对齐审计
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户要求确保 PoE2 当前阶段与绘图模式相关能力全部对齐，不能只补颜色校准入口而遗漏参数、截图、预览或运行时细节。
+**第一轮目标文件：** `ui/modes/mapping_widget.py`、`ui/modes/mapping/ui/layout.py`、`ui/modes/mapping/runtime/session.py`、`ui/dialogs/color_picker_dialog.py`、`ui/modes/poe2_live_terrain/config_panel.py`、`ui/modes/poe2_live_terrain/monitor_dialog.py`。
+**本轮想弄清楚：** 两个业务在选区、截图模式、颜色采样、HSV/高级参数、参数即时应用、预览内容和持久化语义上还存在哪些逐项差异；哪些差异是 PoE2 业务边界允许的，哪些会改变视觉匹配结果。
+**预计连带影响：** `Poe2MonitorConfig` profile 契约、composition preview provider、`Poe2LocalizationRuntime` visual evidence、页面双预览和 focused tests；原绘图模式保持只读。
+
+### C. 第一轮发现
+
+**关键发现：**
+
+- `(verified)` 颜色采样主体已经复用同一个 `ColorPickerDialog`，PoE2 也把当前完整 recognizer 参数传入，所以预处理图、墙体/人物采样、HSV 范围和墙体 mask 预览算法一致。
+- `(verified)` 绘图模式主面板除高级窗口外，还直接暴露 `enable_wall`、`enable_fog`、`clahe_enabled`、`deepen_enabled`、`wall_weight`、`edge_weight`、`edge_low`、`edge_high` 和 `player_clear_radius`；PoE2 当前只暴露高级窗口，而该窗口是否覆盖全部字段尚需下一轮逐项核对。
+- `(verified)` 绘图模式只有完成区域/中心选择后才启用颜色按钮；PoE2 当前无 binding 时仍允许点击，之后才用错误弹窗拒绝，交互状态没有对齐。
+- `(verified)` 绘图模式 center 和 region 的人物定位存在旧式 fallback；PoE2 center 几何契约、region 多候选 fail-closed 是已审核的业务差异，不能为了表面对齐而复制旧 fallback。
+- `(verified)` 绘图模式的 stitcher merge、canvas、draw scale、保存地图和导航点属于离线建图业务；PoE2 使用在线 native terrain reference，这些控件不应复制到 PoE2 profile。
+
+**修订旧结论：** “已有颜色校准和高级参数入口即表示视觉配置完全对齐”不成立；还必须核对高级窗口未覆盖的直接参数和控件启用条件。
+
+**覆盖进度更新：** `mapping_widget.py`、`mapping/ui/layout.py`、`mapping/runtime/session.py`、`color_picker_dialog.py` 已完整核对本任务相关函数；`poe2_live_terrain/config_panel.py`、`monitor_dialog.py` 已完整核对当前配置流。`mapping/io/config_store.py`、`config_restore.py` 连带确认了完整 recognizer 参数持久化与 UI 回填语义。
+
+### A. 第二轮目标（阅读前声明）
+
+**目标文件：** `ui/dialogs/advanced_settings_dialog.py`、`ui/dialogs/advanced_settings/params_adapter.py`、`ui/dialogs/advanced_settings/tabs.py`、`core/vision/hsv/params.py`、`features/poe2/live_terrain/runtime.py`、`ui/modes/poe2_live_terrain/page.py`。
+**本轮想弄清楚：** 高级窗口究竟覆盖哪些 recognizer 字段、哪些字段只能由绘图主面板控制；PoE2 保存的字段是否全部在运行时生效；页面展示是否与 matcher 消费的数组完全同源。
+
+### C. 第二轮发现
+
+**关键发现：**
+
+- `(verified)` `AdvancedSettingsDialog` 覆盖 deepen/gamma/tophat/CLAHE、透明模式、饱和度过滤、Canny、wall/edge 权重；它不覆盖 `enable_wall`、`enable_fog` 或 `player_clear_radius`。因此 PoE2 虽保存完整参数字典，但用户无法在自己的页面调整这三个会直接改变 combined mask 的字段。
+- `(verified)` `HSVRecognizer.get_params()/set_params()` 对 wall/fog/player HSV、上述三个缺失字段以及其余预处理参数均对称；缺口位于 PoE2 UI 组合，不在底层 recognizer。
+- `(verified)` `Poe2LocalizationRuntime.configure_monitor()` 会在每次 profile 保存/选择/开始监控时应用 profile 参数；空 profile 恢复 dedicated recognizer 初始快照，不会继承上一 profile。
+- `(verified)` 成功选中人物后，页面展示的 `state.match_mask` 与 `_global_match()`/`_local_match()` 消费的 `Poe2FrameInput.visual.match_mask` 同源且保留灰度权重。
+- `(conflict)` 区域模式人物识别失败时 `tick()` 在生成 visual evidence 之前返回，因此 raw frame 虽可见，预处理图和 match mask 均为空；这与“配置时能看见真正匹配特征”的诊断目标冲突。定位应继续 fail closed，但视觉证据应先生成并随失败状态发布。
+
+**修订旧结论：** 运行时成功路径已对齐不等于诊断路径已对齐；识别失败恰恰是最需要显示预处理和 match mask 的场景。
+
+**覆盖进度更新：** `advanced_settings_dialog.py`、`advanced_settings/params_adapter.py`、`advanced_settings/tabs.py` 已核对全部参数读写；`core/vision/hsv/params.py` 已核对完整字段集合；`Poe2LocalizationRuntime.tick/configure_monitor/_build_visual_evidence` 和 `Poe2LiveTerrainPage.handle_runtime_state` 已深读本任务分支。
+
+**实现假设：** 根因是 PoE2 配置组合只接入了高级对话框，且 visual evidence 构建时机错误。最小修复为：在 PoE2 面板补齐绘图模式有效的直接视觉控件与 binding 启用规则；将视觉证据生成提前到人物策略结果之后、失败返回之前，未选中人物时用 `player_pos=None` 生成可诊断特征，但绝不调用 localizer。
+
+### C. 第二轮实现验证
+
+- `(verified)` PoE2 面板已补齐 wall/fog 开关、CLAHE、颜色深化、wall/edge 权重、Canny 高低阈值和人物动态擦除半径；这些控件与完整 profile 参数双向同步，高级窗口应用后也会回填。
+- `(verified)` 颜色校准按钮仅在存在 binding 且配置可编辑时启用；高级视觉参数仍可在绑定前配置。
+- `(verified)` `Poe2LocalizationRuntime.tick()` 现在先生成 visual evidence，再判断人物策略是否失败；`player_not_detected` 状态包含可诊断的 processed/match/wall/fog 层，同时 `MapLocalizer.update()` 调用次数保持为零。
+- `(verified)` 新增失败测试复现三个缺口，修复后配置面板、runtime 和颜色对话框相关测试 `16 passed`。
+
+### A. 第三轮目标（阅读前声明）
+
+**目标文件：** `ui/modes/mapping/capture/selection_controller.py`、`ui/modes/poe2_live_terrain/capture/selection_controller.py`、`features/poe2/live_terrain/monitor_source.py`、`ui/modes/poe2/composition.py`、`features/poe2/live_terrain/monitor_config.py`、`ui/modes/poe2_live_terrain/profile_toolbar.py`、`ui/modes/poe2_live_terrain/presenter.py`。
+**本轮想弄清楚：** 画框和中心点的坐标/DPI 契约是否真正等价，圆形遮罩是否只影响视觉帧而不改坐标，profile 切换是否完整同步 runtime/UI，以及预览缓存是否在失败/停止时正确更新。
+
+### C. 第三轮发现
+
+**关键发现：**
+
+- `(conflict)` `SquareScreenCapture.capture_square()` 和绘图模式都把 size 定义为物理像素；PoE2 中心选择却把 size 再乘 `devicePixelRatio`。在 125%/150% DPI 下，配置 320 会抓取 400/480 像素，而 `circle_radius` 仍为 160，造成截图、圆形遮罩和 profile `capture_size` 不一致。
+- `(conflict)` PoE2 region 选择会把 profile `capture_size` 改为矩形短边；绘图模式 region 选择不改中心截图大小。用户从 region 切回 center 时会意外使用旧矩形短边。
+- `(verified)` 左上角和中心点本身都按逻辑坐标乘 DPI 转成物理坐标；`MonitorBinding.player_marker_position` 使用截图局部物理坐标，方向正确。
+- `(verified)` `MonitorFrameSource` 的圆形模式保持矩形数组尺寸与坐标原点，只把圆外像素清零；square 模式不复制/改写帧。
+- `(verified)` profile 选择会同步 page、dialog、timer 和 runtime；composition 的实时抓图读取 active profile，校准抓图优先使用对话框当前未保存 config。
+- `(conflict)` `Poe2LiveTerrainPage.handle_runtime_state()` 在新 state 没有 processed/match frame 时不清理 QLabel，因此视觉处理或捕获失败后会残留上一帧图像，诊断界面与当前状态不一致。
+- `(partial)` 通用高级窗口仍显示“拼接算法”页，但 PoE2 没有 stitcher 且会过滤这些字段；应在 PoE2 组合层隐藏该无效页，避免用户修改不会生效的控件。
+
+**修订旧结论：** 选区控制器复用了同一 overlay 并不代表 DPI 契约一致；截图 size 的单位必须沿调用链核对到 `SquareScreenCapture`。
+
+**实现假设：** 将 PoE2 中心截图边长保持为用户输入的物理像素、region 选择保留既有 center size、无视觉数组时主动清空对应预览，并隐藏 PoE2 不适用的 stitcher tab，可消除当前剩余的行为差异而不改变定位策略。
+
+### C. 第三轮实现与最终审计结果
+
+- `(verified)` 修正高 DPI 中心截图：逻辑点击位置仍乘 DPI 转换为物理中心，但用户输入的 capture size 按截图后端契约保持物理像素，不再二次放大；新增 150% DPI 回归测试。
+- `(verified)` region 画框不再覆盖 center capture size；两种选择模式切换时各自语义独立。
+- `(verified)` 页面收到无视觉数组的失败 state 时主动清除上一帧预处理/match 画面，避免陈旧诊断。
+- `(verified)` PoE2 高级参数窗口隐藏无效的“拼接算法”页；profile 仍只接受 `HSVRecognizer.get_params()` 支持的字段。
+- `(verified)` 配置窗加入滚动容器并设置 560x760 初始尺寸，补齐参数后在 768p 屏幕仍能访问保存/取消按钮；行为与绘图模式滚动控制栏一致。
+- `(verified)` 机器校验 32 个 recognizer 持久化字段无未归类项：高级窗口 21 项，PoE2 快捷控件 9 项，颜色采样 4 项（集合有交叉）；fog HSV 与 morphology kernel 参数完整保留，当前和绘图模式一样不作为主面板采样项。
+- `(verified)` 圆形遮罩、profile 激活、未保存配置预览、runtime 参数应用、双预览数组来源和停止清理链路均已核对，无剩余实现缺口。
+
+**有意保留的业务差异：** PoE2 不复制绘图模式的 stitcher merge/canvas/draw-scale/保存地图/导航点能力；PoE2 native terrain 已由外部程序提供。PoE2 region 人物策略保持多候选 fail-closed，不复制绘图模式的 last-known/中心 fallback。上述差异符合已审核的业务和安全边界，不是遗漏。
+
+**验证结果：** 首轮缺口由 3 个失败测试复现，末轮 DPI/尺寸/缓存/无效 tab 由 4 个失败测试复现；修复后完整 PoE2、页面、presenter、main-window monitoring 和 architecture focused suite `76 passed`，`compileall` 与 `git diff --check` 通过。全项目结果为 `532 passed, 1 skipped, 3 failed, 10 subtests passed`；3 项失败全部位于未修改的 `tests/test_pathfinder.py`，分别是对角穿角、未探索区域和细墙语义的既有失败，与 PoE2/视觉/UI 调用链无关。Serena 只报告语言服务器未加载项目 venv 的 PySide6/numpy/cv2 missing-import，无新增代码诊断。
+
+**CODEBASE.md 更新内容：** 更新 PoE2 配置模块、视觉参数应用算法、F-POE2-LOC 失败诊断跳和 P1 风险状态；`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` 增加最终对齐矩阵与实机剩余项。
+
+**覆盖进度更新：** 本轮声明的 selection controller、monitor source、composition、monitor config/profile toolbar、presenter 均已完成本任务调用链深读；受影响的 config panel、monitor dialog、runtime、page 已按修改后源码复核。
+
 ## [SYNC] 2026-09-19 — 通信层重构任务 1-9
 
 ### A. SYNC 范围声明
@@ -6073,3 +6267,1658 @@ Portal/Loot definition 的相关算法与调用边界。
 **触发任务：** 完成通信层重构的 UI 注入、共享接收和生命周期验证。
 **直接变更文件：** `ui/composition/services.py`、`ui/composition/__init__.py`、`ui/main_window.py`、`ui/modes/torchlight/follow/page.py`、`ui/modes/events/workbench.py`、相关通信适配与测试。
 **预计连带影响：** FollowService/EventWorkbenchService 调用方、Host bridge/transport 接收路径、manager 的 capability lease 与 dispatcher、窗口关闭时的 Host 资源所有权。
+
+## [SYNC] 2026-09-20 — PoE2 独立监控 profile 与页面排版
+
+### A. SYNC 范围声明
+
+**触发任务：** 在不修改绘图模式的前提下，为 PoE2 页面独立增加圆形/正方形监控范围、中心点选择、本地多 profile 和绘图模式风格的地图/监控/人物位置布局。
+**直接变更文件：** `core/spatial/capture_geometry.py`、PoE2 feature monitor config/profile store、PoE2 UI capture/config/page/composition、相关测试和设计计划。
+**预计连带影响：** `MainWindow` 的 PoE2 composition 注入、PoE2 runtime 的 binding 来源、旧 `monitor.json` 兼容读取；`ui/modes/mapping*` 明确不在变更范围内。
+
+### C. SYNC 结果
+
+- `(verified)` 原绘图模式 `src/auto_modules/ui/modes/mapping*` 与 `mapping_widget.py` 没有本轮差异；PoE2 的画框、中心点和配置面板位于 `ui/modes/poe2_live_terrain/`，只参考既有交互实现。
+- `(verified)` 新增的 `core/spatial/capture_geometry.py` 只提供矩形截图上的正方形/圆形布尔遮罩；圆形不改变底层截图数组。
+- `(verified)` `Poe2MonitorConfig` 增加 profile 名称、选择模式、截图大小、形状和圆形半径；`Poe2MonitorProfileStore` 支持本地 profile 的新建、复制、重命名、激活、保存和删除，并兼容旧 `monitor.json`。
+- `(verified)` PoE2 页面新增独立 profile toolbar、监控配置面板和左右分栏展示；右侧分别展示实时小地图、当前在线地图和人物定位状态。
+- `(verified)` `MainWindow` 只有一处窄注入变更：向 PoE2 页面传入 profile store；没有修改绘图页面的运行时或配置逻辑。
+
+**验证：** `65 passed`（PoE2、架构边界、页面、profile、选择器和遮罩聚焦测试）；相关源码 `compileall` 通过；`git diff --check` 通过（仅有既有 CRLF 提示）。
+
+**修订旧结论：** 原计划曾把通用监控 UI 回接到绘图模式；根据用户确认改为 PoE2 侧独立复刻，绘图模式保持原实现不变。
+
+**覆盖进度更新：** 已重读并同步 `capture_geometry.py`、PoE2 monitor config/profile store、PoE2 capture selector/config panel/profile toolbar/page/composition，以及 PoE2 当前状态文档和设计计划。
+
+**下一轮计划：** 在实机前继续补充 profile 切换与页面展示的行为测试，并确认圆形遮罩真正接入识别 runtime；不修改绘图模式。
+
+## [SYNC] 2026-09-20 — PoE2 圆形 profile 接入采集链路
+
+### A. SYNC 范围声明
+
+**触发任务：** 将 PoE2 profile 的正方形/圆形选择真正接入截图适配器，避免只保存 UI 参数而不影响识别帧。
+**直接变更文件：** `features/poe2/live_terrain/monitor_source.py`、`ui/modes/poe2/composition.py`、PoE2 monitor source 测试和状态文档。
+**预计连带影响：** PoE2 localization runtime 的输入帧内容；正方形兼容路径、2D/3D 截图数组和圆形半径校验；绘图模式无连带影响。
+
+### C. SYNC 结果
+
+- `(verified)` `MonitorFrameSource.capture()` 在 profile shape 为 `circle` 时生成矩形 bool mask，将圆外像素置零；2D/3D 帧均有测试覆盖。
+- `(verified)` PoE2 composition 的 monitor frame closure 从 active profile 读取 `shape` 和 `circle_radius`，并传入 capture adapter；无 profile 时仍兼容旧 `monitor.json`。
+- `(verified)` 相关 PoE2/UI 聚焦测试 **13 passed**；`compileall` 和 `git diff --check` 通过。
+
+**覆盖进度更新：** 已更新 `CODEBASE.md`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`，并确认 `ui/modes/mapping*` 仍无本轮差异。
+
+## [SYNC] 2026-09-20 — PoE2 人物定位失败诊断与修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 当前 PoE2 页面已经能获取并展示地图，但人物定位状态仍为 `failed/player_not_detected`；需要在不降低阈值猜测修复的前提下，补齐识别候选诊断，复现失败条件，并完成单人全局定位验证。
+**直接变更文件：** PoE2 HSV 玩家识别器、定位 runtime 状态/诊断、PoE2 定位页面展示、对应测试与状态文档。
+**预计连带影响：** PoE2 监控帧采集输出、全局匹配输入、人物 marker 绘制和 UI 定位状态；绘图模式、输入设备、Host/LAN 不在范围内。
+
+### C. SYNC 结果
+
+- `(verified)` `HSVPlayerObservationRecognizer.__call__()` 现在记录 HSV 上下界、mask 非零像素、轮廓总数/面积、面积过滤数、候选坐标/置信度和诊断原因；`Poe2LocalizationRuntime.tick()` 将这些信息汇总为 `recognition_diagnostics`，并在 `player_not_detected` 日志中输出关键字段。
+- `(verified)` PoE2 页面在定位状态下显示候选数、通过数、最大面积、最大置信度、mask 像素、前三个候选坐标和失败原因，可以区分无轮廓与阈值/歧义失败，不再只显示 `player_not_detected`；停止监控时清空诊断显示。
+- `(verified)` 证据显示单候选小轮廓面积约 10 时旧公式置信度约 `0.65`，被 `0.70` 门槛拒绝；PoE2 runtime 默认门槛调整为 `0.60`，公共 `HSVRecognizer` 默认色彩参数未修改，多候选仍 fail closed。新增测试覆盖小轮廓拒绝和有效小标记接受。
+- `(verified)` `ui/modes/poe2/composition.py` 为实际 `HSVRecognizer` 复制参数创建 PoE2 专属实例，避免绘图模式对共享可变识别器的改动污染 PoE2；不具备 HSV 参数接口的测试替身保持兼容。
+- `(verified)` PoE2 focused suite **55 passed**；`compileall` 通过；`git diff --check` 通过（仅保留工作区既有 CRLF 警告）。完整回归为 **515 passed, 1 skipped, 3 failed**，失败仍是未改动的既有 `PathFinder` 角点/未探索区/细墙断言。
+
+**连带重读文件：** `features/poe2/live_terrain/runtime.py`、`ui/modes/poe2/composition.py`、`ui/modes/poe2_live_terrain/page.py`、`tests/poe2_live_terrain/test_localization_runtime.py`、`tests/test_architecture_boundaries.py`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`、`CODEBASE.md`。
+**CODEBASE.md 更新内容：** 更新 PoE2 runtime 数据流、识别诊断字段、专属 recognizer 组合方式和 P1 人物识别风险。
+**下一轮计划：** 启动页面后用真实 PoE2 小地图观察诊断字段；若候选仍为 0，先按日志中的 HSV/mask 证据校准业务 profile 参数；若候选唯一但全局匹配失败，再单独校准比例、轴向和 wall layer，不把两个问题混在一起。
+
+## [SYNC] 2026-09-20 — PoE2 中心模式与图像识别模式分流
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户确认单人中心模式不需要人物图像识别，只使用配置中心；颜色/形状识别只用于区域/多人模式。修正当前 runtime 忽略 `selection_mode`、中心模式仍调用 HSV 的逻辑错误。
+**直接变更文件：** `features/poe2/live_terrain/runtime.py`、PoE2 定位 runtime 测试、PoE2 当前状态文档和 CODEBASE 架构说明。
+**预计连带影响：** 中心 profile 的首帧候选来源、识别诊断文本、后续全局/局部定位输入；绘图模式、公共 HSV 默认值、输入和网络边界不变。
+
+### C. SYNC 结果
+
+- `(verified)` `Poe2LocalizationRuntime.configure_monitor()` 现在读取 `selection_mode` 和 `MonitorBinding.player_marker_position`。
+- `(verified)` `center` 模式通过 `_recognize_or_use_center()` 直接生成 `source="configured-center"`、置信度 `1.0` 的单一候选，不调用注入的 HSV/形状识别器；缺少 marker 时才按当前帧尺寸取几何中心并做边界裁剪。
+- `(verified)` `region` 模式保持原有 HSV 多候选识别和单人唯一候选策略；中心模式诊断明确为 `center_configured`。
+- `(verified)` 新增测试验证中心模式在识别器主动抛错时仍能完成全局定位，并把配置中心 `(160, 160)` 传入 matcher；相关 PoE2/UI focused tests **10 passed**，`compileall` 和 `git diff --check` 通过。
+
+**修订旧结论：** 之前文档把“单人版本必须真正识别人物图标”写成统一规则；现在修订为：中心模式使用用户配置几何契约，区域/多人模式才使用图像识别。
+**下一轮计划：** 重新启动页面验证当前默认中心 profile 的诊断显示为 `center_configured`，确认人物定位问题已经从 HSV 链路移除；随后单独处理整张地图显示范围/裁剪问题。
+
+## [SYNC] 2026-09-20 — PoE2 地图方向校准与初始展示放大
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户确认实时监控小地图与 native 地图展示方向不一致，且获取地图在页面中显示过小；要求校准方向并改善 PoE2 页面展示，不修改绘图模式。
+**直接变更文件：** PoE2 live terrain orientation/config/runtime/presenter/page、独立配置面板、通用 `ScalableMapWidget` 的可配置适配倍数及相关测试。
+**预计连带影响：** PoE2 profile 的方向字段、reference 与全局/局部匹配坐标、轨迹/人物 overlay、PoE2 初始地图缩放；公共地图控件默认行为保持不变。
+
+### C. SYNC 结果
+
+- `(verified)` 新增 `TerrainOrientation` 纯适配模块，统一处理 0/90/180/270 度顺时针旋转、水平/垂直翻转、数组 shape、点坐标和局部位移；旋转后 90/270 度会同步交换宽高。
+- `(verified)` `Poe2MonitorConfig` 将地图方向作为可持久化 profile 字段；PoE2 独立配置面板增加旋转和镜像选项，旧 profile 缺省为原始方向，绘图模式没有改动。
+- `(verified)` runtime 对 native snapshot 构建的 `TerrainReference` 应用相同方向，并在 profile 改变时从内存快照重建；局部人物位移也按同一方向变换，避免匹配结果与 overlay 使用不同坐标系。
+- `(verified)` presenter 以同一方向渲染地图；`ScalableMapWidget` 新增 `fit_scale_multiplier`，默认仍为 `1.0`，PoE2 页面设置为 `1.35`，只放大初始适配视图，不裁剪定位用完整地图。
+- `(verified)` PoE2 focused suite **47 passed**；源码 `compileall` 通过；`git diff --check` 通过（仅有既有 CRLF 提示）。
+
+### 实机未决事项
+
+方向目前由 profile 手动选择，尚未用真实 PoE2 小地图确认哪一个旋转/镜像组合正确；首次实机应逐项比较小地图墙体与地图展示方向，再固定 profile。自动方向候选比较暂不启用，避免对称地图误选。
+## [SYNC] 2026-09-21 — PoE2 监控与绘图模式视觉匹配能力对齐
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户实机确认 PoE2 页面只复刻了选区和展示外壳，缺少绘图模式已经具备的视觉匹配、颜色校准、识别结果预览和参数持久化细节，导致全局定位输入与绘图模式差异过大。
+**直接变更文件（预期）：** PoE2 live terrain 配置模型、PoE2 独立配置/预览 UI、PoE2 composition/runtime 识别适配及对应测试；不修改绘图模式业务代码。
+**预计连带影响：** 公共 `HSVRecognizer` 参数契约、截图 binding、墙体/雾区/人物 mask、全局匹配模板、PoE2 profile JSON、首帧定位诊断和 F-POE2-LOC 数据流。
+
+**本轮目标文件：** 绘图模式配置入口、颜色校准对话框、实时识别预览/会话、识别参数持久化，以及 PoE2 当前配置和 composition。先确认完整参考链路与缺失清单，再进入测试和实现。
+
+### C. 第一轮对照发现
+
+**关键发现：**
+
+- `(verified)` 绘图模式 `MappingWidget.open_color_picker()` 会从当前 binding 抓取真实帧，将完整 `HSVRecognizer.get_params()` 注入 `ColorPickerDialog`，允许分别采样墙体/人物 HSV，并在预处理图上即时展示二值墙体 mask；PoE2 配置页没有这条入口。
+- `(verified)` 绘图模式每帧使用 `HSVRecognizer.extract_combined(frame, player_pos)`，其匹配层由 wall mask 与 Canny edge 按权重融合，并执行饱和度动态区排除及人物半径擦除；PoE2 `_wall_mask()` 只调用 `extract_walls()`，没有使用已经验证的 combined matching contract。
+- `(verified)` 绘图模式配置完整保存 `recognizer.get_params()`，覆盖 HSV、CLAHE、颜色深化、Gamma、TopHat、透明模式、饱和度过滤、Canny、特征权重、形态学核和人物擦除半径；`Poe2MonitorConfig` 当前一个识别参数也不保存。
+- `(verified)` 绘图模式实时窗口显示预处理后的 frame，颜色对话框同时显示原图采样与 wall mask 预览；PoE2 页面只显示 raw frame，无法判断真正送入 matcher 的特征层。
+- `(verified)` `MainWindow.setup_ui()` 先创建 `MappingWidget` 并加载第一页配置，之后才创建 PoE2 composition；PoE2 只在创建时复制一次共享 recognizer 参数。它随后与绘图 recognizer 状态隔离，但 profile 没有独立参数，因此“独立配置”只完成了截图 binding，没有完成识别配置。
+
+**修订旧结论：** 原记录认为 PoE2 已“独立复刻绘图模式监控配置”；现在确认只复刻了选区/profile 外壳，视觉识别校准和 matching evidence 契约并未复刻，属于 `(conflict)`，必须修正。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `ui/modes/mapping_widget.py` | 浅读 | 深度完整 | 2 | 完整核对选区、颜色采样、实时 session、参数应用/持久化和高级设置调用链。 |
+| `ui/modes/mapping/ui/layout.py` | PENDING | 深度完整 | 1 | 完整核对绘图页所有监控、HSV、特征、几何、预览控件及信号连接。 |
+| `ui/dialogs/color_picker_dialog.py` | 浅读 | 深度完整 | 2 | 确认预处理图采样、墙体/人物 HSV 范围计算、mask 预览、缩放和结果契约。 |
+| `core/vision/hsv/combined.py` | 浅读 | 深度完整 | 2 | 确认 wall/edge 融合、动态色排除和人物半径清理是绘图匹配输入的关键步骤。 |
+| `core/vision/hsv/params.py` | 浅读 | 深度完整 | 2 | 确认完整识别参数集合及 set/get 对称应用范围。 |
+| `features/poe2/live_terrain/monitor_config.py` | 深度完整 | `(conflict)` | 3 | profile 缺少 recognizer params，和“完全独立配置”的既定要求冲突。 |
+| `features/poe2/live_terrain/runtime.py` | 深度完整 | `(conflict)` | 4 | 当前 matcher 只用 wall mask，未复用绘图模式 combined match mask。 |
+| `ui/modes/poe2_live_terrain/config_panel.py` | 深度完整 | `(conflict)` | 3 | 缺少颜色校准、识别参数编辑与匹配层预览入口。 |
+
+**下一轮计划：** 先写失败测试固定 recognizer 参数 profile 往返、combined match mask 调用和 PoE2 校准入口，再修改 PoE2 独立配置/运行时；绘图模式保持只读参考。
+
+## [SYNC] 2026-09-21 — PoE2 视觉校准契约实现
+
+### A. SYNC 范围声明
+
+**触发任务：** 根据上一轮已确认差异，为 PoE2 独立 profile 补齐绘图模式已有的识别参数、颜色校准和 combined matching evidence，同时把实际匹配层展示在 PoE2 页面。
+**直接变更文件：** `features/poe2/live_terrain/monitor_config.py`、`runtime.py`，`ui/modes/poe2_live_terrain/config_panel.py`、`monitor_dialog.py`、`page.py`、`presenter.py`，以及 PoE2 focused tests。
+**预计连带影响：** profile JSON 向后兼容、composition 创建的 dedicated recognizer、center/region 两种人物策略、全局/局部匹配模板、UI 帧缓存和日志诊断；原绘图模式只作为参考，不修改。
+
+### C. SYNC 结果
+
+**实现结果：**
+
+- `(verified)` `Poe2MonitorConfig.recognizer_params` 现在深复制并随独立 profile JSON 往返；旧 profile 缺字段时仍按空字典加载，首次颜色/高级校准时以 PoE2 dedicated recognizer 的完整默认参数补齐。
+- `(verified)` PoE2 配置面板新增“颜色校准”和“高级视觉参数”入口；颜色校准复用 `ColorPickerDialog` 的预处理采样、墙体/人物 HSV 范围与 wall-mask 预览，高级参数复用 `AdvancedSettingsDialog`，但只保留 `HSVRecognizer.get_params()` 支持的字段，不把 stitcher 参数写入 PoE2 profile。
+- `(verified)` 校准截图通过 composition 的 `capture_preview_frame(config)` 使用对话框当前尚未保存的 binding、形状和圆形半径；不会读取或修改绘图模式 `AppContext`。
+- `(verified)` `Poe2LocalizationRuntime` 新增 `Poe2VisualEvidence`，每帧在人物局部坐标确定后调用 `preprocess_image()` 和 `extract_combined(frame, player_pos)`；center 模式仍不做人物图像识别，但会执行墙体视觉处理。全局/局部 matcher 优先消费同一 `match_mask`，旧注入 recognizer 缺少 combined API 时才回退 wall mask。
+- `(verified)` `Poe2LocalizationState` 发布 `processed_frame`、`match_mask`、`wall_mask` 和 `fog_mask`；页面并列显示预处理画面与定位器实际使用的匹配特征，停止时同步清空两块帧缓存。
+- `(verified)` 原绘图模式业务文件未修改；PoE2 dedicated recognizer 和 profile 参数保持独立。
+
+**验证：** PoE2 focused/UI/architecture suite `68 passed`；`python -m compileall -q src` 通过；`git diff --check` 通过（仅既有 CRLF 提示）。Serena 新增代码诊断已处理；`PySide6`、`numpy`、`cv2` 的 missing-import 提示来自语言服务器未使用项目 venv。
+
+**仍未解决：** 真实 PoE2 小地图与 native terrain 的比例、最终旋转/镜像组合和匹配阈值仍需实机校准；自动方向候选尚未实现。本轮解决的是视觉输入契约和校准能力不一致，不宣称全局定位已经实机通过。
+
+## [SYNC] 2026-09-21 — PoE2 截图监控与对比样本窗口
+
+### A. SYNC 范围声明
+
+**触发任务：** 为“数据采集测试”页增加独立截图监控窗口，并将同一帧的原图、预处理图、匹配特征和当前地形作为可回看的对比样本保存。
+**直接变更文件：** `features/poe2/live_terrain/capture_samples.py`、`features/poe2/live_terrain/__init__.py`、`ui/modes/poe2_live_terrain/capture_monitor_window.py`、`capture_test_page.py`、`page.py`、`ui/modes/poe2/composition.py`、`ui/main_window.py` 及对应测试。
+**预计连带影响：** PoE2 composition 依赖契约、测试页窗口生命周期、monitor profile 序列化、地形展示方向、应用关闭清理、`data/poe2_live_terrain_test/samples/` 文件副作用和相关 architecture/UI 回归。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` `CaptureEvidence` 会复制并冻结同一帧派生出的 raw/processed/feature 数组和 config payload，刷新失败时窗口清除 evidence，旧帧不能继续保存。
+- `(verified)` `CaptureSampleArchive.save()` 在隐藏临时目录完成三张必需 PNG、可选 terrain PNG 和 manifest 后再原子发布；编码/写盘失败会删除临时目录。图片 manifest 保存尺寸、通道、dtype 与编码字节 SHA-256。
+- `(verified)` terrain 缺失时样本仍可保存三类视觉证据并显式记录 missing；历史浏览不会从其他样本补用 terrain。
+- `(verified)` `Poe2CaptureMonitorWindow` 只调用一次截图 provider 生成当前证据，保存按钮不重新截图；窗口和落盘 terrain 使用同一个 profile 旋转/镜像契约。
+- `(verified)` `Poe2CaptureTestPage.open_capture_monitor()` 只创建一个独立窗口实例，profile 更新通过 provider 读取最新 config，shutdown 关闭窗口并停止定时器。
+- `(verified)` composition 新增独立 `capture_sample_archive`，写入 `data/poe2_live_terrain_test/samples/`；现有 `TerrainDebugArchive` 的地图 NPZ 保存链未修改。
+
+**修订旧结论：** 此前认为用户点击“刷新截图”后可以从本地复查该帧；现在确认旧实现仅把 pixmap 放入 `QLabel`，没有保存截图证据。新窗口的“保存当前对比样本”才是可追溯的落盘入口。
+
+**CODEBASE.md 更新内容：** PoE2 目录/文件职责、`capture_samples.py` 和 `capture_monitor_window.py` 模块详解与算法、F-POE2-CAPTURE-TEST 每跳数据流、同步 PNG 编码性能风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `features/poe2/live_terrain/capture_samples.py` | PENDING | 深度完整 | 1 | 核对 evidence 冻结、terrain 渲染、PNG 元数据、唯一目录、原子发布、失败清理和历史加载。 |
+| `ui/modes/poe2_live_terrain/capture_monitor_window.py` | PENDING | 深度完整 | 2 | 核对一次截图派生三层证据、定时器/close 生命周期、保存、历史切换和同方向 terrain 展示。 |
+| `ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 3 | 新增窗口按钮和单例所有权；确认原内嵌 preview 与地图显式归档仍独立。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 3 | 确认 sample archive、测试 service、地图 archive 和 dedicated recognizer 分别注入，不共享运行状态。 |
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | 4 | 确认样本归档只向测试 tab 透传，定位 tab 的 runtime 与关闭流程不变。 |
+| `ui/main_window.py` | 深度完整 | 深度完整 | 4 | 确认组合根新增一个依赖参数，页面索引、Host/LAN 生命周期和关闭顺序未改变。 |
+
+**验证：** PoE2 focused/UI suite `70 passed`；全项目 `547 passed, 1 skipped, 3 failed, 10 subtests passed`。3 个失败仍为未修改的既有 `tests/test_pathfinder.py` 对角穿角、未探索区域和细墙语义。`compileall` 与 `git diff --check` 通过。Serena 的真实类型诊断已修复；剩余 `PySide6/cv2/numpy` missing-import 是语言服务器未使用项目 venv。
+
+**下一轮计划：** 在 PoE2 开启且小地图可见时，从独立窗口保存至少两套样本；先对比 raw/processed/feature/terrain，再决定 45° 候选、比例搜索和方向细化算法。
+
+## [SYNC] 2026-09-21 — 对比样本目录 Windows ACL 修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 实机首次保存后，普通工作区会话无法进入样本目录，需定位并修复跨进程身份的目录权限继承。
+**直接变更文件：** `features/poe2/live_terrain/capture_samples.py`、`tests/poe2_live_terrain/test_capture_samples.py`。
+**预计连带影响：** 样本临时目录创建、原子目录发布、历史样本可读性；PNG、manifest 和既有地图 NPZ 数据契约不变。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 首次实机连续保存的四份样本中，一份可由当前用户读取，后三份均在目录枚举和 `icacls` 时返回 `Access is denied`；samples 父目录本身包含用户、`CodexSandboxUsers`、`Authenticated Users` 和 `Users` 的继承权限。
+- `(verified)` 最小复现确认 `tempfile.mkdtemp()` 在 Windows 上创建 owner-only DACL；随后 `os.replace()` 只重命名目录，不会让最终样本重新继承父目录 ACL。普通 `Path.mkdir()` 创建的目录会继承 samples 根目录 ACL。
+- `(verified)` `CaptureSampleArchive._create_temporary_directory()` 现使用 128-bit 随机 token 的隐藏目录和普通 `Path.mkdir()`，名称冲突最多重试 100 次；完整写入后仍由 `os.replace()` 原子发布，PNG/manifest 契约未改变。
+- `(verified)` 新增 Windows 回归测试通过 `icacls` 断言最终样本目录包含继承标志 `(I)`；修复前该测试稳定失败，修复后通过。
+- `(verified)` 可读实机样本 `20260921-075556-840709-MapFlotsam-F6A61E51` 包含 raw/processed/feature/terrain 和 manifest，截图为 `200 x 200`，地形为 `1864 x 2829`；后三份仍来自未重载修复代码的旧进程，未强制接管或修改其 ACL。
+
+**修订旧结论：** 原先只确认“隐藏临时目录 + `os.replace()` 可避免半成品”；现在确认 Windows 目录原子发布还必须保留父目录可读 ACL，目录创建方式是归档契约的一部分。
+
+**连带重读文件：** `features/poe2/live_terrain/capture_samples.py`、`tests/poe2_live_terrain/test_capture_samples.py`、`CODEBASE.md`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`。
+
+**CODEBASE.md 更新内容：** 更新 `CaptureSampleArchive.save()` 的临时目录算法和 `_create_temporary_directory()` 的 Windows ACL 风险/回归约束。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `features/poe2/live_terrain/capture_samples.py` | 深度完整 | 深度完整 | 2 | 重读保存、随机临时目录、失败清理和原子发布；确认普通 mkdir 继承父 ACL。 |
+| `tests/poe2_live_terrain/test_capture_samples.py` | 深度完整 | 深度完整 | 2 | 新增 Windows `icacls (I)` 回归，覆盖跨进程身份样本不可读根因。 |
+
+**下一轮计划：** 用户关闭旧进程并重新启动后再保存一份样本，先验证最终目录 ACL 可继承和四层证据可读，再基于 raw/feature/terrain 实现离线方向与比例候选探针；暂不接入实时定位循环。
+
+## [SYNC] 2026-09-21 — PoE2 离线方向、比例与全局定位探针
+
+### A. SYNC 范围声明
+
+**触发任务：** 使用已经保存的 PoE2 原图、匹配特征和完整地形样本，在实验目录中先解决动态特征清理、随机方向、比例差异和全图位置搜索，再决定正式模块的算法调整。
+**直接变更文件：** `tools/debug/poe2_live_terrain_localization_probe.py`、对应实验测试、使用说明和 PoE2 当前状态文档。
+**预计连带影响：** 只新增离线实验入口和输出目录；读取 samples 中的 PNG/manifest，输出候选报告、清理后特征和叠加图。正式 PoE2 runtime、绘图模式、截图服务、输入设备、Host/LAN 均不修改。
+
+**本轮要验证：**
+
+- 当前生产 `TM_CCOEFF_NORMED` 失败是否主要由未搜索尺度与方向造成；
+- 连通分量形状过滤能否去掉人物光环、标记和鼠标指针而保留触边地图轮廓；
+- 多尺度双向 Chamfer 评分能否给出可审计的 Top-K 候选和显著性差距；
+- 45° 粗搜索后是否需要小角度细化，以及结果能否映射回原生地形坐标。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 生产 `Poe2LocalizationRuntime._global_match()` 只在当前人工方向、原始比例上运行一次 `TM_CCOEFF_NORMED`；真实样本首选需要 feature 到 terrain 的 `225°` 逆时针旋转、水平镜像和 `0.35` 比例，因此旧实现的输入假设不成立。
+- `(verified)` manifest 参数重放得到的 feature 非零支撑与保存图完全一致；`1339` 个非零像素经人物半径和连通分量清理后保留 `1113` 个，移除了紧凑的光环/标记/指针，地图主轮廓保留。
+- `(verified)` 新探针执行 45° 旋转、镜像和多比例粗 Chamfer 搜索，再以 `±4°`、`±0.04` 比例和 48 像素邻域细化；小于 120 个边缘像素的候选拒绝，避免低比例小模板虚高。
+- `(verified)` 人物种子侧局部可行走面与 native terrain 可行走面加入评分；实样本首选为人物 `(1318.35, 834.10)`、score `0.738386`、second `0.681727`、margin `0.056659`、walkable coverage `0.809882`，通过当前实验拒绝门槛。
+- `(verified)` 参数敏感性检查中 component span `18/24/30` 与 clear radius `16/22` 保持同一候选；radius `30` 过度清理后 score `0.599810`、margin `0.001638`，被 fail closed。
+- `(verified)` 合成测试覆盖动态紧凑分量清理、人物侧可行走面、`45° + 镜像 + 1.2` 比例和已知平移恢复，以及两个相同边界候选由可行走证据消歧。
+
+**修订旧结论：** 此前把定位失败主要归因于颜色/combined 特征链不完整；现在实样本证明当前颜色链能稳定重建同一 feature，剩余主要矛盾是正式 matcher 没有方向、镜像、比例搜索，也没有可行走面和显著性拒绝契约。
+
+**边界结论：** 探针 `accepted=true` 只是样本内置信规则通过，缺少独立真实全局坐标，不能宣称实机定位已验证；正式 runtime 本轮保持不变。
+
+**验证：** 探针算法/PoE2 focused 回归 `77 passed`；迁移后架构边界与探针定向回归 `5 passed`；全项目 `552 passed, 1 skipped, 3 failed, 10 subtests passed`。3 个失败仍是未修改的既有 `tests/test_pathfinder.py` 穿角、未探索区和细墙语义。`compileall -q src tools tests` 和 `git diff --check` 通过（仅既有 CRLF 提示）。Serena 的 Optional 类型告警已修复；剩余 `cv2/numpy` missing-import 是语言服务器未使用项目 venv。
+
+**CODEBASE.md 更新内容：** 增加实验 probe 模块/函数算法、目录文件注释、输出数据流和“单帧无 ground truth”P1 风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `tools/debug/poe2_live_terrain_localization_probe.py` | PENDING | 深度完整 | 2 | 核对参数重放、特征清理、局部可行走恢复、粗细 Chamfer 搜索、评分拒绝和全部输出副作用。 |
+| `tools/debug/POE2_LIVE_TERRAIN_LOCALIZATION_PROBE.md` | PENDING | 深度完整 | 1 | 核对运行命令、图层颜色、输出目录和禁止直接接入生产的边界。 |
+| `tests/poe2_live_terrain/test_localization_probe.py` | PENDING | 深度完整 | 2 | 覆盖清理、区域种子、已知变换恢复及相同边界的可行走消歧。 |
+
+**下一轮计划：** 用修复后进程采集同一地图移动前后的多帧和至少一张不同地图；先在探针中验证变换/比例稳定与坐标位移连续性，再规划通用 matcher 下沉和 PoE2 runtime 组合，不直接复制整个实验脚本。
+
+## [SYNC] 2026-09-21 — PoE2 启动局部地图拼接采集
+
+### A. SYNC 范围声明
+
+**触发任务：** 将现有 PoE2 数据采集测试窗口扩展为独立的绘图采集实验台；复用绘图模式底层的识别、关键帧/F2F 配准、质量门和加权拼接，先采集一段不重影的启动局部地图，供后续方向和全局位置匹配。
+**直接变更文件：** 新增 PoE2 拼图会话适配层及其测试；扩展 `ui/modes/poe2_live_terrain/capture_monitor_window.py` 和对应 UI 测试；补充设计、实施计划及 PoE2 当前状态文档。
+**预计连带影响：** `core/mapping/MapStitcher`、`MapFrameEvidence`、现有 capture evidence provider、测试页窗口生命周期、样本归档。原绘图页面、正式 PoE2 定位 runtime、完整地形采集、Xbox/键鼠、Host/LAN 不修改。
+
+**本轮要验证：**
+
+- 同一截图证据能否转换成绘图底层需要的 match/save/fog 图层，并保持单人中心点契约；
+- 开始、暂停、重置后拼图会话状态是否隔离且可预测；
+- 低质量、位移跳跃或失败帧是否由现有底层拒绝而不污染拼图；
+- UI 能否同时展示实时小地图、匹配特征、拼接地图、人物位置和关键统计；
+- 保存实验时能否把拼接地图、轨迹和统计与当前截图证据放在同一可追溯目录。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 绘图模式的真实输入契约不是一张 feature：combined 保留灰度权重用于帧间配准，wall mask 用于落图，fog mask 用于可见区域，raw gray 作为原始灰度证据。`CaptureEvidence` 已扩展为同帧携带这些可选层，拼图会话保持 distinct layer，不把它们重新折叠或二值化。
+- `(verified)` `Poe2StitchingSession` 只组合通用 `MapStitcher`；idle/paused 不消费帧，start 继续当前会话，reset 创建全新 `3000 x 3000` stitcher 并清空轨迹。首帧或通过 match/quality gate 的新位置才进入轨迹，失败和低质量帧不写轨迹。
+- `(verified)` 截图监控窗口仍然每周期只调用一次截图 provider；同一个 evidence 同时驱动 raw/processed/feature 预览和拼图，不为绘图再次截图。窗口关闭会停止定时器并暂停拼图，不自动保存或清空结果。
+- `(verified)` UI 采用左侧四层同步证据、右侧大幅拼接地图、底部历史样本；增加开始、暂停、重置、保存和打开目录命令，并显示总帧、成功/失败、质量、匹配率、关键帧、低质量跳过和当前相对位置。离屏 `1500 x 920` 截图检查未发现控件重叠或裁切。
+- `(verified)` `Poe2StitchingArchive` 只在显式保存时写 `stitched_map`、轨迹 overlay、raw/processed/feature/wall/fog、可选同实例 terrain 和 `session.json`；terrain 缺失时明确记录 missing。隐藏临时目录继承父 ACL，完整后原子发布。
+- `(verified)` composition 为每个窗口创建独立 session，并把 archive 固定到 `data/poe2_live_terrain_test/stitching_sessions/`；正式 localization runtime、原绘图页面实例、Xbox/键鼠、Host/LAN 调用链未改变。
+
+**修订旧结论：** 此前状态文档把 stitcher 归为 PoE2 有意不复用的绘图业务能力；本轮确认应区分“正式 native terrain/定位”与“数据采集实验”。正式链仍不依赖 stitcher，但实验页合理复用通用 mapping core 生成辨识度更高的启动局部图。
+
+**连带重读文件：** `core/mapping/stitcher.py`、`core/mapping/frame_pipeline.py`、`core/mapping/weighted_merge.py`、`core/mapping/rendering.py`、`core/mapping/evidence.py`、绘图 `runtime/session.py`、map renderer、PoE2 capture window/test page/composition/page/MainWindow。
+
+**CODEBASE.md 更新内容：** 更新 PoE2 页面职责和 `CaptureEvidence` 契约；新增 stitching session/archive 模块详解、完整算法、F-POE2-CAPTURE-TEST 拼图/归档跳和 P1 漂移/P2 内存风险；当前状态文档同步保存目录和未完成边界。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `features/poe2/live_terrain/capture_samples.py` | 深度完整 | 深度完整 | 3 | 扩展同帧 wall/fog/raw-gray 只读层并公开复用 terrain preview；原单帧归档格式保持。 |
+| `features/poe2/live_terrain/stitching_session.py` | PENDING | 深度完整 | 2 | 核对生命周期、distinct layer 适配、统计差分、质量门轨迹和只读 crop snapshot。 |
+| `features/poe2/live_terrain/stitching_archive.py` | PENDING | 深度完整 | 2 | 核对八类图片、terrain identity/missing、hash manifest、ACL 继承、原子发布和失败清理。 |
+| `ui/modes/poe2_live_terrain/capture_monitor_window.py` | 深度完整 | 深度完整 | 4 | 核对单次截图、拼图控制/日志/统计、同帧消费、显式保存、close pause 和实际布局。 |
+| `ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 4 | 核对窗口单例、独立 session factory、archive 注入与 shutdown 生命周期。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 4 | 核对 `stitching_sessions` 根、每窗口 session 隔离及正式 runtime 不共享状态。 |
+| `core/mapping/frame_pipeline.py` | 深度完整 | 深度完整 | 既有+1 | 重读关键帧/F2F、跳变拒绝、quality gate、统计递增和落图调用顺序。 |
+| `core/mapping/weighted_merge.py` | 深度完整 | 深度完整 | 既有+1 | 重读 wall/fog/explored 权重融合、重复帧拒绝和 precise visibility 语义。 |
+
+**验证：** 新功能/PoE2/mapping/UI/architecture focused `104 passed`；全项目 `559 passed, 1 skipped, 3 failed, 10 subtests passed`。3 个失败仍为未修改的既有 `tests/test_pathfinder.py` 穿角、未探索区和细墙语义。`compileall -q src tools tests` 与 `git diff --check` 通过（仅既有 CRLF 提示）。Serena 未发现新增真实类型错误；剩余 `cv2/numpy/PySide6` missing-import 是语言服务器未使用项目 venv。
+
+**下一轮计划：** 启动应用后在同一 PoE2 地图正常行走一段折线路径，观察实时拼图是否重影、轨迹是否连续、失败/低质量计数是否异常；显式保存一套 stitching session 后，再用局部拼图与同目录 terrain 开始方向、镜像、比例和全局平移联合匹配实验。
+
+## [SYNC] 2026-09-21 — PoE2 绘图运行契约与第一页完整对齐
+
+### A. SYNC 范围声明
+
+**触发任务：** 修复 PoE2 内部绘图与第一页绘图效果不一致的问题；当前游戏地图墙体已改为蓝色，但颜色只作为独立 profile 的校准数据，不在通用识别层写死颜色策略。
+**直接变更文件：** `core/mapping/stitcher.py`、PoE2 `monitor_config.py`、`stitching_session.py`、`capture_samples.py`，以及 PoE2 配置面板、监控对话框、截图监控窗口和页面初始化链路；同步对应 focused tests、`CODEBASE.md` 与当前状态文档。
+**预计连带影响：** `MapStitcher` 参数创建/重置契约、PoE2 profile 旧数据兼容、运行中配置切换规则、颜色/高级参数编辑、同帧 wall/fog/raw-gray 诊断层、active profile 首次加载。原第一页绘图业务代码、正式 native terrain 数据、Xbox/键鼠、Host/LAN 不修改。
+
+**本轮要验证：**
+
+- 同一 recognizer/stitcher 参数下，PoE2 与第一页是否消费同一套视觉与拼接参数；
+- 旧 profile 缺少 `stitcher_params` 时能否得到完整默认值并继续读取；
+- 改变画布/比例/融合参数是否显式重建 PoE 拼图，而相同参数不清空当前会话；
+- 页面首次构造时是否立即应用 active profile，而非必须手动保存一次；
+- 监控窗口是否展示真正写入地图的 `wall_mask`，归档是否保留所有诊断图层；
+- 蓝色墙体能否通过 profile 颜色校准保存，且底层不出现 PoE 或蓝色专用分支。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 同一旧样本的参数消融证明页面差异主要来自 `deepen_enabled`，而不是黄色/蓝色专用墙体逻辑；PoE 原实现只持久化 recognizer 参数且 session 硬编码 `3000 x 3000`，没有完整复刻第一页的 stitcher 参数恢复契约。
+- `(verified)` `MapStitcher.default_params()` 现可无画布分配返回完整参数；`reset()` 会保留 canvas/draw scale/wall close、权重、质量门和精准可见区参数。
+- `(verified)` `Poe2MonitorConfig` 对 recognizer/stitcher 两组参数都做防御性复制和 JSON round-trip；旧 profile 缺 stitcher 字段时自动补完整 `5000 x 5000` 默认契约，新建/复制/重命名继续走 `as_dict()/from_dict()`，不会掉字段。
+- `(verified)` `Poe2StitchingSession.configure()` 对相同参数不清图，非 running 参数变化重建独立 stitcher 并回 idle，running 参数变化明确拒绝；reset 使用当前 profile 参数重建。
+- `(verified)` PoE 高级窗口不再隐藏 stitcher tab；返回参数按 `HSVRecognizer` 和 `MapStitcher` 支持键拆分，未暴露在共享窗口控件中的 canvas/scale/quality 参数仍保留。
+- `(verified)` `Poe2CaptureMonitorWindow` 同帧展示实际 `wall_mask`，样本归档可选写 wall/fog/raw-gray，历史下拉可读取这些层；旧样本仅有 raw/processed/feature 时继续加载。
+- `(verified)` 页面构造、profile 切换、配置保存统一应用 monitor config；active profile 不再需要先手动保存一次才进入 runtime。
+- `(verified)` 当前蓝色地图只改变 PoE profile 的颜色校准输入；core/recognizer/stitcher 没有新增 PoE、蓝色或具体地图分支。
+
+**修订旧结论：** 上一轮把 PoE 视觉链标为“完整对齐”，但本轮逐项比较发现只对齐了 recognizer 输出，未对齐 stitcher 参数持久化、创建/重置和 wall 层诊断；现已按完整运行契约补齐。
+
+**连带重读文件：** mapping config 保存/恢复与 advanced settings 参数适配器、PoE profile store/config panel/dialog/page、capture test window/session/archive、composition factory 和对应 focused tests。
+
+**CODEBASE.md 更新内容：** 更新 PoE2 profile 双参数契约、页面首次应用、wall/fog/raw-gray 归档与 F-POE2-CAPTURE-TEST；补充 `MapStitcher.default_params()/reset()`、`Poe2StitchingSession.configure()` 行为和默认 5000 画布内存风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `core/mapping/stitcher.py` | 深度完整 | 深度完整 | 既有+1 | 新增无分配默认参数契约；reset 保留全部结构/融合参数。 |
+| `features/poe2/live_terrain/monitor_config.py` | 深度完整 | 深度完整 | 既有+1 | recognizer/stitcher 双参数深复制、旧 profile 补默认和 profile CRUD 传递已核对。 |
+| `features/poe2/live_terrain/stitching_session.py` | 深度完整 | 深度完整 | 3 | 核对 configure 等值/重建/running 拒绝、factory 注入和 reset 参数保持。 |
+| `features/poe2/live_terrain/capture_samples.py` | 深度完整 | 深度完整 | 4 | 可选 wall/fog/raw-gray 原子归档与旧三层 manifest 兼容。 |
+| `ui/modes/poe2_live_terrain/config_panel.py` | 深度完整 | 深度完整 | 既有+1 | 所有 current/selection/recognizer 更新路径保留 stitcher 参数。 |
+| `ui/modes/poe2_live_terrain/monitor_dialog.py` | 深度完整 | 深度完整 | 既有+1 | 高级窗口双参数合并、按支持键拆分及 stitcher tab 保留。 |
+| `ui/modes/poe2_live_terrain/capture_monitor_window.py` | 深度完整 | 深度完整 | 5 | 五层当前预览、可选历史层和 start 前 session configure 已核对。 |
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | 既有+1 | 构造/切换/保存共用 `_apply_monitor_config()`，capture page 同步无重复。 |
+
+**验证：** 新增测试先得到 13 个预期失败，再实现至 focused `35 passed`；PoE2/mapping/UI/architecture 扩展回归 `113 passed`；全项目 `567 passed, 1 skipped, 3 failed, 10 subtests passed`，3 个失败仍是未修改的既有 PathFinder 语义。`compileall -q src tests` 与 `git diff --check` 通过（仅既有 CRLF 提示）。1500×920 离屏抓图确认新增 3×2 证据区、拼接地图和历史区无重叠或裁切。
+
+**下一轮计划：** 用户在蓝色地图下重新执行颜色校准并走一段连续路径；优先保存包含 wall/fog/raw-gray 的新样本和 stitching session。先检查 wall 层完整性，再检查 feature 稳定性及拼接重影；只有这三项通过后，才把启动局部图送入方向/镜像/比例/全局平移联合匹配。
+## [SYNC] 2026-09-22 13:10 — PoE2 内存锚点局部注册实验
+
+### A. SYNC 范围声明
+
+**触发任务：** 在 PoE2 实验代码中实现首帧内存锚点局部注册，并让同步样本携带人物位置。
+
+**直接变更文件：**
+
+- `tools/debug/poe2_anchor_local_registration_probe.py`
+- `tests/poe2_live_terrain/test_anchor_local_registration_probe.py`
+- `src/auto_modules/features/poe2/live_terrain/capture_samples.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_monitor_window.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+- `tests/poe2_live_terrain/test_capture_samples.py`
+- `tests/test_poe2_capture_monitor_window.py`
+- `docs/plans/2026-09-22-poe2-anchor-local-registration.md`
+
+**预计连带影响：** PoE2 手动样本归档 Flow、数据采集测试页到截图监控窗口的依赖注入、既有离线 Chamfer 搜索器、实验报告契约；不影响正式 runtime、core localization、绘图模式和输入/网络链路。
+
+### C. 第一轮发现
+
+**关键发现：**
+
+- `(verified)` 新实验模块只组合既有 `search_candidates()`，没有复制 Chamfer、距离场或相似变换实现；职责集中在样本实例校验、锚点裁剪、候选先验和诊断落盘。
+- `(verified)` terrain 与 player position 实例不一致时在加载边界 fail closed，不会读取根目录陈旧 `latest.npz`。
+- `(verified)` 两阶段搜索先以 180 像素半径粗搜，再围绕最佳角度/镜像/比例在 130 像素半径细搜；坐标通过 crop 原点显式还原为完整 native-grid。
+- `(verified)` 单帧状态只有 `anchored_candidate/ambiguous/rejected`，没有跨帧 confirmed；真实样本自动复现 `219°/flip/0.85`、锚点误差 `7.10`。
+
+**修订旧结论：** 旧全局 probe 的 `0.72` 单一结构分门槛不能原样用于有内存锚点的局部搜索；新实验保留原始结构分和覆盖率门槛，同时显式加入锚点误差和候选分差，且仍不把单帧候选称为确认。
+
+**CODEBASE.md 更新内容：** §2 新增实验文件；§4/§5 新增模块、所有公开/私有算法和失败行为；§9 新增单样本参数泛化风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `tools/debug/poe2_anchor_local_registration_probe.py` | 新增 | 深度完整 | 1 | 核对样本校验、crop 坐标还原、锚点加权、两阶段搜索、状态门和原子诊断输出。 |
+| `tools/debug/poe2_live_terrain_localization_probe.py` | 深度完整 | 深度完整 | 既有+1 | 重核复用的 SearchCandidate、transform/search/overlay 契约，确认新模块未复制底层算法。 |
+| `tests/poe2_live_terrain/test_anchor_local_registration_probe.py` | 新增 | 深度完整 | 1 | 覆盖实例不一致、边界裁剪不改输入、顶部/中心清理、已知旋转镜像比例恢复及诊断文件。 |
+
+### A. 第二轮目标（阅读前声明）
+
+**目标文件：** `capture_samples.py`、`capture_monitor_window.py`、`capture_test_page.py` 及对应三组测试。
+
+**本轮想弄清楚：** 人物位置如何从一次地图抓取传到监控窗口保存动作，实例一致性在哪一层验证，缺位置时旧样本保存是否继续兼容，以及该变化如何更新 F-POE2-CAPTURE-TEST 数据流。
+
+### C. 第二轮发现
+
+**关键发现：**
+
+- `(verified)` `Poe2CaptureTestPage.capture_map()` 在 terrain 成功后读取一次 `PlayerPositionSample` 并保存在页面；`open_capture_monitor()` 通过只读 provider 把该样本交给唯一监控窗口，不启动正式定位 runtime。
+- `(verified)` `Poe2CaptureMonitorWindow.save_current_sample()` 只把当前 evidence、同周期 terrain 和 provider 返回的人物样本一起交给 `CaptureSampleArchive.save()`；点击保存不会重新截图或重新读取进程。
+- `(verified)` 归档层校验 terrain/player area instance 一致；缺人物位置时继续写明确 `status=missing`，因此旧采样流程保持兼容。
+- `(verified)` 非 identity profile 下，`terrain.png` 会旋转/翻转，所以 native `grid` 不能直接用于裁剪。manifest 现同时保存原生 `grid` 和与归档图一致的 `terrain_grid`，terrain 元数据同时记录 native/preview 尺寸、方向和 `coordinate_space=oriented-preview`。
+- `(verified)` 审查发现既有搜索器按人物位置去重会吞掉同位置的不同方向候选；锚点探针现按多个角度/镜像 basin 分别细化并在合并后判 margin，对称方形测试稳定返回 `ambiguous`。
+- `(verified)` 锚点约束原先在 Top-K 截断后才生效；`ProbeConfig` 现提供通用的可选人物位置 hint/radius，粗 Chamfer 图和原分辨率细搜图都会先把范围外位置设为无穷，再提取局部极小值。25 个重复结构测试证明近锚点真解不会被前 16 个外圈候选挤掉。
+
+**修订旧结论：** 第一轮真实样本结果仍成立，但“只围绕最佳粗候选细化”不足以判断方向唯一性。当前实现会保留最多 4 个分数接近且角度/镜像不同的 basin；单帧仍只发布 `anchored_candidate`，对称方向必须发布 `ambiguous`。
+
+**连带重读文件：** `capture_samples.py`、`capture_monitor_window.py`、`capture_test_page.py`、`orientation.py`、既有 localization probe 及对应 focused tests。
+
+**CODEBASE.md 更新内容：** 更新人物位置 provider 调用链、双坐标空间归档契约、锚点前置搜索窗口、多 basin 细化和 F-POE2-CAPTURE-TEST。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `features/poe2/live_terrain/capture_samples.py` | 深度完整 | 深度完整 | 既有+1 | 核对实例门、native/oriented 双坐标、原子发布和缺位置兼容。 |
+| `ui/modes/poe2_live_terrain/capture_monitor_window.py` | 深度完整 | 深度完整 | 既有+1 | 核对保存时 provider 只读取当前页面人物样本。 |
+| `ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 既有+1 | 核对 capture 后单次读取、窗口依赖注入和失败不清 terrain。 |
+| `tools/debug/poe2_live_terrain_localization_probe.py` | 深度完整 | 深度完整 | 既有+1 | 增加通用 hint/radius 搜索窗；不含 PoE 业务术语。 |
+| `tools/debug/poe2_anchor_local_registration_probe.py` | 深度完整 | 深度完整 | 2 | 审查后补齐多 basin 判歧义和方向坐标契约。 |
+
+**验证：** 三组核心实验/归档测试 `32 passed`；PoE2 terrain、采集窗口、composition 和主窗口扩大回归 `136 passed`；目标源码 `compileall` 与 `git diff --check` 通过（仅既有 CRLF 提示）。真实样本复跑仍为 `anchored_candidate`，最佳候选保持 `219°/flip/0.85`、锚点误差 `7.1032`，并输出到 `anchor-local-v2/`。
+## [SYNC] 2026-09-22 — PoE2 混合实时定位设计与实施计划
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户确认混合实时定位方案，需要落盘完整模块设计、首次定位/局部跟踪/丢失恢复调用链，并拆成可审核的 TDD 实施计划；本轮不编写功能代码。
+
+**直接变更文件：**
+
+- `docs/plans/2026-09-22-poe2-hybrid-localization-design.md`
+- `docs/plans/2026-09-22-poe2-hybrid-localization-implementation-plan.md`
+- `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`
+- `ITERATION_LOG.md`
+- `CODEBASE.md`（只登记新增规划文档，不把未实现模块写成当前实现）
+
+**预计连带影响：** 后续实施将涉及通用定位状态机、PoE2 内存锚点适配、锚点绝对注册、局部视觉跟踪、实验页 composition 和诊断展示；当前正式 runtime、第一页绘图模式、路径规划、Xbox、Host/LAN 行为均不变。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 现有 `MapLocalizer` 已具备 `NEED_GLOBAL -> LOCAL_TRACKING -> RECOVERY_REQUIRED` 的基本状态思想，但 global/recovery 分支会在每次 `update()` 调用 global matcher；不能直接把内存读取放进既有 `_global_match()`，否则失败状态会产生连续读取。
+- `(verified)` 旧 `NavigationCore` 的定位顺序是帧间位移、局部模板匹配、失败后下一帧整图匹配；PoE 混合方案只替换绝对定位策略，不改局部成功路径的基本原则。
+- `(verified)` 当前 PoE `_global_match()` 是整图 `cv2.matchTemplate()`；已验证的锚点局部注册尚未接 runtime，必须先从 CLI 拆为无文件系统副作用的 `AnchoredAbsoluteRegistrar`。
+- `(verified)` `FrameRegistration` 只有 origin/scale，不能完整表达任意旋转、水平镜像、比例和平移；设计新增类型化 `SimilarityTransform2D`，运行必需变换不再藏在 metadata。
+- `(design)` 每个 recovery revision 只允许一次内存读取；局部失败在下一帧触发单次恢复，恢复失败后等待显式 retry。首次和恢复调用同一 registrar，同实例 prior 允许锁定方向/镜像/比例只细化平移。
+
+**修订旧结论：** “全局定位”不再定义为搜索整张地图，而定义为恢复可信的绝对地图坐标；PoE 的绝对定位实现采用一次内存锚点加局部视觉注册。
+
+**连带重读文件：** `core/localization/map_localizer.py`、`core/localization/localize_pipeline.py`、`core/localization/navigation_core/relocalization.py`、`features/poe2/live_terrain/runtime.py`、`player_position.py` 及相关 tests。
+
+**CODEBASE.md 更新内容：** 目录文档清单新增两份已批准但尚未实现的设计/实施计划，并明确不得视为当前 runtime 能力；源码架构章节未写入计划模块。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `core/localization/map_localizer.py` | 深度完整 | 深度完整 | 既有+1 | 重核 global/local/recovery 转移及失败后重复调用边界。 |
+| `core/localization/localize_pipeline.py` | 深度完整 | 深度完整 | 既有+1 | 重核 F2F、局部模板和整图回退顺序。 |
+| `features/poe2/live_terrain/runtime.py` | 深度完整 | 深度完整 | 既有+1 | 确认 PoE global/local matcher 当前均为模板匹配且未消费锚点。 |
+| `features/poe2/live_terrain/player_position.py` | 深度完整 | 深度完整 | 既有+1 | 确认 read_once 每次重新解析地址、校验实例并返回当前 world/grid。 |
+
+**产出：** 完整设计文档和 15 个按 TDD 排序的实施任务已落盘；本轮未修改功能代码、未运行游戏或任何输入/网络链路。
+
+## [SYNC] 2026-09-22 — PoE2 混合实时定位实验实现
+
+### A. 第一轮目标（阅读前声明）
+
+**目标文件：** `models.py`、`contracts.py`、`recovery.py`、`controller.py`、`similarity_search.py`、`absolute_registrar.py`、`memory_anchor.py`、`local_tracker.py`。
+
+**本轮想弄清楚：** 不可变数据契约、一次性恢复许可、锚点注册和有界局部跟踪是否满足已批准状态机；失败帧是否会污染轨迹；同一 recovery revision 是否可能重复读取内存。
+
+### C. 第一轮发现
+
+**关键发现：**
+
+- `(verified)` `HybridLocalizationController` 只在 `NEED_ABSOLUTE/RECOVERY_PENDING` 消费当前 revision；恢复失败进入 `RECOVERY_REQUIRED` 后，普通 `update()` 不再访问 provider，只有显式 `retry_recovery()` 创建新 revision。
+- `(verified)` 首次与恢复共用 `AnchoredAbsoluteRegistrar`；无 prior 时搜索旋转/镜像/比例/平移，有同实例 prior 时把角度、镜像和比例固定为一个组合，只重新估计平移。
+- `(verified)` `VisualLocalTracker` 只调用 `LocalMapMatcher.match()` 的有界平移窗口，不包含整图回退；成功结果保留已确认 transform 的角度、镜像和比例。
+- `(verified)` 相似变换 Chamfer 搜索已从 CLI 移到实验 feature 包，两个 debug CLI 只保留样本/诊断 I/O 和兼容导出，生产 `src` 不反向导入 `tools.debug`。
+
+**修订旧结论：** 设计阶段把 `HybridFrame`/`HybridLocalizationState` 标为“按 §6 定义”，但原设计正文没有列出两者字段。实现将帧限制为同帧墙体证据、人物局部点和时间/帧号；状态显式区分本帧 `position` 与 `latest_confirmed_position`，失败帧不追加轨迹。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `experimental/hybrid_localization/models.py` | 新增 | 深度完整 | 1 | 核对有限值、只读数组、transform、registration、frame/state 快照和失败帧契约。 |
+| `experimental/hybrid_localization/contracts.py` | 新增 | 深度完整 | 1 | 核对三个 runtime-checkable 协议及 terrain/frame/registration 参数边界。 |
+| `experimental/hybrid_localization/recovery.py` | 新增 | 深度完整 | 1 | 核对 revision 创建、一次消费和旧 revision 拒绝规则。 |
+| `experimental/hybrid_localization/controller.py` | 新增 | 深度完整 | 2 | 逐分支核对首次、局部成功、局部失败、恢复失败、显式 retry、stop/reset 和轨迹更新。 |
+| `experimental/hybrid_localization/similarity_search.py` | 新增 | 深度完整 | 2 | 核对从 CLI 原样迁移的变换、粗搜、细搜、锚点前置窗口和候选去重数值逻辑。 |
+| `experimental/hybrid_localization/absolute_registrar.py` | 新增 | 深度完整 | 2 | 核对 reference 转 terrain、两阶段锚点匹配、prior 锁定和 typed result 映射。 |
+| `experimental/hybrid_localization/memory_anchor.py` | 新增 | 深度完整 | 1 | 核对单次 read、方向坐标变换、时间解析、失败传播和诊断计数。 |
+| `experimental/hybrid_localization/local_tracker.py` | 新增 | 深度完整 | 1 | 核对固定 similarity transform、有界 matcher、global position 恢复和 fail closed。 |
+
+### A. 第二轮目标（阅读前声明）
+
+**目标文件：** `session.py`、实验 `composition.py`、UI composition、`capture_test_page.py`、`capture_monitor_window.py`、`page.py`、`main_window.py` 及新增集成/架构测试。
+
+**本轮想弄清楚：** 每个 tick 是否只截图/构建一次证据，QTimer 和 session 是否只有一个 owner，实验依赖是否经过 composition 注入，以及 UI 关闭/失败时是否停止读取。
+
+### C. 第二轮发现
+
+**关键发现：**
+
+- `(verified)` session 每 tick 只取一次 config、截图一次、构建一次 evidence，并把唯一 `HybridFrame` 交给 controller；session 不导入 Qt，QTimer 只由采集测试页持有。
+- `(verified)` composition 从 snapshot/profile 创建定向 reference、memory anchor、absolute registrar、`MapRuntime + LocalMapMatcher`、controller 和 session；实验包不导入 UI、gamepad、Host 或 LAN。
+- `(verified)` 采集测试页在有 terrain 后才允许启动，显示 mode/source/confidence/position/read count/revision；失败帧保留底图和旧轨迹但不画新点。独立监控窗口只镜像同一 session 的状态，不创建第二套读取链路。
+- `(verified)` 五帧集成序列只读取两次内存；恢复失败后连续十帧 read count 不变，显式 retry 后只增加一次。
+
+**修订旧结论：** 数据采集测试页不再“只负责截图/地图且绝不启动定位”；它现在可以启动独立的混合定位实验 session，但仍不接正式 `Poe2LocalizationRuntime`、路线规划或输入执行。
+
+**CODEBASE.md 更新内容：** §2 新增实验包逐文件目录项；§4/§5 增加模型、状态机、算法、适配器、session/composition/UI 职责；§6 新增 F-POE2-HYBRID-LOCALIZATION；§8 增加状态和 transform 契约；§9 增加参数泛化、同步耗时和内存读取门风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `experimental/hybrid_localization/session.py` | 新增 | 深度完整 | 1 | 核对 active gate、单帧构建、listener、reset/retry 和无 Qt 边界。 |
+| `experimental/hybrid_localization/composition.py` | 新增 | 深度完整 | 2 | 核对 reference 方向、matcher runtime、PoE evidence builder 和六组件装配。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 既有+1 | 增加只接 snapshot/config 的实验 factory，继续复制 dedicated recognizer 状态。 |
+| `ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 既有+2 | 核对唯一 QTimer/session owner、按钮门、状态日志、overlay 和 shutdown。 |
+| `ui/modes/poe2_live_terrain/capture_monitor_window.py` | 深度完整 | 深度完整 | 既有+1 | 只镜像 hybrid state/read count 和 terrain overlay，不读取内存。 |
+| `tests/poe2_live_terrain/test_hybrid_localization_integration.py` | 新增 | 深度完整 | 1 | 覆盖五帧恢复成功链和十帧恢复失败 fence。 |
+| `tests/test_architecture_boundaries.py` | 深度完整 | 深度完整 | 既有+1 | 增加实验包禁止 UI/PySide6/输入执行依赖规则。 |
+
+**验证：** 混合定位与旧 CLI 聚焦回归通过；PoE2 terrain、采集 UI、composition、主窗口和架构完整相关回归 `187 passed`；`compileall` 与 `git diff --check` 通过。真实历史样本保持 `219°/flip/0.85`、锚点误差 `7.1032`。本轮未启动游戏、Xbox、键鼠、Host 或 LAN；实时连续轨迹仍待实机验收。
+
+## [SYNC] 2026-09-22 16:10 — 修复 PoE2 混合定位粗搜索漏解
+
+### A. SYNC 范围声明
+
+**触发任务：** 实机首次绝对注册稳定失败；已用实时帧确认正确的 `219° / 水平镜像 / 0.85` 候选可达到 `0.616` 分、锚点误差 `3.69`，但默认粗搜索在全局截断时将其淘汰。
+
+**直接变更文件：** `experimental/hybrid_localization/similarity_search.py`、`absolute_registrar.py`、`controller.py`、`capture_test_page.py` 及对应定位/UI 测试。
+
+**预计连带影响：** `search_candidates()` 的粗候选保留契约、`AnchoredAbsoluteRegistrar.register()` 的失败诊断、`HybridLocalizationController._attempt_absolute()` 的失败状态、采集页状态文本，以及 `F-POE2-HYBRID-LOCALIZATION` 首帧/恢复调用链；不改正式 `Poe2LocalizationRuntime`，不触发输入、Host 或 LAN。
+
+### C. SYNC 结果
+
+**根因与修复：**
+
+- `(verified)` 实机失败帧的地图实例、人物锚点、截图和墙体 mask 均有效；默认粗搜却让人物落在不可行走区的小比例候选占用全局 Top-K。`_coarse_search()` 现在在截断前按变换后人物点附近的 terrain walkable 排序，但容量允许时仍保留不可行走候选供后续评分/诊断。
+- `(verified)` 正确 `225°/flip` 方向 basin 已进入粗候选，但旧 `_refine_seeds()` 只按角度/镜像去重，`scale=1.15` 会阻止 `scale=0.85` 进入精细搜索。现在最多选择 4 个方向 basin，并在 basin 内跳过比例半径重叠项、轮询保留最多 8 个比例分离种子；默认粗分差窗口从 `0.06` 调整为 `0.10`。
+- `(verified)` 同一实时失败帧修复后输出 `215°/flip/0.91`、结构分 `0.650`、锚点误差 `4.26`、首二名 anchored margin `0.040`，不再落入 `absolute_registration_failed`。
+- `(verified)` registrar 现在无论成功或失败都更新 `last_diagnostics`；controller 把失败诊断复制进 state，采集页显示/记录具体拒绝原因及最佳候选分数、覆盖率、角度、比例和锚点误差。
+
+**修订旧结论：** 旧文档认为“最多 4 个角度/镜像 basin”足以代表细化空间；实时帧证明同一方向下存在多个相互分离的比例峰，按方向去重会在正确比例进入精搜前将其淘汰。现在方向盆地上限与总比例种子上限分离。
+
+**连带重读文件：** `similarity_search.py`、`absolute_registrar.py`、`contracts.py`、`controller.py`、`capture_test_page.py` 及对应 registrar/controller/session/UI 测试。
+
+**CODEBASE.md 更新内容：** §4/§5 更新粗 Top-K 可行走优先级、多比例峰种子选择、registrar 失败诊断和 UI 状态展示；§6 更新 `F-POE2-HYBRID-LOCALIZATION` 第 6/9 跳；§9 修订多地图参数风险。`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` 新增实机漏解复现、修复证据和剩余验收边界。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `experimental/hybrid_localization/similarity_search.py` | 深度完整 | 深度完整 | 3 | 新增粗截断前人物可行走排序及邻域半径校验；保留非 walkable 候选以维持诊断契约。 |
+| `experimental/hybrid_localization/absolute_registrar.py` | 深度完整 | 深度完整 | 3 | 将方向盆地与比例峰分开采样，并为成功/拒绝统一发布完整候选诊断。 |
+| `experimental/hybrid_localization/contracts.py` | 深度完整 | 深度完整 | 2 | `AbsoluteRegistrar` 显式要求 `last_diagnostics`，失败返回 None 时仍可审计。 |
+| `experimental/hybrid_localization/controller.py` | 深度完整 | 深度完整 | 3 | 绝对注册返回 None 时复制 registrar diagnostics，不改变一次性恢复读取门。 |
+| `ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 既有+3 | 状态栏和日志新增拒绝原因、分数、覆盖率、角度、比例及锚点误差。 |
+| `tests/poe2_live_terrain/test_hybrid_similarity_search.py` | 深度完整 | 深度完整 | 2 | 覆盖不可行走干扰候选不得抢占 coarse Top-K，同时保留既有双候选契约。 |
+| `tests/poe2_live_terrain/test_hybrid_absolute_registrar.py` | 深度完整 | 深度完整 | 2 | 覆盖同方向分离比例峰和被拒注册的完整 diagnostics。 |
+| `tests/poe2_live_terrain/test_hybrid_localization_controller.py` | 深度完整 | 深度完整 | 2 | 覆盖 registrar 失败诊断传播到状态。 |
+| `tests/test_poe2_capture_test_page.py` | 深度完整 | 深度完整 | 既有+3 | 覆盖失败候选数值在 UI 状态文本中可见。 |
+
+**验证：** 混合定位、PoE2 UI、composition 与架构相关回归 `197 passed`；`compileall` 和 `git diff --check` 通过。真实完整 tick 输出 `local_tracking / anchored_absolute / confidence=0.724 / position=(312.60,400.86) / reads=1`。未发送 Xbox、键鼠、Host 或 LAN 输入。连续移动、视觉丢失恢复和多地图仍待实机验收。
+## [SYNC] 2026-09-22 16:54 — PoE2 混合定位实机整链路排查
+
+### A. SYNC 范围声明
+**触发任务：** 在游戏已运行的同一现场，获取第一帧截图、地形与人物内存锚点，复现实验并定位混合定位链路的真实故障，再以回归测试约束修复。
+**直接变更文件：** 待根因确认后限定在 `src/auto_modules/features/poe2/live_terrain/experimental/` 的定位实验模块、对应测试，以及本断点文档。
+**预计连带影响：** `Poe2CaptureTestPage.start_hybrid_localization()`、`Poe2HybridLocalizationSession.tick()`、`_Poe2EvidenceBuilder.build()`、`AnchoredAbsoluteRegistrar.register()`、`VisualLocalTracker.track()`、地图展示坐标映射及相关测试；不接正式运行时，不发送真实输入或网络同步。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 16:49 实机日志显示首帧 `anchored_absolute` 成功后，下一帧立即 `local_tracking_failed`；每次 5 秒恢复成功后下一帧仍失败，read count 最终从 1 增到 5。问题不在内存锚点读取或 QTimer。
+- `(verified)` 局部 matcher 输入的是 filled blocked layer，实测候选为 `mean_wall_error_px=0.0/candidate_margin=0.0`。大面积零距离平原使任何局部平移都同分，`LocalMapMatcher` 按契约拒绝歧义候选。
+- `(verified)` 同一 filled layer 也让绝对注册产生多个偶然方向；改用 walkable 薄边界后，首帧从 7 个跨方向候选收敛为 2 个同 basin 候选，最佳为 `221°/flip/0.79`，锚点误差从 `10.6150` 降为 `0.6635`。
+- `(verified)` PoE2 独立 factory 现显式应用当前非空 profile 识别参数；绝对注册和局部 matcher 共用 `reference_boundary_layer()`；局部 matcher 仅在 PoE2 实验组合层使用实测 `max_error=4.0/min_margin=0.02`，通用默认值未改。
+- `(verified)` 修复后实机 factory 连跑 12 帧全部成功：1 帧 `anchored_absolute`、11 帧 `visual_local`、内存读取总数 1、静止位置抖动不超过 1 像素。
+
+**修订旧结论：** 上一轮把 `215°/flip/0.91` 单次成功视为粗搜索修复证据，但它没有覆盖下一帧。完整链路证明真正阻断持续定位的是 reference 墙层契约错误；filled blocked layer 同时降低首帧唯一性并让局部跟踪必然歧义。
+
+**连带重读文件：** `absolute_registrar.py`、`composition.py`、`local_tracker.py`、`core/localization/local_matcher.py`、`core/localization/map_runtime.py`、`terrain_reference.py`、UI composition/capture test page 及对应测试。
+
+**CODEBASE.md 更新内容：** §4/§5 更新薄边界派生、识别参数应用和 PoE2 局部阈值；§6 更新 F-POE2-HYBRID-LOCALIZATION 第 2/6/7 跳；§9 登记并关闭 filled wall layer 风险。`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` 增加实机断点和证据目录。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `experimental/hybrid_localization/absolute_registrar.py` | 深度完整 | 深度完整 | 4 | 新增共同薄边界派生；绝对注册不再把 blocked interior 当墙线。 |
+| `experimental/hybrid_localization/composition.py` | 深度完整 | 深度完整 | 3 | factory 应用 profile 参数，以边界 distance field 和 PoE2 实测容差装配 local matcher。 |
+| `experimental/hybrid_localization/local_tracker.py` | 深度完整 | 深度完整 | 2 | 实机核对 transform top-left、transformed player 与 matcher origin 坐标契约一致。 |
+| `core/localization/local_matcher.py` | 深度完整 | 深度完整 | 既有+1 | 确认失败来自输入 distance field 的零值平原，不修改通用算法/默认阈值。 |
+| `features/poe2/live_terrain/terrain_reference.py` | 深度完整 | 深度完整 | 既有+1 | 保留 blocked/unknown 的通用 wall-layer 契约，由实验适配器派生视觉边界。 |
+| `tests/poe2_live_terrain/test_hybrid_absolute_registrar.py` | 深度完整 | 深度完整 | 3 | 新增 blocked interior 排除和边界两侧像素契约测试。 |
+| `tests/test_poe2_composition.py` | 深度完整 | 深度完整 | 既有+2 | 新增 profile 参数、薄边界 runtime 和 PoE2 local matcher 容差装配测试。 |
+
+**验证：** 先以失败测试确认 `reference_boundary_layer` 缺失；实现后聚焦 `13 passed`，扩大 PoE2/混合定位/UI/架构回归 `197 passed`，`compileall`、`git diff --check` 通过。Serena composition 类型诊断已清零；仅外部包解析受其 Python 环境影响。实机报告位于 `live-fixed-chain-20260922-171832/report.json`。
+
+## [SYNC] 2026-09-22 17:58 — PoE2 GUI 混合定位失败复现
+
+### A. SYNC 范围声明
+
+**触发任务：** 复现并定位 GUI 中混合定位持续进入 `recovery_required`、没有可信位置的问题；若证据证明本地 profile 参数错误，则直接修正配置并沿 GUI 同一路径验证。
+
+**直接检查/可能变更文件：**
+- `data/logs/poe2_live_terrain.log`（定位最新 GUI 会话的首个失败点）
+- `data/poe2_live_terrain/monitor_profiles/a6ccb4c6767e.json`（核对并在证据充分时修正当前识别参数）
+- `src/auto_modules/features/poe2/live_terrain/ui/capture_test_page.py`（核对页面配置应用、会话重建与 hybrid 状态展示）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/composition.py`（核对 GUI factory 与已验证独立链装配是否一致）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/controller.py`（核对恢复事件、diagnostics 和 revision 流转）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/session.py`（核对截图与内存锚点的采样顺序）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/contracts.py`（核对最小接口扩展边界）
+- `src/auto_modules/ui/modes/poe2/composition.py`（用正式页面装配驱动实机 GUI 链验证）
+- `tests/poe2_live_terrain/test_hybrid_localization_controller.py`、`tests/poe2_live_terrain/test_hybrid_localization_session.py`（先固化恢复时序与瞬时失败复现）
+
+**预计连带影响：** profile toolbar 与页面激活配置、截图识别器全局参数、当前 terrain snapshot 生命周期、绝对锚定和局部 matcher 输入、GUI 日志与状态面板。只在根因确认后做单点修改；不接正式 runtime，不触发输入或网络行为。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` GUI 最新会话首帧和连续局部链实际成功：`221°/flip/0.79` 后持续约 5.6 秒 `visual_local`，reads=1。截图只展示了后续失败状态，不能据此认定 profile 或首帧注册失败。
+- `(verified)` `17:54:25` 局部丢失后，旧实现已先捕获 frame，随后人物内存读取耗时约 6 秒；恢复候选仍锁定正确方向，但新锚点相对旧截图误差 `19.0526`，超过门槛而拒绝。根因是跨组件采样错时，不是 HSV 参数。
+- `(verified)` controller 新增 `prepare_capture()`，按 revision 读取并缓存一个待配对锚点；session 在锚点准备完成后才截图，`update()` 只消费缓存，不重复读取。正常局部帧不触发 provider，stop/reset/retry 清除待配对状态。
+- `(verified)` 正式 UI composition 与实际 `Poe2LiveTerrainPage/Poe2CaptureTestPage` 链实机重跑：首帧 `anchored_absolute` 为 `219°/flip/0.75`、anchor error `2.13`，后续 12 帧全为 `visual_local`，reads 保持 1。当前 profile 参数有效，未修改 `a6ccb4c6767e.json`。
+
+**修订旧结论：** 用户截图中的 `recovery_required` 是局部跟踪在成功运行后丢失、恢复采样错时造成的终态，不是 GUI 没有加载薄边界修复，也不是当前颜色参数错误。
+
+**连带重读文件：** `controller.py`、`session.py`、`contracts.py`、`composition.py`、UI capture test page、当前 profile、最新 GUI 日志及两份对应测试。
+
+**CODEBASE.md 更新内容：** §4/§5 更新 controller 待配对锚点与 session 采样顺序；§6 更新 F-POE2-HYBRID-LOCALIZATION 第 3-5 跳；§9 关闭截图/锚点错时风险。断点文档追加正式页面实机结果。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---:|---:|---:|---|
+| `experimental/hybrid_localization/controller.py` | 深度完整 | 深度完整 | 4 | 新增按 revision 缓存/消费待配对锚点，核对所有清理和失败分支。 |
+| `experimental/hybrid_localization/session.py` | 深度完整 | 深度完整 | 2 | 将锚点准备移到截图前，确认局部帧不读内存且失败准备不截图。 |
+| `experimental/hybrid_localization/contracts.py` | 深度完整 | 深度完整 | 既有+1 | 确认 provider 协议无需扩展，采样编排保持在 controller/session。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 既有+1 | 以正式 composition 驱动页面实机链，确认 profile/recognizer/snapshot 传播一致。 |
+| `tests/poe2_live_terrain/test_hybrid_localization_controller.py` | 深度完整 | 深度完整 | 3 | 新增 prepare 后 update 复用同一锚点且只读一次的回归。 |
+| `tests/poe2_live_terrain/test_hybrid_localization_session.py` | 深度完整 | 深度完整 | 2 | 新增事件序列断言 `prepare -> capture -> update`。 |
+
+**验证：** 两个新增约束先得到 2 个预期失败，实现后 controller `7 passed`、session `4 passed`；本轮第一次 PoE2 相关回归 `170 passed`，正式页面实机 1 次首帧 + 12 次局部帧全部成功；`compileall`、`git diff --check` 通过。全项目断言结果 `662 passed, 1 skipped, 10 subtests passed`，3 个既有 pathfinder 策略测试失败。独立复跑 capture-test page 时 9 条断言均通过，但 pytest 在最终 Qt GC 阶段发生 Windows heap `0xc0000374`，因此该次进程退出不记为通过。
+
+## [设计探索] 2026-09-22 18:53 — PoE2 正式实时视觉位置跟踪
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`（确认正式 PoE2 页面当前按钮、timer、地图 overlay 和测试 tab 边界）
+- `src/auto_modules/ui/modes/poe2/composition.py`（确认正式页面可注入的运行时与实验 hybrid factory）
+- `src/auto_modules/features/poe2/live_terrain/runtime.py`（确认旧正式定位运行时职责，避免并存两个位置 owner）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/controller.py`（确认“仅首帧内存”与当前恢复状态机的策略差异）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/session.py`（确认持续视觉 tick 与 UI timer 的归属）
+- `src/auto_modules/features/poe2/live_terrain/ui/presenter.py`（确认大地图当前位置/轨迹可视化可直接复用）
+
+**本轮想弄清楚：** 正式页面应复用哪些已验证底层组件、谁拥有唯一实时定位 session/timer/state、数据采集 tab 如何退回纯实验工具，以及“视觉丢失后是否绝不再次读内存”的明确策略边界。设计获用户批准前不修改实现。
+
+### C. 本轮发现
+
+**关键发现：**
+
+- `(verified)` 正式 `Poe2LiveTerrainPage` 已具备完整产品壳：初始化/抓图/开始与停止监控、唯一 `monitor_timer`、小地图 processed/match 预览、完整 terrain `ScalableMapWidget`，以及 `present_localization_overlay()` 对当前位置和轨迹的实时绘制。
+- `(verified)` 正式页当前 timer 调用旧 `Poe2LocalizationRuntime.tick()`；已验证的 hybrid factory/session/controller 只注入内部 `Poe2CaptureTestPage`，由测试页另持一个 `hybrid_timer`。因此现在存在两个定位装配点，产品页没有消费 hybrid state。
+- `(verified)` `present_localization_overlay()` 已同时兼容正式 state 与 `HybridLocalizationState` 的 `position/trajectory` 字段；大地图可视化无需复制或新建渲染算法。
+- `(verified)` 当前 hybrid controller 的恢复策略会在局部视觉丢失后建立新 revision，并允许再次读一次内存；用户新要求“只第一帧读内存”会改变 controller policy，而不仅是把按钮从测试页挪到正式页。
+
+**修订旧结论：** 不需要新建另一个正式页面或复制采集页布局。现有正式 live tab 就是产品入口；应替换其 runtime composition，并让测试 tab 只保留采集/算法诊断。
+
+**新疑问：** 视觉局部匹配丢失后，是永久 fail closed 等待用户重新开始（严格首帧只读），还是允许用户手动点击一次“重新锚定”再读内存；两者决定状态机和产品操作边界。
+
+**更新了 CODEBASE.md：** §3/§6 补充正式页与测试页当前双定位 owner，以及 overlay 已可复用的现状。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---:|---:|---:|---|
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | 既有+1 | 正式页已有唯一 monitor timer 和大地图 overlay，但仍调用旧 runtime。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 既有+2 | 同时装配旧正式 runtime 与仅供测试页使用的 hybrid factory。 |
+| `features/poe2/live_terrain/runtime.py` | 深度完整 | 深度完整 | 既有+1 | 旧 runtime 自有定位状态机，不能与 hybrid 同时作为产品位置 owner。 |
+| `experimental/hybrid_localization/controller.py` | 深度完整 | 深度完整 | 5 | 当前局部失败会开启可再次读取内存的 recovery revision。 |
+| `experimental/hybrid_localization/session.py` | 深度完整 | 深度完整 | 3 | session 无 Qt，适合由正式页 timer 唯一驱动。 |
+| `ui/modes/poe2_live_terrain/presenter.py` | 深度完整 | 深度完整 | 既有+1 | overlay 已通过 position/trajectory 鸭子类型兼容 hybrid state。 |
+
+**下一轮计划：** 用户确认视觉丢失后的内存读取策略后，给出 2-3 种正式接入方案及推荐设计；设计批准前不修改实现。
+
+## [设计探索] 2026-09-22 18:56 — 对齐导航模式的事件触发全局恢复
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `src/auto_modules/core/localization/map_localizer.py`（核对通用局部失败转全局定位状态机）
+- `src/auto_modules/ui/modes/navigation/runtime/localization_tick.py`（核对导航页面每帧截图与定位调用链）
+- `src/auto_modules/core/navigation_tasks/controller_runtime/relocalization.py`（核对导航任务如何请求全局重定位）
+- `src/auto_modules/ui/modes/navigation/runtime/` 中消费重定位 intent 的入口（确认请求与实际执行边界）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/controller.py`（映射 PoE2 内存锚点恢复到通用导航语义）
+
+**本轮想弄清楚：** 复用导航模式的触发语义与状态流，而不是复用其具体全图视觉搜索；确认 PoE2 应如何以一次内存锚点读取实现同等的 global relocalization，并保持正常帧纯视觉。
+
+## [设计批准] 2026-09-22 — PoE2 正式实时视觉定位
+
+### A. 决策
+
+用户批准方案 1：参考导航模式的 `NEED_GLOBAL -> LOCAL_TRACKING -> RECOVERY_REQUIRED -> global recovery` 状态语义，但保留 PoE2 hybrid controller/session 作为具体实现。PoE2 的全局定位为“单次内存锚点读取 + 立即截图 + 锚点约束绝对注册”，正常帧为纯视觉局部跟踪；视觉丢失后自动开放一次恢复读取，恢复失败后不连续轮询内存。
+
+### B. 正式接入边界
+
+- `Poe2LiveTerrainPage.monitor_timer` 是唯一产品定位 timer。
+- 正式页持有产品 runtime/state，并复用现有大地图 overlay。
+- hybrid 算法仍位于 PoE2 实验模块，新增薄产品运行时适配器，不把 PoE2 内存语义放入通用 `MapLocalizer`。
+- 嵌入正式页的数据采集 tab 不再获得活动 hybrid factory；截图、样本、拼图和独立算法诊断能力保留。
+- 本阶段不执行输入、导航路线、Host 或网络同步。
+
+### C. 文档
+
+- `docs/plans/2026-09-22-poe2-production-visual-localization-design.md`
+- `docs/plans/2026-09-22-poe2-production-visual-localization-implementation-plan.md`
+
+下一阶段按实施计划以 TDD 接入正式 runtime、页面状态和唯一 owner，并同步 `CODEBASE.md` 与当前状态断点。
+
+## [SYNC] 2026-09-22 — PoE2 正式实时视觉定位接入
+
+### A. SYNC 范围声明
+
+**触发任务：** 按已批准设计把 hybrid 定位接入正式 PoE2 实时地形页面，并重点验证局部视觉丢失必定触发一次全局恢复；正常视觉帧不得读取内存，恢复失败后不得连续轮询内存。
+
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/hybrid_product_runtime.py`（新增正式产品运行时适配器）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/session.py`（暴露最近视觉帧/证据供正式页面展示）
+- `src/auto_modules/features/poe2/live_terrain/__init__.py`（导出产品运行时契约）
+- `src/auto_modules/ui/modes/poe2/composition.py`（正式页面改用 hybrid 产品运行时）
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`（正式页面消费 hybrid 状态并保持唯一 timer）
+- `tests/poe2_live_terrain/test_hybrid_product_runtime.py`（新增产品运行时和恢复触发测试）
+- `tests/poe2_live_terrain/test_hybrid_localization_session.py`（最近视觉帧生命周期测试）
+- `tests/test_poe2_composition.py`、`tests/test_poe2_live_terrain_monitoring.py`、`tests/test_poe2_live_terrain_page.py`（composition/UI/唯一 owner 回归）
+
+**预计连带影响：** `HybridLocalizationController` 的 `RECOVERY_PENDING` 自动恢复、`Poe2HybridLocalizationSession.tick()` 的锚点读取和截图顺序、正式页面 `capture_map/start_monitoring/_tick_runtime/handle_runtime_state`、大地图 overlay、嵌入数据采集页的 hybrid factory 所有权。不会修改第一页绘图模式，不触发真实输入、Host 或网络同步。
+
+### C. SYNC 结果
+
+**关键发现：**
+
+- `(verified)` 新增 `Poe2HybridProductRuntime`，正式页面通过它管理 snapshot/config/experiment，页面 `monitor_timer` 是唯一产品定位驱动；运行时不拥有 Qt，也不实现匹配算法。
+- `(verified)` session 在构造 visual evidence 后保存 `last_raw_frame/last_evidence/last_frame`，产品状态将其与 hybrid state 合并，正式页可继续显示预处理和 wall mask，而无需复制识别逻辑。
+- `(verified)` 正式 PoE2 composition 已停止注入旧 `Poe2LocalizationRuntime`，改为注入 hybrid 产品 runtime；旧 runtime 模块保留，未破坏其独立测试。
+- `(verified)` 嵌入正式页的数据采集 tab 的 `hybrid_localization_factory=None`，不会与正式页形成双 timer/双位置 owner；页面类的独立诊断能力仍保留。监控配置弹窗改用 composition 单独注入的 preview/recognizer 依赖，不依赖新 runtime 模拟旧私有接口。
+- `(verified)` 使用真实 controller + session + 产品 runtime 的五帧测试得到 `anchored_absolute -> visual_local -> failed/RECOVERY_PENDING -> anchored_absolute -> visual_local`，锚点读取总数为 2。恢复失败后连续 5 tick 保持 `RECOVERY_REQUIRED` 且不增加读取，因此视觉丢失触发和单次读取门均有回归保护。
+
+**修订旧结论：** 正式页不再驱动旧 `Poe2LocalizationRuntime`，hybrid 也不再只存在于采集测试页；当前正式产品链已经是唯一 `Poe2HybridProductRuntime -> Poe2HybridLocalizationSession`。
+
+**连带重读文件：** `hybrid_product_runtime.py`、hybrid `session/controller/models/memory_anchor`、PoE2 composition、正式 page、presenter、capture test page 及对应 runtime/session/composition/UI/architecture tests。
+
+**CODEBASE.md 更新内容：** §2 增加产品 runtime 文件；§3/§4 更新正式页唯一 owner 和新运行时职责；§5 记录 runtime/session 生命周期及视觉状态适配；§6 重写 F-POE2-HYBRID-LOCALIZATION 和 F-POE2-LOC 正式链；§9 关闭旧 runtime 与测试页双 owner 风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---:|---:|---:|---|
+| `features/poe2/live_terrain/hybrid_product_runtime.py` | 新增 | 深度完整 | 1 | 核对 snapshot/config/experiment 生命周期、展示 DTO、读取计数和异常传播。 |
+| `experimental/hybrid_localization/session.py` | 深度完整 | 深度完整 | 4 | 新增最近 raw/evidence/frame 所有权，确认锚点准备仍严格早于截图。 |
+| `ui/modes/poe2/composition.py` | 深度完整 | 深度完整 | 既有+2 | 正式 runtime 替换为 hybrid 产品适配器，专用 recognizer 和 factory 仍隔离。 |
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | 既有+2 | 消费 hybrid reason/revision/read count，保留失败 timer，并禁止嵌入采集 tab 持有 hybrid factory。 |
+| `tests/poe2_live_terrain/test_hybrid_product_runtime.py` | 新增 | 深度完整 | 1 | 覆盖生命周期、视觉 DTO、自动恢复触发和失败后停止读取。 |
+| `tests/test_architecture_boundaries.py` | 深度完整 | 深度完整 | 既有+1 | 架构契约更新为正式 hybrid runtime，继续验证 recognizer 独立副本。 |
+
+**验证：** 首轮 runtime/session/composition `13 passed`；页面红测准确命中旧状态字段和双 owner；关键调用链 `32 passed`；差异审查额外发现并以红测修复监控配置预览依赖。扩大 PoE2/hybrid/composition/UI/config-dialog/main-window/architecture 回归最终 `199 passed`。`compileall`、`git diff --check` 通过。Serena 对产品 runtime/session/composition 无诊断；page 的两条提示仅为 Serena Python 环境无法解析已安装在项目虚拟环境中的 PySide6。
+
+**下一步：** 启动新版工作台进行实机验收，先验证移动轨迹连续，再通过临时遮挡/丢帧观察一次 `RECOVERY_PENDING -> anchored_absolute`，确认 read count 只增加 1；随后换图验证随机方向。
+
+## [SYNC] 2026-09-22 — PoE2 卡顿与恢复失败诊断
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户实机反馈正式定位页面明显卡顿，疑似持续重定位；要求增强日志，并在定位失败时自动保存截图、地图和状态快照。
+
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/hybrid_product_runtime.py`（状态变化日志、失败快照去重、性能摘要）
+- `src/auto_modules/features/poe2/live_terrain/hybrid_failure_archive.py`（新增失败视觉/terrain/state 归档适配器）
+- `src/auto_modules/ui/modes/poe2/composition.py`（注入失败归档）
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`（终态暂停 timer、显式重新定位、overlay 去重、UI 性能日志）
+- 对应 runtime/archive/page/composition 测试与项目状态文档。
+
+**预计连带影响：** `RECOVERY_PENDING -> RECOVERY_REQUIRED` 页面生命周期、`CaptureSampleArchive` 显式文件输出、正式页按钮状态和大地图 presenter 调用频率。不会改变 matcher/registrar 阈值，不会增加内存读取次数，不触发输入、Host 或网络同步。
+
+**根因证据：** 最新会话 `20:05:25` 以 33ms interval 启动，先有 128 帧 `LOCAL_TRACKING`；置信度从长期 `0.163` 降到 `0.109/0.081` 后在 `20:05:38.024` 进入 `RECOVERY_PENDING`。下一次自动读取使 read count `3 -> 4`，约 5.37 秒后以 `absolute_registration_failed` 进入 `RECOVERY_REQUIRED`。随后 12.6 秒内重复发布 271 个相同终态，read count 保持 4，证明不是连续内存重定位，而是终态 timer、日志和完整地图重绘空转。当前日志没有 registrar diagnostics，磁盘也没有对应失败帧归档。
+
+## [SYNC] 2026-09-22 — 首帧匹配重复候选与锚点容差修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户实机反馈首帧经常匹配失败，怀疑匹配逻辑重复执行；要求优先稳定匹配，暂不处理耗时/线程架构。
+
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`（锚点近邻容差、精搜候选去重、诊断字段）
+- `tests/poe2_live_terrain/test_hybrid_absolute_registrar.py`（锚点容差和重复候选回归）
+- `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`（实机排查断点）
+
+**预计连带影响：** 首帧/恢复 `AnchoredAbsoluteRegistrar.register()` 的候选判定和 diagnostics；不改变 controller 的恢复次数、内存读取策略、正常视觉跟踪或第一页绘图模式。
+
+### C. SYNC 结果
+
+**关键发现：** (verified) 同一恢复版本内 `session.tick()` 只注册一次；失败后 controller 进入 `RECOVERY_REQUIRED`，页面停止 timer，日志中的多次匹配对应用户多次显式重试。真正的匹配问题是精搜不同 seed 产生完全相同的候选，原 `_result_status()` 把重复项当成第二名，分差为 0，从而错误返回 `ambiguous`。
+
+**实现结果：**
+- 新增 `_deduplicate_anchored_candidates()`，仅去除相同镜像、角度差不超过 `0.5°`、比例差不超过 `0.01`、人物全局位置差不超过 `2px` 的重复 refined candidate；不同角度/镜像即使中心相同仍保留，用于真实方向歧义判断。
+- 当候选距可信内存锚点不超过 `8px`、人物位于 walkable terrain 且 coverage 不低于 `0.60` 时，允许略低于普通 `0.65` 的 forward coverage；普通候选仍使用原严格门槛。
+- diagnostics 现在记录普通/锚点近邻 coverage 阈值和锚点接受半径，方便后续实机核对。
+
+**实证验证：** 复用失败快照并以接近真实锚点 `(347, 406)` 复测，结果从 `ambiguous/rejected` 变为 `anchored_candidate`，最佳 `219° / horizontal reflection=true / scale=0.81`，锚点误差约 `3.14px`，`forward_coverage=0.6336`；聚焦测试 `14 passed`。这只证明候选判定修复，尚未证明实机首帧在所有地图稳定。
+
+**下一步：** 用实际运行重新获取一帧，确认日志 `status=anchored_candidate`、不出现同候选重复项；再验证成功后人物移动的 `visual_f2f`。性能和异步化暂按用户要求留到后续。
+
+### C. SYNC 结果
+
+**连带重读文件：** `absolute_registrar.py` 的 `AnchoredRegistrationConfig`、`_deduplicate_anchored_candidates()`、`_result_status()`、`match_anchor_local()`、`register()`；`test_hybrid_absolute_registrar.py` 的注册器和状态门测试；CodeGraph 重新确认上述函数的调用方仅为 hybrid registrar 与对应测试。
+
+**CODEBASE.md 更新内容：** 更新 PoE2 absolute registrar 的算法步骤和 P1 风险，记录 refine 重复候选去重、近锚点 coverage 容差、诊断字段及其尚未完成的多地图校准风险。
+
+**验证：** 相关回归 `31 passed`；失败快照接近真实锚点复测为 `anchored_candidate`；`compileall` 通过；`git diff --check` 通过（仅提示现有文件的 LF/CRLF 转换，不是差异错误）。
+
+**新增 Finding：** 当前修复解决了假 `ambiguous` 和单个实机失败样本的 coverage 边界，但真实锚点需下一次运行确认；没有改变重复 retry 的显式状态机语义，也没有处理注册线程/耗时问题。
+
+## [SYNC] 2026-09-22 — PoE2 导航兼容连续跟踪
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户确认采用方案 A：首帧/恢复使用内存锚点附近形状注册，正常跟踪复用导航模式的多帧位移预测，局部形状匹配只做纠偏和备用。
+
+**直接变更文件：**
+- `src/auto_modules/core/localization/canonical_wall.py`（新增视觉/terrain 墙体形状归一化）
+- `src/auto_modules/core/localization/displacement.py`（新增相似变换位移转换）
+- `src/auto_modules/core/localization/frame_displacement.py`（新增 phase displacement 质量门控）
+- `src/auto_modules/core/localization/__init__.py`（导出新增通用能力）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`（terrain boundary 改用 canonical 表示）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py`（位移优先、局部形状 fallback）
+- `tests/test_canonical_wall.py`
+- `tests/test_displacement.py`
+- `tests/test_frame_displacement.py`
+- `tests/poe2_live_terrain/test_hybrid_visual_local_tracker.py`
+- `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`
+- `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`
+
+**预计连带影响：** `LocalMapMatcher` 仍消费同一 `MapRuntime.distance_field`；hybrid controller/session 继续拥有前帧和一次性恢复状态；正式 PoE2 页面只消费来源从 `visual_local` 扩展出的 `visual_f2f`。首帧、恢复、内存读取策略和第一页绘图模式不变。
+
+### C. SYNC 结果
+
+**关键发现：** (verified) 原导航模式先用 `estimate_phase_displacement(prev_wall_mask, wall_mask)` 更新全局位置，只有位移失败才做模板匹配；原 PoE2 `VisualLocalTracker` 之前直接 `del previous_frame`，每帧做半径 `96px` 的局部 Chamfer 搜索，确实偏离了已验证导航链路。
+
+**实现结果：**
+- 新增 `canonical_wall_mask` 和 `canonical_boundary_from_walkable`，统一 wall mask 的二值形状契约；
+- 新增 `transform_local_displacement`，明确 reflection -> rotation -> scale 的位移转换顺序；
+- 新增 `estimate_bounded_displacement`，统一 `phase_failed/low_quality/large_shift/accepted` 结果；
+- `VisualLocalTracker` 现在先计算 canonical 帧间位移，接受时输出 `visual_f2f`，位置使用 `previous_position - global_shift`；位移被拒绝才使用有界形状匹配；
+- 首帧/同实例恢复继续由 `AnchoredAbsoluteRegistrar` 完成，没有引入全图搜索或额外内存读取。
+
+**验证：** canonical/displacement/tracker/registrar 聚焦回归 `21 passed`，连续 tracker 回放 `5 passed`；PoE2 terrain、hybrid、composition、UI 和 architecture 回归 `204 passed`。连续真实移动、真实遮挡恢复和换图方向仍待实机验证。
+
+**同步结果：** 已重读本轮新增通用模块、`absolute_registrar.py`、`local_tracker.py`、controller/session 调用方和对应测试；`CODEBASE.md` 已同步新增目录职责、三个通用算法模块、canonical terrain boundary 依赖和 tracker 的位移优先算法/调用关系。新增断点文档为 `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`。
+
+**下一步：** 执行连续帧样本回放、compileall 和实机验收；重点记录 `shift/quality/global_shift/source/position/memory_read_count`，确认位移坐标方向、轨迹连续性和一次性恢复规则。
+
+## [SYNC] 2026-09-22 — tracker 静态类型收紧
+
+### A. SYNC 范围声明
+
+**触发任务：** Serena 诊断发现 `VisualLocalTracker.track()` 对可空 `FrameDisplacement.shift` 的收窄不足。
+
+**直接变更文件：** `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py`。
+
+**预计连带影响：** 仅影响 tracker 内部局部位移变量的类型收窄；不会改变位移公式、来源、恢复状态或 matcher 调用顺序。
+
+### C. SYNC 结果
+
+**连带重读文件：** `local_tracker.py` 的 `VisualLocalTracker.track()` 及其 tracker/phase 测试。
+
+**结果：** Pyright 仍将 `LocalizationResult.position` 视为可空，已在 accepted displacement 分支增加显式 `None` fail-closed；位移公式和运行状态没有变化。相关 tracker/phase 测试 `7 passed`，compileall 和差异检查通过。外部 `cv2/numpy` unresolved 仍是 Serena 语言服务器未加载项目虚拟环境的既有提示。
+
+## [SYNC] 2026-09-22 — PoE2 全局定位锚点消歧与自动方向展示
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈每次触发全局定位仍可能报错；要求使用已读取的人物内存位置消除候选歧义，并在方向确认后把大地图旋转到与小地图一致；同时恢复数据采集页的混合定位入口。
+
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`
+- `src/auto_modules/features/poe2/live_terrain/orientation.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/presenter.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+- 相关 PoE2 hybrid/页面测试与 `CODEBASE.md`
+
+**预计连带影响：** 仅影响 PoE2 实验定位候选判定、PoE2 两个页面的地图展示和数据采集页依赖注入；不改变第一页绘图模式、通用输入输出、内存读取次数或正常视觉跟踪状态机。
+
+### C. SYNC 结果
+
+**根因证据：** (verified) 复放 `20260922-144211-152568-MapFlotsam-1E44BF94` 时，视觉分最高候选 `215°/flip/0.89` 的锚点误差为 `7.30px`，第二候选 `182°/flip/1.25` 的锚点误差为 `2.40px`；旧逻辑按 anchored score 排序后两者分差不足，返回 `ambiguous`。用真实内存锚点作为优先空间约束后，结果稳定为 `anchored_candidate`。
+
+**实现结果：**
+- `absolute_registrar.py` 新增 `anchor_disambiguation_gap=2px` 和 `_prioritize_memory_anchor()`；候选通过 score/coverage/walkable 门后按锚点误差优先，近锚点候选的空间分离达到间隔时不再因视觉分差小而误报歧义。
+- 有 prior 的恢复先做 translation-only；失败时自动在同一已读取锚点下做 `full_similarity_recovery`，diagnostics 增加 `attempt_count`，不增加额外内存读取。
+- `presenter.py` 在 registration 成功后对“地图+marker+轨迹”整体执行逆角度/镜像变换，支持任意角度，页面元数据显示自动校准角度。
+- `page.py` 把 hybrid factory 传给数据采集 tab；采集页独立创建 experiment/session/timer，可直接复测混合定位，不与正式 runtime 共享状态。
+- 修复 `hybrid_failure_archive.py` 对 `SimilarityTransform2D.angle_degrees` 的错误字段访问，确保恢复失败后的完整快照不会因日志归档异常丢失。
+
+**验证：** absolute registrar、页面、presenter、failure archive focused `21 passed`；hybrid product/integration/controller `16 passed`；PoE2 terrain/hybrid/UI/composition/architecture 回归 `195 passed`；采集页/监控窗口/正式页回归 `22 passed`；`compileall` 通过；失败样本重放为 `anchored_candidate`（`182°`, anchor error `2.40px`）。
+
+**同步结果：** 已更新 `CODEBASE.md` 的 PoE2 页面职责、absolute registrar 算法、F-POE2-HYBRID-LOCALIZATION 链路和装配边界；已更新 `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`。本轮未发送 Xbox、键鼠、Host、LAN 或自动移动输入。
+
+**下一步：** 用户启动新版页面后，先在“数据采集测试”页确认混合定位按钮可用；获取地图后启动混合定位，观察日志 `status/search_mode/best_angle/best_anchor_error/attempt_count`，再移动人物确认大地图随自动方向显示且恢复只增加一次内存读取。多地图随机方向仍需实机验证。
+
+## [SYNC] 2026-09-22 — PoE2 展示诊断类型收紧
+
+### A. SYNC 范围声明
+
+**触发任务：** 复核上一轮自动方向/候选消歧改动后的 Serena 诊断，消除新增的可空诊断值和采集页人物样本类型告警。
+
+**直接变更文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+
+**预计连带影响：** 仅影响 UI 诊断文本的数值门控和 `_player_position` 类型声明；不改变定位、地图变换或页面状态机。
+
+### C. SYNC 结果
+
+**关键发现：** (verified) UI 诊断字段来自动态 mapping，不能在缺字段时直接 `float(None)`；采集页的人物读取器是动态 provider，需要显式标注 `PlayerPositionSample | None` 才能保持 presenter 契约。
+
+**实现结果：** 只有四个最佳候选字段全部为数值时才格式化分数/角度/锚点误差/coverage，否则显示候选数和原因；采集页为缓存人物位置和本地变量增加 `PlayerPositionSample | None` 类型。
+
+**验证：** 页面/registrar/presenter `20 passed`；`compileall` 和 `git diff --check` 通过。Serena 剩余提示仅为项目语言服务器缺少 `cv2`、`numpy`、`PySide6` 依赖，以及既有 Protocol 的 `retry_recovery`/动态 Any 提示。
+
+## [SYNC] 2026-09-22 — PoE2 首帧匹配窗口按截图覆盖尺度校准
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户澄清“缩小范围”指以内存人物锚点为中心的 terrain 匹配窗口，且窗口应根据当前实际小地图截图覆盖范围选择近似比例，而不是缩小 UI 展示范围。
+
+**直接变更文件：** 待证据确认后确定 `absolute_registrar.py`、相关测试与 PoE2 断点文档。
+
+**预计连带影响：** 首帧/恢复的局部 terrain 裁剪、候选数量与方向/锚点消歧；不改变内存读取次数、第一页绘图模式或正式输入链路。
+
+### B. 根因调查进行中
+
+**当前假设：** 现有 `crop_radius=180/refine_crop_radius=130` 可能大于截图实际可见 terrain 尺度，导致首帧稀疏墙体在多个重复候选中竞争；需要先从样本确认截图像素、terrain 网格和人物锚点的比例关系，再决定默认窗口或分级 fallback。
+
+**待验证证据：** `data/poe2_live_terrain_test/hybrid_failures/20260922-144211-152568-MapFlotsam-1E44BF94/` 的原始截图、wall mask、sample、失败诊断与 `latest.npz` 的锚点对应关系。
+
+### C. SYNC 结果
+
+**关键发现：** (verified) 当前真实样本的 minimap/wall mask 为 `200 x 200`，以人物锚点为中心的 `150/110` terrain 窗口仍保留有效墙体并将锚点误差降到 `0.18px`；`140/100` 已出现墙体裁切和低分拒绝，继续缩小不可取。现有 `180/130` 虽可通过，但搜索集合偏大且锚点误差为 `7.10px`。
+
+**实现结果：** `AnchoredRegistrationConfig` 默认改为 `crop_radius=150`、`refine_crop_radius=110`，新增 `capture_reference_size=200`；`HybridFrame.from_evidence()` 记录真实 `capture_size`，registrar 在真实采集帧上按实际 wall mask 边长同比例调整两个半径，并将 `capture_size/crop_radius/refine_crop_radius` 写入 diagnostics。离线/手工 frame 没有该诊断时保持显式半径不变。探针 CLI 默认同步改为 `150/110`。
+
+**验证：** absolute registrar/models/session focused `25 passed`；默认窗口样本复放为 `anchored_candidate`；`compileall` 和 `git diff --check` 通过。未修改第一页绘图模式，未增加内存读取，未发送任何输入或网络操作。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 备注 |
+|---|---|---|---|
+| `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py` | 深度完整 | 深度完整 | 默认窗口、按真实截图尺寸缩放、诊断字段已同步。 |
+| `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/models.py` | 深度完整 | 深度完整 | `HybridFrame.from_evidence()` 保存 capture size。 |
+| `tools/debug/poe2_anchor_local_registration_probe.py` | 深度完整 | 深度完整 | CLI 默认窗口与实验默认一致。 |
+| `tests/poe2_live_terrain/test_hybrid_absolute_registrar.py` | 深度完整 | 深度完整 | 增加默认标定、真实 frame 缩放和离线显式半径回归。 |
+| `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md` | 深度完整 | 深度完整 | 记录样本档位结果和当前参数。 |
+| `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` | 深度完整 | 深度完整 | 记录 terrain 匹配范围语义和日志字段。 |
+
+**下一轮计划：** 启动实机采集页，核对日志中的三个窗口字段与实际截图尺寸；先验证首帧成功和地图方向，再验证连续移动，不在没有新样本前继续缩小窗口。
+
+## [SYNC] 2026-09-23 — PoE2 地图显示放大与人物跟随
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈完整 native 地图按全图适配后有效地形和人物过小，要求放大或跟踪放大。
+
+**直接变更文件：**
+- `src/auto_modules/ui/widgets/scalable_map.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/presenter.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+- 相关 UI/presenter 测试与 PoE2 断点文档
+
+**预计连带影响：** 仅影响地图展示缩放、视口滚动和人物标记可见性；不修改源地图坐标、匹配算法、定位状态机、内存读取或第一页绘图模式。
+
+### B. 根因调查
+
+**关键证据：** (verified) `ScalableMapWidget.fit_to_view()` 按完整 `2416 x 2277` pixmap 适配，黑色未探索区域也参与缩放；组件已有滚轮缩放，但 PoE2 页面没有根据定位点设置视口中心，因此人物落在小范围地形上时不可读。
+
+### C. 实现结果
+
+新增通用 `ScalableMapWidget.focus_on_point(point, zoom_multiplier)`：以未缩放 pixmap 坐标为输入，按当前 fit scale 放大并设置滚动条，使指定源坐标位于视口中心。PoE2 正式页和数据采集页默认使用 `2.4x` 跟随放大；有本帧位置时跟随本帧，失败时使用 `latest_confirmed_position` 保持视野；用户仍可拖拽和 Ctrl+滚轮微调。`localization_display_point()` 复用 presenter 的任意角度旋转/镜像矩阵，把定位坐标转换到已旋转 overlay 的显示坐标。运行时人物 marker 最小半径提高到 `9px`，增加半透明绿色填充。
+
+**验证：** UI/presenter focused `20 passed`，新增 scalable map/presenter 回归后 `11 passed`；PoE2 页面/采集页相关回归 `20 passed`；`compileall` 和 `git diff --check` 通过。
+
+**下一步计划：** 启动页面实机确认初始定位后人物是否保持在视口中心、地图细节是否足够清晰；若希望在“跟随”和“自由浏览”之间切换，再增加页面级跟随开关，不改变底层地图坐标。
+
+### C. 本轮发现
+**关键发现：** (verified) `SimilaritySearch.transform_feature()` 使用 OpenCV 图像坐标的正角度矩阵（局部右移经正角度后向图像下方旋转），而通用 `transform_local_displacement()` 使用数学笛卡尔坐标公式（同一正角度向图像上方旋转）。因此首帧形状匹配使用的方向与后续 `visual_f2f` 位移使用的方向相反，地图本身可以正确旋转，但人物移动轨迹会偏离真实通道。
+
+**修订的旧结论：** 原来认为 presenter 对整张地图和轨迹同时做逆变换即可保证同步；现在确认这只能保证显示层同变换，不能修复 tracker 在全局坐标中已经使用错误旋转符号的问题。
+
+**新疑问：** 需要将通用位移变换与图像坐标约定统一，并增加一个已知角度的帧间移动回归，验证 tracker 的 `global_shift` 与 `transform_feature` 对同一向量给出相同方向；随后再核对 UI 变换回归。
+
+**下一轮计划：** 先新增失败测试锁定 OpenCV 图像坐标的正角度语义；再只修改 `transform_local_displacement()` 的旋转矩阵，运行 displacement/local tracker/presenter focused tests，最后更新 PoE2 断点文档和 CODEBASE SYNC。
+
+## [SYNC] 2026-09-23 — 统一 PoE2 连续位移与首帧匹配的旋转坐标约定
+
+### A. SYNC 范围声明
+**触发任务：** 修复离线地图按匹配方向旋转展示后，人物连续移动轨迹仍按相反方向增长的问题。
+
+**直接变更文件：**
+- `src/auto_modules/core/localization/displacement.py`
+- `tests/test_displacement.py`
+
+**预计连带影响：** `VisualLocalTracker.track()` 的 `visual_f2f` 全局位移方向；PoE2 混合定位轨迹和地图展示；通用 localization displacement 契约及其测试。未改变内存读取频率、首帧注册、UI 地图旋转、输入设备或网络行为。
+
+### B. 影响扩散分析
+`transform_local_displacement()` 仅被 `VisualLocalTracker.track()` 和核心导出调用；tracker 已通过 focused tests 覆盖。新增测试同时核对 OpenCV feature point transform，确保旋转、水平镜像、缩放的顺序一致。
+
+### C. SYNC 结果
+**关键发现：** (verified) OpenCV 图像坐标的旋转矩阵为 `[[cos, sin], [-sin, cos]]`；旧实现使用笛卡尔矩阵 `[[cos, -sin], [sin, cos]]`，导致正角度在后续位移阶段反向。修复后连续轨迹与首帧匹配方向一致。
+
+**实现结果：** `transform_local_displacement()` 明确声明并采用图像坐标语义；保留先水平镜像、后旋转、再缩放的既有顺序。测试增加 90° 方向回归和与 `transform_feature()` 的任意角度/镜像/缩放向量等价回归。
+
+**验证：** `15 passed`（displacement、hybrid visual tracker、PoE2 presenter）；待执行完整 PoE2 回归、compileall、Serena diagnostics 和 git diff check。
+
+### C. SYNC 结果
+**连带重读文件：** `displacement.py`（Serena 复核函数体）、`local_tracker.py`、`similarity_search.py`、`presenter.py`、`orientation.py`、相关 tracker/presenter 测试。
+
+**CODEBASE.md 更新内容：** 更新 `core/localization/displacement.py` 的目录职责、坐标约定、算法步骤和与 `transform_feature()` 的调用契约；记录 OpenCV 图像坐标矩阵及 `VisualLocalTracker` 影响。
+
+**断点文档更新内容：** `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` 新增本轮根因、修复和实机验收条件。
+
+**覆盖进度更新：** `displacement.py`、`local_tracker.py`、`similarity_search.py`、`presenter.py`、`orientation.py`、`tests/test_displacement.py`、`tests/poe2_live_terrain/test_hybrid_visual_local_tracker.py`、`tests/test_poe2_live_terrain_presenter_position.py` 均已完成本轮变更后复读/验证。
+
+**验证结果：** PoE2/混合定位相关回归 `189 passed`；`compileall` 通过；`git diff --check` 通过；Serena 源文件诊断为空。测试文件的 Serena 静态提示仅为当前语言服务器环境未解析 `pytest`/`numpy`，实际 pytest 运行正常。
+
+## [第?轮] 2026-09-23 — PoE2 旋转地图与实时轨迹坐标链路根因调查
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py`（确认帧间位移如何进入全局坐标）
+- `src/auto_modules/core/localization/displacement.py`（确认局部位移的旋转/镜像/比例顺序）
+- `src/auto_modules/core/localization/frame_displacement.py`（确认帧坐标到地图坐标的约定）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/controller.py`（确认 position/trajectory 的坐标空间）
+- `src/auto_modules/ui/modes/poe2_live_terrain/presenter.py`（确认地图和轨迹是否重复变换）
+- 关联测试与导航模式参考实现（对照已工作的移动跟踪链路）
+
+**本轮想弄清楚：** 离线地图只在展示层旋转，而人物移动轨迹没有同步旋转的具体断点；需要分清 native/reference、registration、display 三种坐标空间，并确认是否存在变换方向或重复变换。
+
+## [第?轮] 2026-09-23 — 回归排查绝对注册失败与定位不准
+
+### A. 本轮目标（阅读前声明）
+**目标文件/证据：**
+- 当前运行日志、失败归档和最新截图/样本（确认失败发生在首帧绝对注册还是连续视觉跟踪）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`（核对 `score/coverage/anchor_error` 门槛和候选方向）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/similarity_search.py`（核对本次候选的方向、比例、特征清理）
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/controller.py` 与页面状态链（确认失败是否被误显示为位置错误）
+- 最近一次 displacement 改动的 focused 回归（确认它没有影响首帧绝对注册）
+
+**本轮想弄清楚：** 截图中 `absolute_registration_failed`（最佳分 `0.49`、覆盖 `0.61`、锚点误差 `2.7`）为何拒绝，以及用户所说的“定位不准”是首帧没有可信位置，还是连续跟踪坐标偏移。
+
+## [第?轮] 2026-09-23 — 恢复首帧全局定位稳定性与匹配参数回归
+
+### A. 本轮目标（阅读前声明）
+**目标证据：**
+- `data/poe2_live_terrain_test/hybrid_failures/` 中当前失败样本与此前成功样本
+- 当前 `AnchoredRegistrationConfig`、PoE2 profile 识别参数和 `HybridFrame` 诊断
+- 首帧匹配探针在 `150/110`、墙体清理、分数/coverage 门槛变化下的结果
+
+**本轮想弄清楚：** 用户确认此前首帧可以稳定定位，而当前截图再次进入 `absolute_registration_failed`；需要验证缩小窗口是否仍生效、墙体特征是否被文字/传送门/黄色过滤污染，以及哪个参数变化导致候选从可接受跌到拒绝，不能凭单个失败样本直接放宽门槛。
+
+### C. 本轮发现
+**关键发现：** (verified) 当前失败日志仍为 `capture_size=200/crop=150/refine=110`，缩小范围没有回退。失败候选 `score=0.492/coverage=0.609/scale=0.31` 由顶部动态文字/传送点残留造成；参数复放将 `top_exclusion_rows` 调到 `35~40` 后，候选恢复到约 `angle=219~221°/scale=0.75/score≈0.55/coverage≈0.75`。此前成功样本在 40 行下仍通过，锚点误差保持稳定。
+
+**修订的旧结论：** 原来把本次失败归因于位移旋转修复后的坐标影响；现在确认状态尚未进入 `visual_f2f`，失败发生在首帧绝对注册，根因是动态顶部特征清理不足和参数门前候选变形。
+
+**实现结果：** `AnchoredRegistrationConfig.top_exclusion_rows` 和 `tools/debug/poe2_anchor_local_registration_probe.py` 的 CLI 默认值均从 `25` 调整为 `40`；`absolute_registrar` diagnostics 新增 `top_exclusion_rows`、`player_clear_radius`，使截图、匹配窗口和特征清理参数同时可审计。未降低通用 score 门槛，未扩大/缩小 `150/110` terrain 窗口，未修改内存读取和输入链路。
+
+**验证：** 新增默认参数回归；PoE2/混合定位/UI/位移相关测试 `190 passed`；compileall 通过。实机下一次需要确认日志实际打印 `top_exclusion_rows=40`，并观察首帧候选回到 `219°/0.75` 附近，再继续验证连续位移。
+
+**CODEBASE/断点同步：** 更新 `CODEBASE.md` 的 absolute registrar 参数和 diagnostics 契约；更新 `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`、`docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md` 记录失败证据、参数复放和验收条件。
+
+### C. SYNC 结果
+**直接变更：** `absolute_registrar.py`、`poe2_anchor_local_registration_probe.py`、`test_hybrid_absolute_registrar.py`；连带更新 `CODEBASE.md`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`、`docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`。
+
+**验证结果：** PoE2/混合定位/UI/位移相关测试 `190 passed`；`compileall` 通过；`git diff --check` 通过。Serena 源文件无代码诊断，仍只有环境缺少 `cv2`/`numpy` 类型桩的既有静态提示。
+
+**实机验收边界：** 当前工作区没有再次读取用户运行中的游戏，因此不能宣称实机已经恢复；下一次启动必须以日志中的 `top_exclusion_rows=40`、`crop_radius=150`、`refine_crop_radius=110` 为参数生效证据，再判断候选角度/比例和首帧位置。
+
+## [第?轮] 2026-09-23 — 多帧稳定首帧定位方案设计
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/`（确认当前单帧绝对注册、连续跟踪和恢复状态机边界）
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`（确认测试台可复用的按钮、计时器、状态展示和样本保存入口）
+- `src/auto_modules/features/poe2/live_terrain/hybrid_product_runtime.py`（确认正式页与实验页的隔离边界）
+- `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`、`docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`（确认当前断点、已知风险和不变约束）
+
+**本轮想弄清楚：** 如何在不改变正式页面和内存读取策略的前提下，在 PoE2 测试台新增“移动一段后用累计墙体定位”和“多帧联合定位”两种实验模式；需要明确停止条件、证据契约、可信区间计算和最终接入点。
+
+### 2026-09-23 补充范围：完整链路设计
+用户要求只编写本地逻辑/算法方案。沿用本轮已有阅读，补齐首次与恢复全局注册、正常跟踪、A/B 策略、有限局部拼图、滤波和导航消费契约；不编写实现代码。文档同步只登记设计入口，拟议模块不标为已有能力。
+
+### C. 本轮发现
+**关键发现：** (verified) 现有导航链路已经提供 F2F 位移优先、局部匹配备用和全局恢复入口；(inferred) 方案 A 的拼图融合可复用 MapStitcher 的识别/合并思想，但有界滚动存储、位姿修正和候选不确定性仍需独立设计；(verified) native 参考地形、视觉拼图和截图缓存必须分开管理，不能用全图零值数组模拟迷雾。
+
+**修订的旧结论：** 原先将图片中的滤波理解为首帧定位本身的解决方案；现在明确它只在方向/镜像/比例已确定的候选内部融合位置和速度，首帧仍需锚点约束的形状注册或多帧共同注册。
+
+**文档结果：** 新增 `docs/plans/2026-09-23-poe2-multiframe-localization-navigation-design.md`；更新 `docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md` 与 `docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md` 的断点入口。没有修改 Python/C#/UI 实现，没有启动游戏、输入控制、网络同步或真实内存读取。
+
+**下一轮计划：** 若进入实现，先把 P0 坐标/时间/证据契约拆成测试，再实现共享运动门控和有界证据窗口；不直接接正式 PoE2 页面。
+
+## 2026-09-23 — 多帧定位实施计划
+
+### A. 本轮目标
+将已批准的全局定位、方案 A、方案 B、有限局部地图、时序估计和导航消费设计拆成 TDD 实施任务，明确每个任务的文件、接口、验证命令、提交 checkpoint 和正式链路隔离边界；本轮不修改运行代码。
+
+### C. 本轮发现与结果
+**关键发现：** (verified) 现有 `experimental/hybrid_localization` 已有 `HybridFrame`、锚点、一次性恢复、绝对注册和 F2F tracker，可作为首轮组合基础；(verified) `MapStitcher` 的画布默认是大数组，不能直接作为滚动局部地图的存储实现；(inferred) 需要先在 PoE2 实验目录实现有界 tile/关键帧窗口，再决定哪些模块下沉 `core/localization`。
+
+**计划文件：** `docs/plans/2026-09-23-poe2-multiframe-localization-navigation-implementation-plan.md`。
+
+**任务分层：** 数据契约 -> 运动门控 -> 有界 evidence window -> 滚动 submap -> 形状评分 -> A/B -> 不确定性 -> 状态机 -> session -> 实验台 -> composition -> 归档回放 -> 导航 observation -> 回归和文档同步。
+
+**未执行：** 没有写 Python/C#/UI 实现，没有启动真实输入或网络同步；计划内代码片段是实施接口起点，不代表当前磁盘上已存在这些模块。
+
+### 2026-09-23 补充：代码目录结构
+实施计划新增 `Code Layout` 章节：`core` 保持通用定位/拼接能力，PoE2 地图获取、profile 和内存锚点留在 `features/poe2/live_terrain`，新 A/B 证据阶段与状态机放在 `experimental/multiframe_localization`，实验台展示放在 `ui/modes/poe2_live_terrain/multiframe_panel.py`。`hybrid_localization` 与新多帧包并列，二者不共享可变 session 状态；正式 `page.py` 首轮不接入。下沉到 `core` 需要先满足无 PoE2 词汇、独立可测且存在第二复用场景。
+
+## 2026-09-23 — P0 多帧定位基础实现 SYNC
+
+### A. SYNC 范围声明
+**直接变更：** `experimental/multiframe_localization/{__init__,models,motion_gate,evidence_window}.py`、对应三组测试。
+**连带影响：** 仅实验目录导出和测试；不改变 hybrid controller、正式 PoE2 页面、绘图模式、输入和网络链路。
+
+### C. SYNC 结果
+**实现：** 完成只读多帧数据契约、运动/关键帧门控和有界 segment-aware evidence window。静止、低质量和断链不会伪造位移或持续注册；窗口超限按帧数/时间裁剪，断链递增 version 并清空旧帧。
+**验证：** `18 passed`（多帧新测试 + displacement/frame-displacement）；实验目录 `compileall` 通过；`git diff --check` 通过。补充 segment 切换测试，修复新 segment 到来后后续帧被重复清空的问题。
+**新风险：** rolling submap 尚未实现，不能把当前 evidence window 当作可注册地图；PositionEstimate covariance 还没有来源校准，暂不能向导航声明统计置信度。
+**下一步：** 有界 rolling submap -> 稳健形状评分 -> 方案 A/B；继续保持正式链路隔离。
+
+## 2026-09-23 — P1-P4 多帧定位实现 SYNC
+
+### A. SYNC 范围声明
+**直接变更：** `multiframe_localization/{rolling_submap,shape_registration,strategy_a,strategy_b,state_estimator,coordinator,session,navigation_adapter,archive,composition}.py`、PoE2 composition/page/capture test page、对应 tests 和 debug probe。
+**连带影响：** 实验测试台增加 factory 和多帧控制；正式 PoE2 `runtime`、绘图模式、输入、Host/LAN 不接入。
+
+### C. SYNC 结果
+**实现：** 已完成有界局部拼图、稳健形状评分、方案 A/B 候选策略、候选内部的状态估计、全局收集/跟踪/恢复状态机、session、归档/回放探针、导航 observation 适配器和实验台入口。
+**验证：** 多帧新测试与 PoE2 页面/组合/displacement 回归共 `54 passed`；`compileall` 通过；`poe2_multiframe_localization_probe.py --help` 通过；`git diff --check` 通过。
+**未完成验证：** 真实 native 地图多帧注册、A/B 收敛精度、实机内存读取次数、长时间内存和视觉性能尚未测量；不能宣称首帧实机稳定。
+**下一步：** 端到端历史样本回放，修正真实 reference 注册适配和参数；随后用户开游戏做首次多帧实验，最后再评估是否下沉通用模块或接正式 runtime。
+# 2026-09-23 - Complete PoE2 multiframe localization experiment
+
+- Scope: close the remaining gaps in the approved multiframe localization plan inside the PoE2 experiment bench only.
+- Boundaries: do not modify the drawing workbench or product hybrid-localization default; do not emit controller, keyboard, mouse, Host, or LAN input.
+- Work: make A/B confirmation, native displacement tracking, bounded degraded/recovery transitions, one-shot recovery anchors, stale-result fencing, diagnostics, explicit archive, and end-to-end replay executable.
+- Verification: focused multiframe/UI/PoE2 regression, architecture boundaries, compileall, and diff check. Real-game calibration remains a separate acceptance step.
+
+## [SYNC] 2026-09-23 — 多帧定位完整实施最终审计
+
+### A. SYNC 范围声明
+**触发任务：** 按已批准方案完整实现并验证 PoE2 多帧全局定位实验链路，在全部计划项闭环后一次性汇报。
+
+**直接变更文件：** `src/auto_modules/features/poe2/live_terrain/experimental/multiframe_localization/`、`src/auto_modules/ui/modes/poe2_live_terrain/{capture_test_page,multiframe_panel}.py`、`src/auto_modules/ui/modes/poe2/composition.py`、相关测试与离线探针。
+
+**预计连带影响：** PoE2 数据采集实验台的定时采集、A/B 注册、连续视觉跟踪、一次性恢复锚点、展示和显式归档；正式 PoE2 hybrid runtime、第一页绘图模式、控制器/键鼠、Host/LAN 链路保持不变。重点复核 native 坐标交换契约、异步注册版本门、滚动地图边界、恢复读取次数和导航 observation 可执行门。
+
+### C. SYNC 结果
+**关键发现：** (verified) A/B、有限局部地图、异步注册、连续视觉位移、静止、降级/恢复、单次内存锚点、版本栅栏、原子归档和导航 fail-closed adapter 已形成可执行闭环；(verified) 多帧 composition 始终使用 native anchor/reference，profile 手工方向不会二次变换；(verified) 正式 hybrid runtime 和第一页绘图模式未被新实验链路替换。
+
+**修订的旧结论：** 早期断点仍写“方案 A/B 待实现”或“P1-P4 只完成主要模块”；最终审计确认状态机、worker、UI、归档、navigation adapter 和端到端合成回放均已补齐。历史单帧 samples 缺新协议的 motion/segment/version，不能据此宣称真实多帧回放完成。
+
+**验证：** 新增 native composition 契约 `2 passed`；完整 PoE2 多帧/UI/composition/位移/架构边界回归 `261 passed`；`compileall`、`poe2_multiframe_localization_probe.py --help`、`git diff --check` 均通过。Serena 的项目代码诊断为空；`numpy/PySide6` missing import 是其 Python 环境未加载项目 venv 的外部依赖提示。
+
+**CODEBASE.md 更新内容：** 更新当前能力说明和目录树；在 §4 增加多帧源文件职责边界；在 §5 展开 session、coordinator、A/B 和 navigation adapter 算法；在 §6 增加完整实验链；在 §8 固化 native 坐标和版本 token；在 §9 登记真实阈值、B 角度、covariance 和 UI 线程性能风险。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `models.py` | partial | 深度完整 | 2 | 确认数组只读、候选/估计/version/native 字段契约。 |
+| `motion_gate.py` | partial | 深度完整 | 2 | 确认 frame gap、质量、静止和 keyframe 距离分支。 |
+| `evidence_window.py` | partial | 深度完整 | 2 | 确认帧数/时间界限和 segment 单次清空语义。 |
+| `rolling_submap.py` | partial | 深度完整 | 2 | 确认 unknown/observed 分离、淘汰重建和最新视野裁剪。 |
+| `shape_registration.py` | partial | 深度完整 | 2 | 确认 forward/reverse 距离场与 observed 投影范围。 |
+| `strategy_a.py` | partial | 深度完整 | 2 | 确认结构门、独立 holdout 和同 version 去重。 |
+| `strategy_b.py` | partial | 深度完整 | 2 | 确认 local offset 线性变换、共同候选和 basin 去重。 |
+| `state_estimator.py` | partial | 深度完整 | 2 | 确认固定候选内预测、Mahalanobis 门和 covariance 输出。 |
+| `coordinator.py` | partial | 深度完整 | 3 | 确认完整状态转换、四元 token、pending motion 补偿和恢复门。 |
+| `session.py` | partial | 深度完整 | 3 | 确认单 worker、单 revision 锚点、停止/重置旧结果失效。 |
+| `composition.py` | partial | 深度完整 | 2 | 确认 native 坐标不受 profile 手工方向影响。 |
+| `archive.py` | partial | 深度完整 | 2 | 确认 raw/wall/observed/estimate/diagnostics 原子发布和失败清理。 |
+| `navigation_adapter.py` | partial | 深度完整 | 2 | 确认 fresh/age/instance/version 门及安全半径公式。 |
+| `multiframe_panel.py` | partial | 深度完整 | 2 | 确认 A/B 控制、状态、候选、性能和 submap 展示。 |
+| `capture_test_page.py` | partial | 深度完整 | 3 | 确认独立 timer/session、transform 展示、显式归档和正式 runtime 隔离。 |
+
+**新增 Finding：** P1 为真实多地图 A/B 阈值和错误确认率未校准；P2 为 B 初始 45 度 basin、covariance 未统计标定及 Qt 同步截图/识别性能。它们是实机验收边界，不是当前合成链路测试失败。
+
+**下一轮计划：** 用户实机采集新 schema 多帧归档后，分别回放 A、B、A+B，统计确认率、错误确认率、native 位置误差 P50/P95、确认耗时/距离、峰值内存和每恢复 revision 的读取次数；在此之前不切正式 runtime。
+
+## [Review] 2026-09-23 — 多帧方案完整性与方向所有权审计
+
+### A. 本轮目标（阅读前声明）
+**目标文件：** 多帧设计/实施计划、`experimental/multiframe_localization/` 全链路、正式 hybrid composition、PoE2 monitor config/UI、orientation/presenter/archive 和对应测试。
+
+**本轮想弄清楚：** 逐项确认实施计划 1–15 是否真正闭环，找出合成测试掩盖的半成品；追踪 `map_rotation/map_flip_*` 从本地 profile 到 reference、anchor、显示和归档的所有消费者；设计并审批“用户不再手工控制方向，方向只能来自算法注册”的迁移方案，同时保留旧配置文件的可读兼容性且不破坏 native 坐标。
+
+## [SYNC] 2026-09-23 — 自动方向与多帧定位链路补全实施
+
+### A. SYNC 范围声明
+**触发任务：** 对照已批准的自动方向设计和实施计划，彻底移除用户手工旋转/镜像，补齐多帧全局注册、连续跟踪纠偏、有界证据、加权子图和真实离线回放。
+
+**直接变更文件：** `monitor_config.py`、PoE2 配置/页面/采集 UI、hybrid 与 multiframe composition、`experimental/multiframe_localization/` 算法和 session、离线 probe、对应测试及断点文档。
+
+**预计连带影响：** profile JSON 契约、native reference/anchor 坐标、A/B 候选评分、跟踪状态机、异步发布、地图/人物/轨迹显示和显式诊断归档。第一页绘图模式、Xbox/键鼠/虚拟手柄、Host/LAN 不改动且不得产生真实输入。
+
+**已批准边界：** 旧手工方向字段加载后直接忽略，旧方向归档不保留兼容；算法注册是 `L -> N` 的唯一方向事实源，显示层只能消费同一 registration version。
+
+## [SYNC] 2026-09-23 — 自动方向与多帧链路最终文档及契约收口
+
+### A. SYNC 范围声明
+**触发任务：** 用户确认继续推进；对照完整设计/实施计划复审所有调用链，修正文档陈旧结论，并清除最后发现的静态契约问题。
+
+**直接变更文件：** `registration_validator.py`、`state_estimator.py`、`archive.py`、`navigation_adapter.py` 及其回归测试；`CODEBASE.md`；`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`；`docs/POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md`。
+
+**预计连带影响：** A/B 确认门、二维位置/位移类型边界、schema 3 离线回放、导航 age 门、自动方向展示版本栅栏和断点文档；不改变地图评分阈值、内存读取策略、正式 runtime、输入或 LAN。
+
+### C. SYNC 结果
+**根因调查：** Serena 诊断确认新增算法的运行时测试均通过，但四处边界使用了过宽的 `tuple[float, ...]`/`object` 类型：A/B peer 位置可选、状态估计器 ndarray 元组、归档 shift 任意长度、导航 diagnostics 时间戳任意对象。它们不会改变当前正常路径，却会让非法数据在静态分析中泄漏到核心契约。
+
+**实现修复：** validator 在 A/B 比较前显式拒绝缺失位置；state estimator 在 reset/snapshot 边界收窄为二维浮点元组；archive load 要求 shift 恰有两个有限数；navigation adapter 对无效 captured timestamp 回退 `estimate.age_ms`。新增 malformed archive 和 invalid timestamp 回归。
+
+**文档同步：** `CODEBASE.md` 已更新 §0/§2/§4/§5/§6/§8/§9，加入 `registration_validator.py`、`local_corrector.py`、schema 3 probe、generation 栅栏、加权 rolling submap、B 粗到细精化和不可变 presentation state；移除旧“oriented-preview/手工方向/B 仅 45°/probe 只打印”描述。两个 PoE2 断点文档追加自动方向与多帧链路的权威状态，并修订旧 `261 passed`/“待实现”表述。
+
+**验证：** 新增 typed-boundary/回放聚焦 `12 passed`；包含全部 `tests/poe2_live_terrain`、PoE2 页面、组合、架构边界和位移回归的当前聚焦集合为 `282 passed`；`compileall` 通过；`poe2_multiframe_localization_probe.py --help` 通过；`git diff --check` 通过。全仓 `pytest -q` 为 `744 passed, 2 skipped, 4 failed`：`tests/test_distribution.py` 因当前 Python 环境缺少 `pydirectinput` distribution metadata 失败；`tests/test_pathfinder.py` 三项暴露既有路径规划行为与旧断言冲突。本轮未修改这两个无关边界。
+
+**Serena 诊断：** 业务代码无新增类型错误；剩余提示全部是 Serena language server 未加载项目 venv 的 `numpy/cv2/PySide6` missing-import。没有真实游戏连接、内存读取、路线执行或任何输入/网络副作用。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---:|---:|---|
+| `registration_validator.py` | 深度完整 | 深度完整 | 3 | 增加 peer 位置缺失的 fail-closed 类型边界。 |
+| `state_estimator.py` | 深度完整 | 深度完整 | 3 | 明确 ndarray 到二维 tuple 的收窄点，保持 covariance 算法不变。 |
+| `archive.py` | 深度完整 | 深度完整 | 3 | schema 3 load 增加二维有限 shift 校验和回放测试。 |
+| `navigation_adapter.py` | 深度完整 | 深度完整 | 3 | 无效诊断时间回退 typed age，导航仍 fail closed。 |
+| `CODEBASE.md` | partial | 深度完整 | 4 | §0/§2/§4/§5/§6/§8/§9 与当前自动方向实现一致。 |
+| `POE2_LIVE_TERRAIN_CURRENT_STATE.md` | partial | 深度完整 | 4 | 追加最终自动方向、多帧回放和真实验收边界。 |
+| `POE2_NAVIGATION_COMPATIBLE_TRACKING_CURRENT_STATE.md` | partial | 深度完整 | 4 | 修订验证数字、更新时间和正式/实验边界。 |
+
+**修订的旧结论：** 旧文档把 B 描述为“45° 离散最终方向”、把 rolling submap 描述为简单 OR、把 probe 描述为只打印 manifest；当前实现已确认分别是 coarse-to-fine、可逆加权重建和 schema 3 A/B 真实回放。
+
+**最终剩余风险：** 实机真实多地图错误确认率、native 误差 P50/P95、自动角度误差、确认距离/耗时、纠偏频率、恢复成功率、每 revision 内存读取次数、峰值内存和 Qt worker 耗时仍未测量；在这些数据完成前保持实验台隔离，不切换正式默认定位。
+
+## [SYNC] 2026-09-23 — 完整性审查缺口修复
+
+### A. SYNC 范围声明
+**触发任务：** 对照已批准的多帧定位实施方案和真实操作链路，修复审查发现的未闭环功能，并在修复后重新进行文件级和流程级人工审查。
+
+**直接变更文件：** `experimental/multiframe_localization/{coordinator,archive,session}.py`、`ui/modes/poe2_live_terrain/capture_test_page.py`、相关测试、`CODEBASE.md`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`。
+
+**预计连带影响：** A/B 注册统一确认门、schema 3 estimate 回放、归档按钮状态、session 重启和 evidence segment 生命周期；不改变正式 runtime、绘图模式、输入或网络副作用。
+
+### C. 本轮目标（阅读后记录）
+**根因调查先行：** 复核 A/B 汇合点、archive schema 3 load、UI 保存状态以及 session/recovery/evidence 边界，确认缺口后再逐项写失败测试和最小修复。
+
+### C. 本轮发现与结果
+**根因发现：**
+- (verified) 方案 A 原先只通过自身结构/holdout 门，未经过 `RegistrationValidator`；只启用 A 时可绕过 native anchor、轨迹和实例确认。
+- (verified) schema 3 `save()` 写入了 `estimate`，`load()` 却只重建 evidence/anchor/reference，回放 bundle 丢失候选、协方差、版本和状态。
+- (verified) 多帧保存按钮在启动后立即开放，空证据或缺 anchor/reference 时只能在保存调用中失败。
+- (verified) 重启同一 session 时，evidence builder 的累计 offset/segment 与 A/B 策略缓存没有清理；页面重新创建 experiment 掩盖了这个复用边界。
+- (verified) 多帧 PoE2 composition 没有把 active profile 的 `recognizer_params` 应用到识别器，和 hybrid composition 的配置契约不一致。
+
+**实现结果：**
+- `StrategyResult` 携带 support/holdout 元数据；A 与 B 均经过同一 validator，双通过时按 validated confidence 选择较优结果，A 被 validator 拒绝时 UI 状态也标记 rejected。
+- `MultiframeReplayBundle` 增加 typed `estimate`；load 重建 `CandidateRegion`、`SimilarityTransform2D`、协方差、版本、时效和 diagnostics；save 拒绝空 evidence。
+- UI 只在 experiment、anchor、reference 和非空 evidence 同时存在时开放“保存实验”，tick 后动态更新；启动异常会关闭已创建 session 并恢复控件状态。
+- session start/reset 清理 frame/previous/anchor revision、builder（若提供 reset）和策略缓存；A/B 增加显式 reset，PoE2 evidence builder 清零 offset/segment。
+- PoE2 多帧 composition 在构造时应用 profile `recognizer_params`，保持独立识别器和绘图模式参数契约一致。
+
+**新增/更新验证：** A validator fail-closed、A/B 质量选择、estimate archive round-trip、空 evidence、session restart、strategy reset、profile recognizer params 和 UI 保存门测试均通过；当前多帧/PoE2 聚焦集合 `244 passed`（含本轮新增测试）。Serena 诊断仅剩未加载项目 venv 导致的 numpy/PySide6 missing-import，非源码错误。
+
+**人工链路复核结论：**
+1. 测试页开始只创建一个 experiment/session/timer；截图、识别、motion gate 和 immutable evidence 进入 coordinator。
+2. 每个 recovery revision 先一次 native memory anchor；A/B 共享冻结 window，后台结果受 generation + instance/recovery/evidence/segment token 双重门控。
+3. A/B 统一 validator 通过后才进入 estimator/tracking；移动用 native 位移预测，静止不增长关键帧，局部纠偏失败先 degraded，连续失败才进入一次 recovery。
+4. presentation 只消费同一 registration version，地图、人物、轨迹共同做 display transform；失败帧保持最后可信视野。
+5. 保存是显式原子 schema 3 native archive，回放可重新加载原 estimate 但仍会独立重跑 A/B；导航 adapter fail closed，不执行路线或设备输入。
+
+**修订的旧结论：** 旧文档中“方案 A/B 已统一确认”和“schema 3 可完整回放 estimate”在本轮之前并不成立；现已通过代码和回归测试补齐。旧的“实机多地图精度/性能已达标”仍不成立，必须保留为实机验收边界。
+
+**覆盖进度更新：**
+
+| 文件 | 前状态 | 现状态 | 阅读次数 | 本轮确认 |
+|---|---|---|---:|---|
+| `strategy_a.py` | 深度完整 | 深度完整 | 4 | StrategyResult 元数据、holdout 输出和 reset 生命周期。 |
+| `strategy_b.py` | 深度完整 | 深度完整 | 3 | reset 清除跨 session 候选，coordinator 选择使用 validated confidence。 |
+| `coordinator.py` | 深度完整 | 深度完整 | 4 | A/B 共用 validator、失败 reason 发布和双候选 arbitration。 |
+| `session.py` | 深度完整 | 深度完整 | 4 | start/reset 清理 previous/frame/anchor revision/builder，停止后 worker 引用失效。 |
+| `archive.py` | 深度完整 | 深度完整 | 4 | schema 3 estimate typed round-trip、空 evidence fail-closed。 |
+| `composition.py` | 深度完整 | 深度完整 | 3 | active profile recognizer_params 在多帧 factory 创建时应用。 |
+| `capture_test_page.py` | 深度完整 | 深度完整 | 4 | 归档可用门、启动异常清理和 tick 后状态更新。 |
+| `CODEBASE.md` | 深度完整 | 深度完整 | 5 | 函数索引、Flow 和模块注意事项与本轮契约同步。 |
+| `POE2_LIVE_TERRAIN_CURRENT_STATE.md` | 深度完整 | 深度完整 | 5 | 增加完整性审查结论、真实验收边界和修复状态。 |
+
+**下一轮计划：** 实机 schema 3 多帧采集回放验收；若没有新实机证据，不再继续调阈值或扩大正式 runtime 范围。
+
+**剩余风险：** 真实多地图错误确认率、native 位置误差 P50/P95、Qt 同步截图耗时、恢复读取次数和 covariance 校准仍未实机测量；本轮没有启动游戏、读取真实进程、发送输入或接入正式 runtime。
+
+**下一轮计划：** 只进行用户实机 schema 3 多帧采集与回放验收；记录 A/B 选择、方向、位置误差、确认耗时/距离、恢复次数和 UI 帧耗时。若实机发现失败，先根据日志/归档定位具体边界，再单独修改，不把阈值调优混入架构修复。
+# 2026-09-23 PoE2 A/B 控制弹窗与启动接线修复
+
+## 根因
+
+- 实机启动错误“请先获取地图并注入多帧实验工厂”来自 `MainWindow` 装配遗漏：composition 已创建 `multiframe_localization_factory`，但创建 `Poe2LiveTerrainPage` 时没有传入。
+- 截图中的主采集页因此可以获取地图和人物网格坐标，但 A/B session 无法创建；这不是地图匹配器的拒绝。
+
+## 实现
+
+- `main_window.py` 传递 `multiframe_localization_factory`，并增加回归测试保护页面索引和工厂转发。
+- 新增 `Poe2LocalizationControlDialog` 非模态控制窗口，默认同时启用方案 A/B；关闭窗口不停止 session，停止按钮才停止。
+- 数据采集页移除混合定位和多帧控制区的可见布局，只保留截图、预处理、匹配特征、地图和状态展示；A/B 控件通过“定位控制”弹窗打开。
+- 旧 Hybrid 控件对象暂留为不可见兼容层，避免影响已有监控窗口和历史测试；不再作为用户可见控制入口。
+
+## 验证
+
+- 失败测试先复现工厂未传递，再修复为通过。
+- UI/PoE2 聚焦集合：`18 passed`（包含新控制弹窗、主窗口接线、数据采集页 A/B 回归）。
+- 实机只读 smoke：使用当前 `latest.npz`、保存监控框、实际屏幕采集和当前 PoE2 内存锚点创建 A+B session；`session.start()` 成功，`memory reads=1`。
+- 实机静止 6 帧均为 `collecting`，未产生关键帧和注册请求；这是 MotionGate 的预期行为，下一步需要用户移动后验证 A/B 注册和位置确认。
+
+# 2026-09-23 多帧注册首步卡住根因修复
+
+## 现象与证据
+
+`data/logs/poe2_live_terrain.log` 在实机启动后持续记录 `phase=registering`、`pending=True`，但没有完成或失败事件；当时只有 1 个关键帧。根因是 coordinator 只要求 evidence 非空，直接提交了 Strategy B 的全图粗到细搜索。
+
+## 修复
+
+- 内置 A/B 策略声明最小关键帧要求，coordinator 在证据不足时继续 collecting；A+B 组合要求 5 个关键帧。
+- Strategy B 使用内存锚点附近的局部 reference crop，并通过 origin 还原绝对 native 变换。
+- B 粗搜跳过切向近邻和反向栅格化，最终 validator 仍保留严格确认门。
+- session 增加完整注册生命周期日志和 10 秒超时；超时回到 collecting，晚到结果丢弃。
+
+## 验证
+
+- 多帧 coordinator/session/shape/strategy/end-to-end 聚焦回归通过。
+- 真实样本基准：B 局部评估约 6.3 秒，A+B 五帧合成评估约 8.1 秒；此前完整地图搜索超过 30 秒未返回。
+- 下一次实机重点看 `registration_deferred(required_frames=5)`、`registration_started`、`registration_finished`、`registration_published` 或 `registration_timeout`。
+
+# 2026-09-23 全链路运行审查（第一轮）
+
+## A. 本轮目标（阅读前声明）
+
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`：沿初始化、获取地图、预览、启动/停止多帧定位和窗口关闭链路核对 UI 生命周期。
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiframe_localization/session.py`：核对采帧、内存锚点、后台注册、超时、停止/重启并发边界。
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiframe_localization/coordinator.py`：核对状态机、证据门控、注册结果发布和跟踪恢复。
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiframe_localization/composition.py`：核对页面实际注入的截图、识别器、地图参考和内存锚点是否闭合。
+
+**本轮想弄清楚：** 用户描述的“刚开始就卡住”是否仍由后台注册生命周期、页面定时器竞争或启动后状态未接线造成；重点模拟真实操作链路，不以静态测试通过代替运行证据。
+
+### C. 本轮发现（阶段性）
+
+- `(verified)` `MultiframeLocalizationSession._expire_registration_if_needed()` 超时后只把 coordinator 改回 `COLLECTING`，保留 `_registration_future`；后续 `_schedule_registration_if_ready()` 的第一行会因 future 非空直接返回，因此旧 worker 未结束前不会重新提交注册。仿真已复现：超时后连续 tick 的 job 数保持 1、`registration_pending=False` 但 future 仍存在。
+- `(verified)` `Poe2CaptureTestPage.stop_multiframe_localization()` 关闭 session 后没有清空 `_multiframe_experiment`；`_multiframe_archive_ready()` 和保存入口仍可读取已关闭对象，异常 tick 后也会留下旧引用。
+- `(verified)` `start_multiframe_localization()` 未检查 `monitor_config.binding`；实际第一帧才进入 `capture_preview_frame()` 抛出“请先画框选择区域或选择人物中心点”，导致用户看到“启动后卡住/无数据”而不是可操作的前置错误。
+- `(verified)` `preview_timer` 与 `_multiframe_timer` 没有互斥。用户先点“开始截图监控”再启动多帧时，同一 `preview_provider`/recognizer 会在两个定时器中重复采样；截图监控窗口还可能有第三个 timer。这会放大 CPU/GPU/截图开销，且当前多帧 tick 没有把同一帧复用给预览 UI。
+- `(partial)` `stop()` 对已运行的 future 只调用 `Future.cancel()`；运行中的 worker 无法被取消。需要专门测试 stop→start 后旧 worker 是否能修改新 coordinator/strategy 状态，不能只验证旧结果不发布。
+
+**修订的旧结论：** 之前“增加超时后回到 collecting 即可解除卡住”的结论不完整；当前 future 引用仍阻断新注册，且页面生命周期和定时器并发还有独立缺口。
+
+**下一步：** 先为四个 verified 缺口和 stop→start 并发风险写最小失败测试；然后单独修 session 生命周期，再修页面互斥/前置校验，最后用实际 composition 的 fake capture + fake anchor + 多帧证据跑完整状态流。
+
+### C. 实现与验证结果
+
+- `(fixed)` session 将注册评估放到 coordinator 的浅副本 + 策略深副本中；超时 worker 不再共享当前 coordinator/策略的可变状态。默认 executor 从单 worker 调整为 2 个并发槽，超时任务进入 retired 集合并由回调消费结果/异常。
+- `(fixed)` 超时立即释放 active registration slot，下一次有新 evidence version 时可以重新提交；旧任务完成后只记录 retired 日志，不发布结果。
+- `(fixed)` 多帧页面启动前拒绝缺失 `monitor_config.binding`，错误在启动按钮阶段展示；启动多帧时停止同页 preview timer 和独立截图监控窗口 timer。
+- `(fixed)` 页面停止多帧后清空 experiment、状态、轨迹和归档可用状态，关闭的 session 不再被保存入口或下一次 tick 复用。
+- `(verified)` 新失败用例先复现上述行为，修复后 session/page/end-to-end/composition 聚焦集合 `14 passed`，PoE2 全聚焦集合 `264 passed`。
+- `(verified)` 实际 composition 的 fake capture smoke 能完成 anchor、帧构建和状态推进；静止/相似墙体被 MotionGate 正确判为无关键帧，未误触发昂贵 A/B 注册。这是预期门控，不是注册成功证明。
+
+**修订的旧结论：** 之前文档把“超时回到 collecting”写成已解除卡住，但没有说明 worker 槽位和共享策略状态；现在已改为“超时可重试 + 旧 worker 隔离”。同时，页面启动链不再允许无绑定配置进入第一帧才失败。
+
+**下一轮计划：** 用真实游戏进程或用户新采集的 schema 3 多帧样本验证：移动是否产生关键帧、达到 5 帧后 A/B 是否提交、超时后是否能再次提交、注册结果是否发布到统一地图/人物/轨迹版本。未有实机证据前不宣称定位稳定。
+
+## [SYNC] 2026-09-23 — 多帧超时重试与页面采样生命周期修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 全链路审查发现注册超时槽位、后台策略共享、页面旧实验引用、缺绑定前置校验和重复截图定时器。
+
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiframe_localization/session.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+- `tests/poe2_live_terrain/test_multiframe_session.py`
+- `tests/test_poe2_capture_test_page_multiframe.py`
+
+**预计连带影响：** 多帧 session 生命周期、A/B 注册策略状态、PoE2 测试页 Qt timer、归档保存门、页面启动前置契约和相关 Flow/风险条目。
+
+### C. SYNC 结果
+
+**连带重读文件：** `coordinator.py`、`strategy_a.py`、`strategy_b.py`、`composition.py`、`capture_monitor_window.py`、`multiframe_panel.py`、`localization_control_dialog.py`、PoE2 `page.py`；确认 composition 注入、A/B reset、窗口 timer 和页面 shutdown 与新 session 契约相容。
+
+**CODEBASE.md 更新内容：** session 模块注意事项、测试页生命周期注意事项、`MultiframeLocalizationSession.tick()` 算法和失败行为已同步；新增 retired worker/隔离策略和 timer 互斥边界。
+
+**新增 Finding：** 超时不能只把 phase 改回 collecting；active future 必须释放并隔离其可变策略上下文，否则长时间搜索会阻塞下一次真实注册并污染重启状态。
+
+### D. 发布前验证
+
+- `pytest -q tests/poe2_live_terrain tests/test_poe2_capture_test_page.py tests/test_poe2_live_terrain_page.py tests/test_main_window_poe2_terrain_page.py tests/test_poe2_live_terrain_monitoring.py tests/test_poe2_monitor_dialog.py tests/test_architecture_boundaries.py`：`264 passed`。
+- 全仓 `pytest -q`：`759 passed, 1 skipped, 3 failed`；仅剩既有 `tests/test_pathfinder.py` 的三项路径策略冲突（阻塞角、未探索区、细墙），未触碰本轮 PoE2 链路。
+- `compileall`：通过；`git diff --check`：通过。
+- 实际 PoE2 进程/移动/注册成功未在本轮执行；没有发送输入、网络同步或自动移动。
+- synthetic full-session trace：第 1~4 帧依次累积 1~4 个关键帧且保持 collecting；第 5 帧进入 registering 并提交 1 个 A/B job；强制超时后 active future 释放、retired=1；下一帧提交第 2 个 job 并回到 registering。说明证据门、超时重试和槽位隔离在真实 session 状态机中闭合。
+
+## [2026-09-23] 实机 A/B 结果核对与性能归因
+
+- A：达到 5 个关键帧，但 7 次注册均为 `strategy_a_status=rejected`，最终 `global_registration_ambiguous`，未进入 tracking。
+- B：产生 12 个候选，但第一次任务因计算期间 segment 切换被版本门丢弃；后续任务仍为 ambiguous，未进入 tracking。候选数不等于定位成功。
+- 多帧普通 tick（去掉首帧初始化）A 平均约 37.25ms、P95 48.57ms；B 平均约 34.69ms、P95 44.43ms。采帧本身约 20~45 FPS。
+- 首帧初始化约 4.36~4.42s；全局注册约 3.26~8.90s（A）/6.55~8.78s（B），是主要体感延迟来源。绘图模式默认 10 FPS，而多帧实验使用 33ms/约 30 FPS 并叠加完整识别、证据与 UI 刷新。
+- 未改代码；下一步先补齐 A/B validator/candidate 诊断并验证失败后的重试门控，再决定是否降低采样/UI 刷新频率。
+## [SYNC] 2026-09-24 10:57 - PoE2 center capture resize and adaptive first-frame registration
+
+### A. SYNC 范围声明
+**触发任务：** 修复中心模式把截图大小改为 300 后实际绑定仍为 200x200，并让首帧定位跨截图尺寸自动搜索比例、过滤新增噪声后稳定通过 0.80 置信度门槛。
+
+**直接变更文件：**
+- `src/auto_modules/core/spatial/monitor_binding.py`
+- `src/auto_modules/features/poe2/live_terrain/monitor_config.py`
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/similarity_search.py`
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/absolute_registrar.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture/selection_controller.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/config_panel.py`
+- 相关聚焦测试文件
+
+**预计连带影响：** PoE2 profile 加载、中心截图绑定、监控帧实际尺寸、首帧几何粗搜/精搜、内存锚点联合评分、正式页与数据采集页共享的定位工厂，以及 PoE2 定位断点文档。
+
+### C. SYNC 结果
+
+**关键发现：**
+- `(verified)` 原 profile 的 `capture_size=300` 与 `binding=200x200/marker=(100,100)` 分裂，导致后端日志和实际帧始终为 200；配置模型现在加载即规范为 `300x300/marker=(150,150)`，物理人物锚点保持不动，region 画框保持原矩形。
+- `(verified)` 现有算法原本已经在 `0.35..2.45` 粗搜、`0.02` 精搜中自动估计比例；真实 300px 样本仍稳定找到约 `0.77`，失败主因是扩大视野后新增顶部文字/底部画面噪声和评分中过高的局部 walkable-fill 权重。
+- `(verified)` 顶部排除与真实 capture size 同比缩放、孤立紧凑组件清理、形状优先评分生效；精搜候选延迟到 memory-anchor 评分后再消歧，并只比较独立 angle/reflection/scale basin。
+- `(verified)` 新实机端到端实际帧 `(300,300,3)`，状态 `local_tracking/anchored_absolute`，angle `221°`、flip `true`、scale `0.77`、anchor error `1.951`、confidence `0.81177`，仍使用 `minimum_confidence=0.80`。
+
+**修订旧结论：** “截图大小改为 300 导致比例配置失效”修订为两层问题：首先是 300 没有进入 binding/截图链路；修复后比例自动搜索能正确找到 `0.77`，剩余拒绝来自新增非地图特征及候选过早去重，而不是需要为每台电脑手工保存固定比例。
+
+**CODEBASE.md 更新内容：** §4/§5 的通用 monitor binding、PoE2 monitor config、similarity search、absolute registrar；§6 的 hybrid 首帧链路；风险说明保留多地图/多 UI scale 泛化边界。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `core/spatial/monitor_binding.py` | 深度完整 | 深度完整 | +1 | 新增保持物理 marker 的纯重设函数，保留 screen/space/DPI。 |
+| `features/poe2/live_terrain/monitor_config.py` | 深度完整 | 深度完整 | +1 | center profile 构造和反序列化现在强制尺寸/binding/marker 一致。 |
+| `hybrid_localization/similarity_search.py` | 深度完整 | 深度完整 | +1 | 评分权重成为显式、校验过的配置；通用默认保持兼容。 |
+| `hybrid_localization/absolute_registrar.py` | 深度完整 | 深度完整 | +1 | capture-size 自适应排除、噪声清理、形状优先权重、basin-scale 消歧和真实 300px 结果已复核。 |
+| `poe2_live_terrain/capture/selection_controller.py` | 深度完整 | 深度完整 | +1 | center size 更新委托通用空间函数，不写绘图模式状态。 |
+| `poe2_live_terrain/config_panel.py` | 深度完整 | 深度完整 | +1 | spin 变化立即重建 center binding；region 模式不改画框。 |
+
+**验证：** 首轮聚焦回归 `63 passed`；扩大到 PoE2 全实验包与相关页面/配置后为 `263 passed`，`compileall` 和 `git diff --check` 通过。Serena 对内部类型无新增诊断，现存诊断仅为其语言服务器环境未解析 `cv2/numpy/PySide6`；真实 PoE2 进程只读验证成功，没有发送键鼠、Xbox、Host、LAN 或自动移动输入。
+
+**下一轮计划：** 收集至少两个不同地图和一个不同 UI scale/分辨率的首帧样本，比较自动比例峰、独立 basin margin、噪声清理后像素数和 confidence；在这些证据之前不把 `0.77` 固化为 profile，也不把 PoE2 清理策略下沉到通用 core。
+
+## [2026-09-24] PoE2 后续跟踪漂移与 UI 性能根因排查
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py`：确认首帧之后的位置更新模型，以及为什么移动数步后会漂移。
+- `core/localization/frame_displacement.py`、`core/vision/phase_displacement.py`：确认帧间位移的质量门控是否能阻止累计误差。
+- `ui/modes/poe2_live_terrain/page.py`、`ui/modes/poe2_live_terrain/presenter.py`、`ui/widgets/scalable_map.py`：确认每帧绘图/地图跟随的资源开销。
+- `data/logs/poe2_live_terrain.log`：用真实运行数据区分定位计算耗时与 UI 渲染耗时。
+
+**本轮想弄清楚：** 首帧已成功时，漂移究竟来自方向/比例、帧间位移累计，还是展示层阻塞造成的低帧率；同时确认后续修复是否应先改参数还是先改结构。
+
+### C. 本轮发现
+**关键发现：**
+- `(verified)` `VisualLocalTracker.track()` 对前后墙体二值图调用 `phaseCorrelate()`。只要响应 `quality >= 0.20`、位移未越界，就按 `previous_position - global_shift` 直接累加，并把响应值作为 `visual_f2f` confidence；没有周期性局部形状校正，也没有累计误差衰减。
+- `(verified)` 相位相关失败、低质量或大跳变才会调用 `LocalMapMatcher.match()`；所以“每帧都返回高质量、但长期慢慢漂移”不会触发校正，符合当前现象。`quality≈1.0` 只表示相位响应，不表示绝对位置准确。
+- `(verified)` 实际日志中首帧绝对注册约 `6251~12979ms`；后续 runtime 约 `63.1~73.0ms/帧`，但 `ui.localization_performance` 平均绘制约 `192.4~240.9ms/帧`，峰值 `402.9ms`，高于 `33ms` timer 周期。
+- `(verified)` `handle_runtime_state()` 每帧构造两个预览、复制大地图、重画轨迹/marker、对整张 pixmap 做逆旋转；`focus_on_point()` 每帧调用 `set_scale()`，触发 `QPixmap.scaled()` 重采样整张约 `3244x1725` 图片。绘图模式没有这组整图操作，因此两者流畅度差异有明确代码依据。
+- `(partial)` 当前日志只记录状态签名变化和 30 帧性能摘要，没有连续记录每帧 `shift/global_shift/position_jump`，因此还不能从既有日志计算本次实机移动的具体累计误差；下一次移动样本必须补充这些诊断字段。
+
+**修订的旧结论：** “后续不准主要是首帧方向/比例错误”修订为“当前首帧已有实机成功证据，漂移的第一嫌疑是帧间相位位移无限累计；展示层严重超时又会扩大帧间运动和错配概率”。
+
+**CODEBASE.md 更新内容：** §5 `VisualLocalTracker.track()` 的长期累计风险；§6 `F-POE2-HYBRID-LOCALIZATION` 的预测/校正边界；§9 新增 P1 漂移风险和 P1/P2 UI 阻塞风险。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py` | 深度完整 | 深度完整 | +1 | 确认 phase 位移优先、累计位置公式和局部 matcher 仅在失败时触发。 |
+| `core/localization/frame_displacement.py` | 深度完整 | 深度完整 | +1 | 确认质量/距离门控不包含长期漂移校正。 |
+| `core/vision/phase_displacement.py` | 深度完整 | 深度完整 | +1 | 确认 OpenCV response 的语义只是相位相关响应值。 |
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | +1 | 确认同步 runtime + 全量 preview/map/focus 绘制均在 GUI tick 中。 |
+| `ui/modes/poe2_live_terrain/presenter.py` | 深度完整 | 深度完整 | +1 | 确认每次 overlay 都会复制并旋转整张 pixmap。 |
+| `ui/widgets/scalable_map.py` | 深度完整 | 深度完整 | +1 | 确认 focus 每帧重复 set_scale 并触发整图重采样。 |
+| `data/logs/poe2_live_terrain.log` | 深度完整 | 深度完整 | +1 | 提取首帧、runtime、UI 三类真实耗时摘要。 |
+
+**验证：** `tests/test_frame_displacement.py` 与 `tests/poe2_live_terrain/test_hybrid_visual_local_tracker.py` 共 `7 passed`。本轮没有修改 Python/C++/UI 算法，没有发送任何输入或启动网络同步；只追加诊断断点文档。
+
+**下一轮计划：** 先增加可控的逐帧诊断或离线回放，记录连续移动的 shift/累计位置/校正触发；确认误差模型后，再以“帧间预测 + 有界局部形状校正”做单一算法改动，同时单独缓存/节流 UI 地图变换，避免把定位修复和渲染优化混成一次参数调整。
+
+## [2026-09-24] PoE2 跟踪与展示性能优化实施
+
+### A. 本轮目标（实施前声明）
+**直接变更文件：**
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/local_tracker.py`
+- `src/auto_modules/features/poe2/live_terrain/experimental/hybrid_localization/composition.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/presenter.py`
+- `src/auto_modules/ui/widgets/scalable_map.py`
+- 对应 tracker/UI 回归测试
+
+**本轮目标：**
+1. 给帧间相位位移增加可配置的时间/帧数/距离校正门，在不增加内存读取的前提下周期性调用已有有界局部 matcher；校正失败时保留短期预测但记录失败，不把低质量结果伪装为绝对校正。
+2. 缓存 registration 方向变换后的基础地图，地图位置变化时只更新 overlay 和滚动条，避免每帧整图旋转/缩放。
+3. 保持绘图模式、输入设备、Host/LAN 和地图数据契约不变。
+
+**实现前需要复核的调用边界：** tracker 的 matcher 契约、PoE2 factory 的参数注入、页面 overlay signature 与 `ScalableMapWidget` 的缩放/滚动职责。
+
+### C. SYNC 结果
+
+**关键发现：**
+- `(verified)` `VisualLocalTracker` 已加入帧数/距离/时间三种可配置校正门；PoE2 factory 注入 `12 frames / 24 native px / 1500ms`。静止帧不满足 motion dead-zone，不会触发局部 matcher；校正成功会替换预测 registration，失败保留短期预测并记录失败原因。
+- `(verified)` `ScalableMapWidget` 新增独立 overlay label，位置、轨迹和候选 marker 不再通过 `set_image()` 重建底图；`focus_on_point()` 固定跟随基准缩放，重复定位只滚动视口。
+- `(verified)` 正式页面缓存已按方向/镜像/地图实例区分的 registered base pixmap；只有地图、方向或镜像变化才执行整图逆旋转。位置变化只更新 overlay，显示坐标通过既有 `localization_display_point()` 转换。
+- `(verified)` 受影响测试和新增测试全部通过；PoE2 集合首轮为 `258 passed, 1 failed`，失败来自未修改的 `test_multiframe_shape_registration.py::test_huber_trim_reduces_outlier_error_without_hiding_raw_coverage`，单独复跑通过；`compileall` 和 `git diff --check` 通过。
+- `(partial)` 尚未真实移动验收，当前校正频率和 UI 实际耗时仍需用户在游戏中连续移动后用日志确认，不能提前宣称漂移已完全解决。
+
+**修订的旧结论：** 由“后续帧无限累计、UI 每帧整图重建”修订为“后续帧具备有界周期形状校正，UI 底图与 marker 已分离；实机长距离稳定性仍待验证”。
+
+**CODEBASE.md 更新内容：** 更新 `VisualLocalTracker` 的校正算法、PoE2 factory 参数、`Poe2LiveTerrainPage` 的 registered-map 缓存和 `ScalableMapWidget` overlay 职责；风险登记保留实机校正阈值和 Qt 预览频率待标定项。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `hybrid_localization/local_tracker.py` | 深度完整 | 深度完整 | +1 | 增加校正门、校正成功/失败诊断和短期预测降级。 |
+| `hybrid_localization/composition.py` | 深度完整 | 深度完整 | +1 | 注入 PoE2 周期校正的初始生产参数。 |
+| `ui/widgets/scalable_map.py` | 深度完整 | 深度完整 | +1 | 增加独立 overlay label、跟随缩放基准和静态底图复用。 |
+| `ui/modes/poe2_live_terrain/page.py` | 深度完整 | 深度完整 | +1 | 方向/地图级缓存与显示坐标转换，不再每帧 set_image。 |
+| `ui/modes/poe2_live_terrain/presenter.py` | 深度完整 | 深度完整 | +1 | 增加一次性 registered base map 准备入口。 |
+| `tests/poe2_live_terrain/test_hybrid_visual_local_tracker.py` | 深度完整 | 深度完整 | +1 | 覆盖周期校正成功和静止帧不校正。 |
+| `tests/test_poe2_live_terrain_page.py` | 深度完整 | 深度完整 | +1 | 断言从旧 overlay 重绘迁移到 registered map 缓存。 |
+
+**下一轮计划：** 在真实游戏中连续移动，检查 `correction_attempted/correction_accepted/correction_distance/position_jump`，同时比较 `ui.localization_performance` 的平均/峰值渲染耗时；若校正失败率高，再基于样本调整 matcher 容差，不先改首帧门槛。
+
+## [SYNC] 2026-09-24 - PoE2 参数与定位帧率实施
+
+### A. SYNC 范围声明
+
+**触发任务：** 将首帧质量门做成 PoE2 配置档参数，优化单帧预处理并把正式定位移出 GUI 阻塞链路。
+
+**直接变更文件：** `monitor_config.py`、`hybrid_localization/composition.py`、`config_panel.py`、`monitor_dialog.py`、`hsv/combined.py`、`hsv_recognizer.py`、`page.py`、PoE2 worker/组合文件及聚焦测试。
+
+**预计连带影响：** PoE2 正式页和实验页共用的 registrar 构造、profile 旧版兼容、截图后处理、Qt 定时器与 worker 生命周期；绘图和导航模式仅受通用识别 API 扩展影响，原有输出须保持一致。
+
+## [2026-09-24] PoE2 首帧置信度门槛调整
+
+### 目标
+
+响应真实首帧候选已经有可信内存锚点、但总体置信度约 0.75 的样本，将 PoE2 业务组合的通过门槛降至 0.70。
+
+### 变更
+
+- `composition.py`：`minimum_confidence` 从 `0.75` 改为 `0.70`，并保留注释说明该策略只属于 PoE2 组合。
+- `absolute_registrar.py`：通用字段注释不再写死某个 PoE2 业务数值。
+- `tests/test_poe2_composition.py`：正式组合和 runtime 配置断言同步为 `0.70`。
+- `minimum_score_when_anchored=0.35`、`minimum_forward_coverage_when_anchored=0.50`、锚点半径和通用默认值未改。
+
+### 边界
+
+置信度门降低不能绕过独立覆盖率门；`forward coverage < 0.50` 的样本仍会拒绝。当前只完成配置和回归验证，尚未用新的多地图实机样本证明跨环境准确率。
+
+## [SYNC] 2026-09-24 - PoE2 参数、预处理与后台定位
+
+### A. 本轮目标
+
+为 PoE2 增加可保存的首帧质量门和 30 FPS 目标，复用同帧预处理，并解除正式定位对 GUI 主线程的阻塞。
+
+### C. 本轮结果
+
+- `(verified)` profile 保存 `0.70/0.35/0.45` 三个首帧门，以及定位 `30 FPS`、预览 `12 FPS`；旧 profile 自动补默认值，参数窗口可编辑和恢复默认值。
+- `(verified)` PoE2 composition 将当前 profile 门注入 registrar；通用 registrar、绘图模式和导航模式默认值未改。
+- `(verified)` HSV 证据组装支持一次墙体预处理复用；200px 样本约 `42ms -> 11ms`，300px 压力样本约 `73ms -> 24ms`，输出等价测试通过。
+- `(verified)` 正式 hybrid runtime 使用串行后台 worker、单槽最新状态、线程本地 MSS 捕获；停止/恢复/旧结果丢弃/worker 不重入均有测试。
+- `(verified)` 日志新增捕获、证据、定位分段耗时和实际 FPS。
+
+**修订的旧结论：** 最新实机日志中的 UI 绘制已约 `2.7~5.1ms/帧`，主要成本是定位和重复证据预处理；当前先做预处理复用和后台运行，是否需要进程隔离留给分段耗时证据决定。
+
+**验证：** 本轮聚焦回归 `89 passed`；仍需真实游戏连续移动验证实际 FPS、首帧稳定性、周期校正和长距离漂移。
+## [SYNC] 2026-09-24 — PoE2 后台定位链路收尾修正
+
+### A. SYNC 范围声明
+**触发任务：** 继续完成 PoE2 定位性能优化，并修正实机测试中容易误判的预览与后台首帧边界。
+**直接变更文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/page.py`
+- `tests/test_poe2_live_terrain_monitoring.py`
+**预计连带影响：** `Poe2LocalizationWorker` 的启动信号时序、正式 PoE2 页面状态消费、匹配特征预览显示和停止/重启生命周期。
+
+### B. 影响分析与重读范围
+- `Poe2LiveTerrainPage.start_monitoring`：后台 worker 启动前先标记页面 active，避免极快首帧信号被丢弃。
+- `Poe2LiveTerrainPage._update_frame_previews`：仅在匹配帧为空时显示占位文字，成功帧保持 pixmap。
+- `Poe2LocalizationWorker._run`、`stop`：确认后台定位仍为串行 tick、停止事件可唤醒恢复等待，旧 generation 由页面过滤。
+- `Poe2HybridProductRuntime.tick`、`_adapt_state`：确认状态和 timing 字段仍能被页面消费。
+
+### C. SYNC 结果
+**连带重读文件：** `page.py`、`localization_worker.py`、`hybrid_product_runtime.py`、`tests/test_poe2_live_terrain_monitoring.py`。
+**关键发现：** 成功匹配帧此前在页面层被无条件 `setText` 清除，已修正；后台启动状态时序已调整。
+**CODEBASE.md 更新内容：** 更新 PoE2 页面性能链路、预览状态约定和 worker 启动时序说明。
+**验证：** 聚焦监控/worker 测试 `6 passed`；性能相关回归 `272 passed`；架构边界回归 `22 passed`；`compileall` 与 `git diff --check` 通过。
+
+### C. 全仓回归补充
+- PoE2/识别/监控聚焦回归仍通过：`272 passed`（修正前）和新增链路 `6 passed`；架构边界 `22 passed`。
+- 全仓 `pytest -q` 得到 `789 passed, 1 skipped, 10 subtests passed, 3 failed`。3 个失败均为既有 `tests/test_pathfinder.py` 的路径规划断言（对角穿角、未探索区、细墙阻断），本轮未修改 pathfinder 或其测试；已保留为独立基线问题，不把它误归因于 PoE2 性能改动。
+- `compileall`、`git diff --check` 通过。

@@ -62,4 +62,37 @@ class MonitorBinding:
         }
 
 
-__all__ = ["CaptureRect", "MonitorBinding"]
+def resize_binding_around_marker(
+    binding: MonitorBinding,
+    width: int,
+    height: int,
+) -> MonitorBinding:
+    """Resize a capture while keeping its marker at the same desktop point."""
+    width = int(width)
+    height = int(height)
+    if width <= 0 or height <= 0:
+        raise ValueError("capture rectangle dimensions must be positive")
+    marker = binding.player_marker_position
+    if marker is None:
+        marker = (binding.rect.width // 2, binding.rect.height // 2)
+    anchor = (
+        binding.rect.left + int(marker[0]),
+        binding.rect.top + int(marker[1]),
+    )
+    new_marker = (width // 2, height // 2)
+    return MonitorBinding(
+        rect=CaptureRect(
+            anchor[0] - new_marker[0],
+            anchor[1] - new_marker[1],
+            width,
+            height,
+        ),
+        screen_id=binding.screen_id,
+        coordinate_space=binding.coordinate_space,
+        dpi_scale_x=binding.dpi_scale_x,
+        dpi_scale_y=binding.dpi_scale_y,
+        player_marker_position=new_marker,
+    )
+
+
+__all__ = ["CaptureRect", "MonitorBinding", "resize_binding_around_marker"]

@@ -16,6 +16,6 @@ __all__ = [
     "fit_affine_transform",
     "physical_screen_point",
 ]
-from .monitor_binding import CaptureRect, MonitorBinding
+from .monitor_binding import CaptureRect, MonitorBinding, resize_binding_around_marker
 
-__all__ = ["CaptureRect", "MonitorBinding"]
+__all__.extend(["CaptureRect", "MonitorBinding", "resize_binding_around_marker"])

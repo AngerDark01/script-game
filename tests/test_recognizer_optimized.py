@@ -6,6 +6,30 @@ from auto_modules.core.vision import HSVRecognizer
 
 
 class RecognizerOptimizedTest(unittest.TestCase):
+    def test_combined_with_processed_reuses_one_wall_preprocessing_pass(self):
+        recognizer = HSVRecognizer()
+        frame = np.random.default_rng(7).integers(0, 256, (96, 96, 3), dtype=np.uint8)
+        expected_processed = recognizer.preprocess_image(frame)
+        expected_masks = recognizer.extract_combined(frame, player_pos=(48, 48))
+        expected_gray = recognizer.get_raw_gray(frame)
+        original = recognizer._preprocess_for_wall
+        calls = 0
+
+        def counted(image):
+            nonlocal calls
+            calls += 1
+            return original(image)
+
+        recognizer._preprocess_for_wall = counted
+        processed, masks = recognizer.extract_combined_with_processed(frame, player_pos=(48, 48))
+        gray = recognizer.get_raw_gray(frame, processed=processed)
+
+        self.assertEqual(calls, 1)
+        np.testing.assert_array_equal(processed, expected_processed)
+        for actual, expected in zip(masks, expected_masks):
+            np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(gray, expected_gray)
+
     def test_saturated_dynamic_icon_is_removed_from_match_features(self):
         recognizer = HSVRecognizer()
         recognizer.transparent_mode = True
