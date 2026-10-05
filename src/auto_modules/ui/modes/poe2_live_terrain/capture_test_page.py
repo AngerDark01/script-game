@@ -124,7 +124,9 @@ class Poe2CaptureTestPage(QWidget):
 
     _FOLLOW_START_MAX_FRAME_AGE_MS = 300
     _FOLLOW_RUNTIME_MAX_FRAME_AGE_MS = 700
-    _FOLLOW_STALE_RECOVERY_AFTER_MS = 1_500
+    # Short capture stalls should not immediately pay for a global re-anchor.
+    _FOLLOW_STALE_RECOVERY_AFTER_MS = 8_000
+    _FOLLOW_FOREGROUND_CACHE_MS = 250
     _DUAL_RECOVERY_COOLDOWN_MS = 10_000
     _DUAL_WORKER_DRAIN_INTERVAL_MS = 33
     _PROGRAM_DIAGNOSTICS_INTERVAL_MS = 5_000
@@ -279,6 +281,8 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_foreground_last_log_at_ms: int | None = None
         self._follow_foreground_release_sent = False
         self._follow_foreground_check_override: bool | None = None
+        self._follow_foreground_cached_at_ms: int | None = None
+        self._follow_foreground_cached_result: tuple[bool, str] | None = None
         self._follow_last_visual_positions: dict[str, tuple[float, float]] = {}
         self._follow_last_visual_at_ms: dict[str, int] = {}
         # A rejected visual observation must be evaluated at most once.  The
@@ -297,6 +301,7 @@ class Poe2CaptureTestPage(QWidget):
         # and command predictor continue using bounded estimates.
         self._follow_recovery_pending = False
         self._follow_recovery_retry_scheduled = False
+        self._follow_recovery_retry_delay_ms = 0
         # A single visual mismatch must create one recovery episode.  The
         # page-level time cooldown still protects the shared worker, but this
         # session-level edge prevents every follow tick from re-entering the
@@ -1740,6 +1745,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason = None
         self._follow_recovery_episode_suppressed = 0
+        self._follow_recovery_retry_delay_ms = 0
 
     def _continue_live_follow_after_dual_failure(
         self, reason: str, error: Exception | None = None,
@@ -1828,6 +1834,24 @@ class Poe2CaptureTestPage(QWidget):
         result = worker.take_latest()
         if result is None:
             return
+        if self._follow_live_mode and self._follow_runtime is not None:
+            foreground, foreground_reason = self._refresh_follow_game_window()
+            if not foreground:
+                # Do not let a browser/Workbench frame become the latest
+                # localization state.  The normal follow tick will hold the
+                # output at the foreground gate and wait for a real PoE2
+                # frame, instead of counting this frame as marker loss.
+                self._logger.warning(
+                    "step=dual_motion.capture_frame_ignored reason=%s "
+                    "captured_at_ms=%s pid=%s hwnd=%s",
+                    foreground_reason,
+                    result.captured_at_ms,
+                    self._follow_game_pid,
+                    self._follow_game_hwnd,
+                )
+                if self._follow_program_output is not None:
+                    self._follow_program_output.release_all()
+                return
         state = result.state
         self._dual_motion_frame_count += 1
         self._latest_dual_state = state
@@ -1941,6 +1965,19 @@ class Poe2CaptureTestPage(QWidget):
             raw = self.preview_provider(self.monitor_config)
             if raw is None:
                 raise RuntimeError("截图后端返回空帧")
+            if self._follow_live_mode and self._follow_runtime is not None:
+                foreground, foreground_reason = self._refresh_follow_game_window()
+                if not foreground:
+                    self._logger.warning(
+                        "step=dual_motion.capture_frame_ignored reason=%s "
+                        "pid=%s hwnd=%s",
+                        foreground_reason,
+                        self._follow_game_pid,
+                        self._follow_game_hwnd,
+                    )
+                    if self._follow_program_output is not None:
+                        self._follow_program_output.release_all()
+                    return
             capture_elapsed_ms = (time.perf_counter() - tick_started) * 1000.0
             captured_at_ms = int(time.time() * 1000)
             # Reuse the wall preprocessing result for the preview instead of
@@ -3311,6 +3348,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_rejected_visual = {}
         self._follow_recovery_pending = False
         self._follow_recovery_retry_scheduled = False
+        self._follow_recovery_retry_delay_ms = 0
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason = None
         self._follow_recovery_episode_suppressed = 0
@@ -3345,6 +3383,8 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_foreground_wait_started_ms = None
         self._follow_foreground_last_log_at_ms = None
         self._follow_foreground_release_sent = False
+        self._follow_foreground_cached_at_ms = None
+        self._follow_foreground_cached_result = None
         self._follow_last_visual_positions = {}
         self._follow_last_visual_at_ms = {}
         self._follow_last_evaluated_visual_at_ms = {}
@@ -3750,6 +3790,8 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_foreground_wait_started_ms = None
         self._follow_foreground_last_log_at_ms = None
         self._follow_foreground_release_sent = False
+        self._follow_foreground_cached_at_ms = None
+        self._follow_foreground_cached_result = None
         self._follow_runtime = None
         self._follow_target_display = None
         self._last_follow_observations = {}
@@ -4102,6 +4144,15 @@ class Poe2CaptureTestPage(QWidget):
         override = self._follow_foreground_check_override
         if override is not None:
             return bool(override), "test_override"
+        now_ms = int(time.time() * 1000)
+        cached_at_ms = self._follow_foreground_cached_at_ms
+        cached_result = self._follow_foreground_cached_result
+        if (
+            cached_at_ms is not None
+            and cached_result is not None
+            and now_ms - cached_at_ms < self._FOLLOW_FOREGROUND_CACHE_MS
+        ):
+            return cached_result
         try:
             pid = int(find_process_id())
             window = find_process_window(pid, title_substring="Path of Exile 2")
@@ -4111,16 +4162,26 @@ class Poe2CaptureTestPage(QWidget):
             )
             self._follow_game_pid = None
             self._follow_game_hwnd = None
-            return False, "window_lookup_failed"
+            result = (False, "window_lookup_failed")
+            self._follow_foreground_cached_at_ms = now_ms
+            self._follow_foreground_cached_result = result
+            return result
         if window is None:
             self._follow_game_pid = pid
             self._follow_game_hwnd = None
-            return False, "window_not_found"
+            result = (False, "window_not_found")
+            self._follow_foreground_cached_at_ms = now_ms
+            self._follow_foreground_cached_result = result
+            return result
         self._follow_game_pid = pid
         self._follow_game_hwnd = int(window.hwnd)
         if not is_process_foreground(pid):
-            return False, "poe2_not_foreground"
-        return True, "foreground"
+            result = (False, "poe2_not_foreground")
+        else:
+            result = (True, "foreground")
+        self._follow_foreground_cached_at_ms = now_ms
+        self._follow_foreground_cached_result = result
+        return result
 
     def _gate_live_follow_foreground(
         self, *, state: Any, captured_at_ms: int | None, now_ms: int,
@@ -4945,22 +5006,48 @@ class Poe2CaptureTestPage(QWidget):
             # means that the map anchor is lost; wait for the leader to move
             # beyond resume_radius and let the normal runtime transition back
             # to PROGRAM_READY.
-            if not live_sync_pending and not self._follow_recovery_pending and any(
-                role.actor_id in self._follow_occluded_roles
-                and not self._is_normal_follow_hold(observations[role.key])
-                and (
-                    observations[role.key].state in {FollowState.BLOCKED, FollowState.WAITING_POSITION}
-                    or observations[role.key].vector == (0.0, 0.0)
-                )
-                for role in self._follow_program_roles
-            ):
+            # An occluded role with a zero vector is not sufficient evidence
+            # for global recovery.  In particular, a valid character can be
+            # reported on a wall cell when the native/map transform is one
+            # grid off; the motion diagnostics may still say
+            # ``progress_observed``.  Re-anchor only when the movement layer
+            # explicitly reports contact/no-progress recovery evidence.
+            unsafe_occluded_roles = []
+            for role in self._follow_program_roles:
+                observation = observations[role.key]
+                contact = observation.diagnostics.get("contact_evidence") or {}
+                if not isinstance(contact, Mapping):
+                    contact = {}
+                if (
+                    role.actor_id in self._follow_occluded_roles
+                    and not self._is_normal_follow_hold(observation)
+                    and (
+                        observation.diagnostics.get("relocalization_requested", False)
+                        or bool(contact.get("recovery_required", False))
+                    )
+                ):
+                    unsafe_occluded_roles.append(role)
+            if not live_sync_pending and not self._follow_recovery_pending and unsafe_occluded_roles:
                 self._logger.warning(
                     "step=follow_experiment.tick_end attempt=%s outcome=reanchor "
                     "reason=occluded_role_has_no_safe_candidate occluded=%s observations=%s",
-                    tick_attempt, self._follow_occluded_roles, observations,
+                    tick_attempt,
+                    tuple(role.actor_id for role in unsafe_occluded_roles),
+                    observations,
                 )
                 self._request_live_follow_reanchor("occluded_role_has_no_safe_candidate")
                 return
+            if (
+                not live_sync_pending
+                and not self._follow_recovery_pending
+                and self._follow_occluded_roles
+                and not unsafe_occluded_roles
+            ):
+                self._logger.info(
+                    "step=live_role_follow.occlusion_held reason=no_recovery_evidence "
+                    "occluded=%s",
+                    self._follow_occluded_roles,
+                )
         if self._follow_program_output is not None and not live_sync_pending:
             try:
                 for role in self._follow_program_roles:
@@ -5366,9 +5453,15 @@ class Poe2CaptureTestPage(QWidget):
         ):
             return
         self._follow_recovery_retry_scheduled = True
+        # Global dual-player registration is expensive. Back off failed
+        # attempts instead of starting another computation every second.
+        delay_ms = self._follow_recovery_retry_delay_ms or 5_000
+        delay_ms = min(15_000, max(5_000, int(delay_ms)))
+        self._follow_recovery_retry_delay_ms = min(15_000, delay_ms * 2)
         self._logger.info(
-            "step=live_role_follow.recovery_retry_scheduled reason=%s delay_ms=1000",
-            reason,
+            "step=live_role_follow.recovery_retry_scheduled reason=%s "
+            "delay_ms=%s next_delay_ms=%s",
+            reason, delay_ms, self._follow_recovery_retry_delay_ms,
         )
 
         def retry() -> None:
@@ -5381,7 +5474,7 @@ class Poe2CaptureTestPage(QWidget):
                 return
             self._start_dual_motion(recovery=True, preserve_follow=True)
 
-        QTimer.singleShot(1_000, retry)
+        QTimer.singleShot(delay_ms, retry)
 
     def _claim_dual_recovery(self, *, reason: str) -> bool:
         """Claim the single page-level recovery budget for one re-anchor."""

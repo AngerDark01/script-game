@@ -2566,6 +2566,14 @@ step=follow_experiment.stopped reason=tick_exception:TypeError
   `_follow_recovery_retry_scheduled` 防止每个 tick 重复排队，episode 锁不会把恢复能力永久吞掉。
 - 最新验证：页面 focused suite `87 passed`，相关 PoE2 suite 先前 `396 passed`；新增 retry 保持逻辑的三项
   恢复回归通过，未发送真实输入。
-\n+## 2026-10-06 — 实机 session 1a10dbac8d6-15ea0f8d610 重定位取证（只读）\n+\n+本轮没有修改代码，也没有发送真实输入。最新 session 在 04:21:47-04:24:20 期间触发了三次独立恢复 episode：\n+\n+1. 04:22:38 `repeated_visual_innovation_rejected`：跟随角色最后有效视觉帧为\n+   `captured_at_ms=1791231752079`，随后约 6.1 秒没有新鲜位置。新帧仍在\n+   `(625.34,1034.64)` 附近，而命令预测已到 `(642.67,1046.37)`，innovation 约\n+   `20.1-20.6`，连续 3 次拒绝后恢复。日志同时记录 `visual_hold` /\n+   `unchanged_marker_after_output`，因此这是视觉采集停滞或角色图标未更新造成的误恢复，\n+   不是单纯首帧匹配失败。该触发时没有保存同一 `failed_frame_id` 的 raw 快照；恢复完成后的\n+   最近证据帧在 `data/poe2_live_terrain_test/occlusion_diagnostics/1791231778856-1791231778856-5b9997ec`。\n+   恢复耗时约 19.6 秒，`dual_first_frame.worker_result elapsed_ms=19555.6`。\n+\n+2. 04:23:11 `occluded_role_has_no_safe_candidate`：日志中 P1 位置\n+   `(657.55,925.19)` 被地图判为 `wall=255, collision=255, clearance=0`，P2 目标也无可接受路线；\n+   但 `contact_evidence.reason=progress_observed`，并非确认撞墙。该 episode 更像是定位坐标/\n+   地图变换与墙体栅格的边界不一致，导致“角色实际可走”被错误归类为无安全候选。相关证据帧：\n+   `.../1791231791037-1791231791037-70447db5` 和\n+   `.../1791231791137-1791231791137-b55eccff`。第二次恢复耗时约 18.8 秒，\n+   `dual_first_frame.worker_result elapsed_ms=18828.4`。\n+\n+3. 04:24:11 `motion:markers_missing`：失败帧 `1791231851519` 的 `raw.png` 实际内容是\n+   浏览器页面而不是 PoE2 小地图；对应目录为\n+   `.../1791231851519-1791231851519-1886f557`，`mask_0.png` 与 `mask_1.png` 均为空。\n+   这次是截图源/前台窗口边界问题，不能用视觉阈值或重定位参数解决。用户主动停止发生在\n+   恢复完成前，因此这次没有 `worker_result`。\n+\n+当前诊断结论：本 session 的三次恢复分别属于“采集帧停滞”“坐标落在错误墙体栅格”“截图抓到非游戏窗口”，不是同一根因。恢复速度主要由双人首帧全局匹配耗时决定（约 18.8-19.6 秒）；降低频率应先阻止这三类误触发，不能直接放宽统一阈值。后续优化前必须分别验证：新鲜帧时间连续性、坐标/墙体边界一致性、截图前台窗口身份。\n+
-
 补充：第三次 episode 虽只有一次 `recovery_claimed`，但恢复 worker 未出结果时从 04:24:11.662 到 04:24:19.241 约每 1.1 秒再次 `dual_first_frame.compute_started`，共 8 次。说明当前 episode 去重没有覆盖失败重试调度，后续需要单独限制恢复 worker 的重试节奏和并发。
+
+### 2026-10-06 — 实机恢复边界修复（代码与验证）
+
+- 已将视觉停滞恢复门从 1.5 秒延长到 8 秒，短暂截图停顿只释放当前输出并保留预测，不立即启动昂贵的全局重定位。
+- 恢复失败重试改为 5 秒起步、指数退避、最长 15 秒；同一恢复 episode 仍只有一个 retry owner，避免每秒重复启动全局匹配。
+- `occluded_role_has_no_safe_candidate` 仅在定位器明确给出 `relocalization_requested` 或运动层给出 `contact_evidence.recovery_required` 时触发；`progress_observed`、墙体栅格边界误差等证据只保持会话并继续预测。
+- 实时跟随处理 worker 帧前校验 PoE2 前台窗口；浏览器/工作台帧记录 `capture_frame_ignored` 并丢弃，不污染最新定位状态。
+- 前台窗口查询增加 250ms 缓存，worker drain 与跟随 tick 共用一次结果，避免 30fps 下重复做进程/窗口查询；跟随启动和停止时清空缓存。
+- 修正兼容边界：`contact_evidence=None` 或非映射值按“没有恢复证据”处理，不能使跟随 tick 抛出异常。
+- 聚焦回归：页面与双人跟随/运动测试 `172 passed`；`compileall` 和 `git diff --check` 通过；尚未发送真实输入。后续实机只观察：同一 episode 是否只申请一次恢复、重试是否按退避、非游戏前台帧是否被忽略、`progress_observed` 是否不再触发全局定位。
