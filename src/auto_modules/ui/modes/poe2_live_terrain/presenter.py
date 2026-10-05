@@ -293,6 +293,39 @@ def localization_display_point(point, *, source_size: tuple[int, int], transform
     return x, y
 
 
+def localization_source_point(point, *, source_size: tuple[int, int], transform=None) -> tuple[float, float]:
+    """Inverse of :func:`localization_display_point` for map clicks.
+
+    The map widget reports coordinates in the currently displayed pixmap.  A
+    registration transform may rotate and reflect that pixmap, so click
+    targets must be brought back into the canonical map coordinate system
+    before path planning.
+    """
+    x, y = float(point[0]), float(point[1])
+    if transform is None:
+        return x, y
+    angle = float(getattr(transform, "angle_degrees", 0.0))
+    reflected = bool(getattr(transform, "reflect_horizontal", False))
+    width, height = int(source_size[0]), int(source_size[1])
+    if abs(angle) <= 1e-3:
+        if reflected:
+            x = float(width - 1) - x
+        return x, y
+    center = (width / 2.0, height / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, -angle, 1.0)
+    cos_value = abs(float(matrix[0, 0]))
+    sin_value = abs(float(matrix[0, 1]))
+    bound_width = max(1, int(round(height * sin_value + width * cos_value)))
+    bound_height = max(1, int(round(height * cos_value + width * sin_value)))
+    matrix[0, 2] += bound_width / 2.0 - center[0]
+    matrix[1, 2] += bound_height / 2.0 - center[1]
+    if reflected:
+        x = float(bound_width - 1) - x
+    inverse = cv2.invertAffineTransform(matrix)
+    mapped = inverse @ np.array([x, y, 1.0], dtype=np.float64)
+    return float(mapped[0]), float(mapped[1])
+
+
 def _pixmap_rgb_array(pixmap: QPixmap) -> np.ndarray:
     image = pixmap.toImage().convertToFormat(QImage.Format_RGBA8888)
     size = image.sizeInBytes()
@@ -327,8 +360,12 @@ def _apply_inverse_registration_transform(pixmap: QPixmap, transform) -> QPixmap
     if reflected:
         array = np.fliplr(array)
     height, width = array.shape[:2]
+    # Keep a named owner alive until Qt has detached the image.  Passing the
+    # ``.data`` attribute of a temporary NumPy array directly into QImage can
+    # leave Qt6Gui with a dangling pointer during repeated preview updates.
+    owned_array = np.ascontiguousarray(array)
     image = QImage(
-        np.ascontiguousarray(array).data,
+        owned_array.data,
         width,
         height,
         width * 3,
@@ -348,10 +385,35 @@ def frame_pixmap(frame) -> QPixmap:
     array = np.asarray(frame)
     if array.size == 0 or array.ndim not in (2, 3):
         return QPixmap()
+    # QImage borrows the NumPy memory while it is being constructed.  Captures
+    # and image transforms can return a view with a negative or non-contiguous
+    # stride (for example ``np.fliplr``); passing that view directly to Qt
+    # raises BufferError and, with some Qt versions, can become a native GUI
+    # access violation.  Normalize both layout and element width before the
+    # borrowed-memory construction, then detach with ``copy`` below.
+    if array.dtype != np.uint8:
+        array = np.asarray(array, dtype=np.uint8)
+    array = np.ascontiguousarray(array)
     if array.ndim == 2:
         image = QImage(array.data, array.shape[1], array.shape[0], array.strides[0], QImage.Format_Grayscale8)
     elif array.shape[2] == 4:
         image = QImage(array.data, array.shape[1], array.shape[0], array.strides[0], QImage.Format_RGBA8888)
+    elif array.shape[2] == 3:
+        # Normalize captured BGR frames to RGB before handing them to Qt.
+        # Qt6Gui's BGR888 conversion has had native access violations on
+        # repeated QPixmap updates on Windows; the explicit detached RGB
+        # buffer keeps the GUI boundary format unambiguous.
+        rgb_array = np.ascontiguousarray(array[:, :, ::-1])
+        image = QImage(
+            rgb_array.data,
+            rgb_array.shape[1],
+            rgb_array.shape[0],
+            rgb_array.strides[0],
+            QImage.Format_RGB888,
+        )
     else:
-        image = QImage(array.data, array.shape[1], array.shape[0], array.strides[0], QImage.Format_BGR888)
+        # Never let an unsupported channel count reach a Qt format that would
+        # read past each row (a malformed provider frame must be rejected at
+        # the adapter boundary, not crash Qt6Gui).
+        return QPixmap()
     return QPixmap.fromImage(image.copy())

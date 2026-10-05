@@ -1,12 +1,12 @@
 {
   "tool": "auto-modules-poe2-terrain-debug-archive",
-  "saved_at": "2026-09-25T02:40:48.629487+00:00",
+  "saved_at": "2026-09-28T06:33:51.269225+00:00",
   "source_tool": "manual-live-terrain-capture",
-  "area_id": "MapFlotsam",
-  "area_hash": "73681455",
-  "instance_id": "MapFlotsam:73681455",
-  "width": 2416,
-  "height": 2415,
-  "captured_at": "2026-09-25T02:40:46.785449+00:00",
+  "area_id": "P2_7",
+  "area_hash": "54BE4D92",
+  "instance_id": "P2_7:54BE4D92",
+  "width": 2784,
+  "height": 2093,
+  "captured_at": "2026-09-28T06:30:23.959355+00:00",
   "native_grid": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\latest.npz"
 }

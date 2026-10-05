@@ -8,10 +8,19 @@ def map_to_grid(pos, downsample_factor: int) -> tuple[int, int]:
 
 
 def grid_size_from_map_shape(shape, downsample_factor: int) -> tuple[int, int]:
-    """Return downsampled grid size as (width, height)."""
+    """Return a complete downsampled grid size as ``(width, height)``.
+
+    ``ceil`` is intentional: a native map whose width/height is not an exact
+    multiple of the downsample factor still has a valid border corridor.  The
+    previous floor conversion silently discarded that strip, which could make
+    a target near the edge appear unreachable or force a route through a
+    neighbouring wall cell.
+    """
+    import math
+
     h, w = shape[:2]
     factor = max(1, int(downsample_factor))
-    return w // factor, h // factor
+    return max(1, math.ceil(w / factor)), max(1, math.ceil(h / factor))
 
 
 def in_grid_bounds(grid_pos, grid_w: int, grid_h: int) -> bool:

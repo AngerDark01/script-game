@@ -1,0 +1,439 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-22T13:07:22.105122+00:00",
+  "sample": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\samples\\20260922-043532-966126-MapFlotsam-1E44BF94",
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\nav-compatible-20260922",
+  "map_instance": {
+    "status": "available",
+    "area_id": "MapFlotsam",
+    "area_hash": "1E44BF94",
+    "instance_id": "MapFlotsam:1E44BF94",
+    "width": 2416,
+    "height": 2277,
+    "captured_at": "2026-09-22T04:35:04.440762+00:00"
+  },
+  "player_local_position": [
+    100.0,
+    100.0
+  ],
+  "recognizer_params": {
+    "wall_hsv_min": [
+      22,
+      207,
+      0
+    ],
+    "wall_hsv_max": [
+      32,
+      247,
+      255
+    ],
+    "fog_hsv_min": [
+      91,
+      174,
+      188
+    ],
+    "fog_hsv_max": [
+      108,
+      243,
+      255
+    ],
+    "player_hsv_min": [
+      0,
+      235,
+      235
+    ],
+    "player_hsv_max": [
+      10,
+      255,
+      255
+    ],
+    "enable_wall": true,
+    "enable_fog": false,
+    "clahe_enabled": false,
+    "deepen_enabled": false,
+    "gamma_enabled": true,
+    "tophat_enabled": true,
+    "sat_filter_enabled": true,
+    "clahe_clip": 3.0,
+    "clahe_grid": 4,
+    "deepen_factor": 1.0,
+    "blue_boost": 1.0,
+    "gamma_value": 2.0,
+    "tophat_strength": 4,
+    "tophat_kernel_size": 13,
+    "trans_sat_penalty": 1.5,
+    "trans_wall_thresh": 54,
+    "transparent_mode": true,
+    "sat_filter_thresh": 45,
+    "sat_filter_radius": 1,
+    "player_clear_radius": 22,
+    "wall_weight": 44,
+    "edge_weight": 29,
+    "edge_low": 50,
+    "edge_high": 150,
+    "kernel_small_size": 3,
+    "kernel_medium_size": 5
+  },
+  "parameter_overrides": {},
+  "probe_config": {
+    "angles": [
+      0.0,
+      45.0,
+      90.0,
+      135.0,
+      180.0,
+      225.0,
+      270.0,
+      315.0
+    ],
+    "reflect_horizontal": [
+      false,
+      true
+    ],
+    "scales": [
+      0.35,
+      0.45,
+      0.55,
+      0.65,
+      0.75,
+      0.85,
+      0.95,
+      1.05,
+      1.15,
+      1.25,
+      1.35,
+      1.45,
+      1.55,
+      1.65,
+      1.75,
+      1.85,
+      1.95,
+      2.05,
+      2.15,
+      2.25,
+      2.35,
+      2.45
+    ],
+    "coarse_factor": 0.25,
+    "coarse_per_variant": 2,
+    "coarse_keep": 24,
+    "refine_angle_offsets": [
+      -4.0,
+      0.0,
+      4.0
+    ],
+    "refine_scale_offsets": [
+      -0.04,
+      0.0,
+      0.04
+    ],
+    "refine_radius": 48,
+    "match_tolerance": 3.0,
+    "reverse_tolerance": 3.0,
+    "min_component_area": 20,
+    "min_component_span": 24,
+    "player_clear_radius": 22,
+    "terrain_border_clear": 2,
+    "min_template_edge_pixels": 120,
+    "acceptance_score": 0.72,
+    "acceptance_margin": 0.05,
+    "max_results": 10,
+    "min_spatial_separation": 42.0,
+    "player_position_hint": null,
+    "player_position_radius": null,
+    "coarse_player_walkable_radius": 2
+  },
+  "features": {
+    "stored_nonzero": 2550,
+    "rebuilt_nonzero": 2550,
+    "stored_rebuilt_equal": false,
+    "stored_rebuilt_support_equal": true,
+    "cleaned_nonzero": 2543,
+    "local_walkable_nonzero": 9531,
+    "terrain_edge_nonzero": 82149,
+    "components": [
+      {
+        "label": 1,
+        "area": 2543,
+        "bbox": [
+          10,
+          5,
+          190,
+          152
+        ],
+        "touches_border": true,
+        "kept": true
+      },
+      {
+        "label": 4,
+        "area": 4,
+        "bbox": [
+          121,
+          21,
+          1,
+          4
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 2,
+        "area": 1,
+        "bbox": [
+          113,
+          19,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 3,
+        "area": 1,
+        "bbox": [
+          116,
+          21,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 5,
+        "area": 1,
+        "bbox": [
+          23,
+          124,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      }
+    ]
+  },
+  "result": {
+    "candidate_count": 10,
+    "top_score": 0.7467382043426494,
+    "second_score": 0.7339796491330401,
+    "score_margin": 0.012758555209609224,
+    "accepted": false,
+    "rejection_reasons": [
+      "ambiguous_top_candidates"
+    ],
+    "candidates": [
+      {
+        "angle": 0.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1849,
+          1623
+        ],
+        "player_position": [
+          1879.69,
+          1654.0
+        ],
+        "mean_distance": 1.667076587677002,
+        "forward_coverage": 0.8073770491803278,
+        "reverse_coverage": 0.6409691629955947,
+        "walkable_coverage": 0.8123644251626898,
+        "player_on_walkable": true,
+        "score": 0.7467382043426494,
+        "edge_pixels": 244,
+        "rank": 1
+      },
+      {
+        "angle": 315.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1885,
+          1565
+        ],
+        "player_position": [
+          1928.491,
+          1608.71
+        ],
+        "mean_distance": 1.6496338844299316,
+        "forward_coverage": 0.8173913043478261,
+        "reverse_coverage": 0.39191073919107394,
+        "walkable_coverage": 0.8563656147986942,
+        "player_on_walkable": true,
+        "score": 0.7339796491330401,
+        "edge_pixels": 230,
+        "rank": 2
+      },
+      {
+        "angle": 45.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1821,
+          1565
+        ],
+        "player_position": [
+          1864.929,
+          1608.71
+        ],
+        "mean_distance": 1.7296147346496582,
+        "forward_coverage": 0.8138528138528138,
+        "reverse_coverage": 0.38816738816738816,
+        "walkable_coverage": 0.8369565217391305,
+        "player_on_walkable": true,
+        "score": 0.7238772866220876,
+        "edge_pixels": 231,
+        "rank": 3
+      },
+      {
+        "angle": 4.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1548,
+          477
+        ],
+        "player_position": [
+          1581.18,
+          510.159
+        ],
+        "mean_distance": 2.1424083709716797,
+        "forward_coverage": 0.7679324894514767,
+        "reverse_coverage": 0.6335540838852097,
+        "walkable_coverage": 0.8443708609271523,
+        "player_on_walkable": true,
+        "score": 0.7231126579536814,
+        "edge_pixels": 237,
+        "rank": 4
+      },
+      {
+        "angle": 90.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1488,
+          295
+        ],
+        "player_position": [
+          1519.0,
+          325.69
+        ],
+        "mean_distance": 2.026841878890991,
+        "forward_coverage": 0.7377049180327869,
+        "reverse_coverage": 0.6083150984682714,
+        "walkable_coverage": 0.8438177874186551,
+        "player_on_walkable": true,
+        "score": 0.7106947625784336,
+        "edge_pixels": 244,
+        "rank": 5
+      },
+      {
+        "angle": 274.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1969,
+          882
+        ],
+        "player_position": [
+          2001.85,
+          914.871
+        ],
+        "mean_distance": 2.0362155437469482,
+        "forward_coverage": 0.7682403433476395,
+        "reverse_coverage": 0.5341880341880342,
+        "walkable_coverage": 0.8178807947019867,
+        "player_on_walkable": true,
+        "score": 0.7070762982303732,
+        "edge_pixels": 233,
+        "rank": 6
+      },
+      {
+        "angle": 131.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1961,
+          1142
+        ],
+        "player_position": [
+          2004.929,
+          1185.725
+        ],
+        "mean_distance": 2.300612688064575,
+        "forward_coverage": 0.7261410788381742,
+        "reverse_coverage": 0.34965986394557824,
+        "walkable_coverage": 0.8647764449291166,
+        "player_on_walkable": true,
+        "score": 0.6726793889883692,
+        "edge_pixels": 241,
+        "rank": 7
+      },
+      {
+        "angle": 311.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1127,
+          384
+        ],
+        "player_position": [
+          1170.695,
+          427.929
+        ],
+        "mean_distance": 2.5379459857940674,
+        "forward_coverage": 0.7041666666666667,
+        "reverse_coverage": 0.411144578313253,
+        "walkable_coverage": 0.8689057421451788,
+        "player_on_walkable": true,
+        "score": 0.6656253907520346,
+        "edge_pixels": 240,
+        "rank": 8
+      },
+      {
+        "angle": 49.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1063,
+          514
+        ],
+        "player_position": [
+          1106.929,
+          557.695
+        ],
+        "mean_distance": 2.6020522117614746,
+        "forward_coverage": 0.6708333333333333,
+        "reverse_coverage": 0.3153409090909091,
+        "walkable_coverage": 0.8516902944383861,
+        "player_on_walkable": true,
+        "score": 0.6336755195643659,
+        "edge_pixels": 240,
+        "rank": 9
+      },
+      {
+        "angle": 90.0,
+        "reflect_horizontal": true,
+        "scale": 0.38999999999999996,
+        "top_left": [
+          540,
+          369
+        ],
+        "player_position": [
+          579.0,
+          408.0
+        ],
+        "mean_distance": 2.976935386657715,
+        "forward_coverage": 0.6534653465346535,
+        "reverse_coverage": 0.4560117302052786,
+        "walkable_coverage": 0.8309178743961353,
+        "player_on_walkable": true,
+        "score": 0.6285632192917708,
+        "edge_pixels": 404,
+        "rank": 10
+      }
+    ]
+  }
+}

@@ -160,6 +160,30 @@ def test_monitor_refresh_builds_one_synchronized_evidence_frame(tmp_path):
     assert not window.terrain_preview.pixmap().isNull()
 
 
+def test_monitor_previews_resize_with_window_and_panels_are_draggable(tmp_path):
+    app = _app()
+    window = Poe2CaptureMonitorWindow(
+        preview_provider=lambda config: np.full((80, 80, 3), 7, dtype=np.uint8),
+        recognizer=FakeRecognizer(),
+        monitor_config_provider=_config,
+        terrain_snapshot_provider=_terrain,
+        sample_archive=CaptureSampleArchive(tmp_path / "samples"),
+        stitching_session=FakeStitchingSession(),
+        stitching_archive=FakeStitchingArchive(tmp_path / "stitching"),
+    )
+    window.resize(1500, 920)
+    window.show()
+    app.processEvents()
+    window.refresh_frame()
+    before = window.raw_preview.pixmap().size()
+    window.resize(1900, 1100)
+    app.processEvents()
+    assert window.raw_preview.pixmap().width() > before.width()
+    assert window.workspace_splitter.count() == 2
+    assert window.content_splitter.count() == 2
+    window.close()
+
+
 def test_saved_sample_includes_initial_memory_position(tmp_path):
     _app()
     position = PlayerPositionSample.from_world(

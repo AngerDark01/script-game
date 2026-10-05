@@ -13,7 +13,15 @@ from auto_modules.core.perception.preprocessing.masks import (
 )
 
 
-def extract_combined_masks(recognizer, img, player_pos=None, *, processed_for_wall=None):
+def extract_combined_masks(
+    recognizer,
+    img,
+    player_pos=None,
+    *,
+    processed_for_wall=None,
+    exclude_player=True,
+    exclude_dynamic=True,
+):
     img_wall_processed = (
         processed_for_wall
         if processed_for_wall is not None
@@ -25,7 +33,7 @@ def extract_combined_masks(recognizer, img, player_pos=None, *, processed_for_wa
     gray = to_gray(img_wall_processed)
     edges = canny_edges(gray, low=recognizer.edge_low, high=recognizer.edge_high)
 
-    if recognizer.sat_filter_enabled:
+    if exclude_dynamic and recognizer.sat_filter_enabled:
         dynamic_mask = dynamic_color_mask(recognizer, img, player_pos=player_pos)
         wall_mask[dynamic_mask] = 0
         fog_mask[dynamic_mask] = 0
@@ -37,7 +45,7 @@ def extract_combined_masks(recognizer, img, player_pos=None, *, processed_for_wa
     else:
         cx, cy = w // 2, h // 2
 
-    radius = int(recognizer.player_clear_radius)
+    radius = int(recognizer.player_clear_radius) if exclude_player else 0
     if radius > 0:
         player_exclusion = circle_mask(
             wall_mask.shape,

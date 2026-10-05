@@ -131,6 +131,34 @@ def test_background_monitor_does_not_block_and_discards_stopped_result(tmp_path)
     page.deleteLater()
 
 
+def test_page_retains_localization_worker_when_bounded_stop_times_out(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    store = Poe2MonitorConfigStore(tmp_path)
+    store.save(store.load().__class__(binding=MonitorBinding(CaptureRect(0, 0, 8, 8))))
+    page = Poe2LiveTerrainPage(service=Service(), runtime=Runtime(), config_store=store)
+
+    class SlowWorker:
+        generation = 7
+        is_running = True
+
+        def stop(self):
+            return None
+
+        def wait(self, timeout_ms):
+            assert timeout_ms == 3000
+            return False
+
+    worker = SlowWorker()
+    page._localization_worker = worker
+    page.stop_monitoring()
+
+    assert page._localization_worker is None
+    assert page._retired_localization_workers == [worker]
+    page._on_worker_finished(worker.generation, worker)
+    assert page._retired_localization_workers == []
+    page.deleteLater()
+
+
 def test_page_pauses_terminal_recovery_and_retry_restarts_timer(tmp_path):
     app = QApplication.instance() or QApplication([])
     store = Poe2MonitorConfigStore(tmp_path)

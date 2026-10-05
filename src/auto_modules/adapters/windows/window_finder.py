@@ -24,6 +24,7 @@ class WindowInfo:
     title: str
     class_name: str
     rect: dict[str, int]
+    pid: int | None = None
 
 
 def set_process_dpi_awareness() -> str:
@@ -54,6 +55,8 @@ def find_game_window(title_substring: str = "Torchlight", class_substring: str =
     user32.GetClassNameW.restype = ctypes.c_int
     user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
     user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
     title_need = title_substring.lower().strip()
     class_need = class_substring.lower().strip()
@@ -68,7 +71,9 @@ def find_game_window(title_substring: str = "Torchlight", class_substring: str =
         if _matches_window(title, class_name, title_need, class_need):
             rect = _window_rect(user32, int(hwnd))
             if rect:
-                matches.append(WindowInfo(int(hwnd), title, class_name, rect))
+                owner = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                matches.append(WindowInfo(int(hwnd), title, class_name, rect, int(owner.value)))
         return True
 
     user32.EnumWindows(enum_proc, 0)
@@ -76,6 +81,66 @@ def find_game_window(title_substring: str = "Torchlight", class_substring: str =
         return None
     matches.sort(key=lambda item: item.rect["width"] * item.rect["height"], reverse=True)
     return matches[0]
+
+
+def find_process_window(pid: int, *, title_substring: str = "") -> WindowInfo | None:
+    """Find a visible top-level window owned by the process without focusing it."""
+    if os.name != "nt" or int(pid) <= 0:
+        return None
+    user32 = ctypes.windll.user32
+    enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [enum_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    matches: list[WindowInfo] = []
+    title_need = title_substring.lower().strip()
+
+    @enum_type
+    def enum_proc(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        owner = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if int(owner.value) != int(pid):
+            return True
+        title = _get_window_text(user32, int(hwnd))
+        if title_need and title_need not in title.lower():
+            return True
+        class_name = _get_class_name(user32, int(hwnd))
+        rect = _window_rect(user32, int(hwnd))
+        if rect:
+            matches.append(WindowInfo(int(hwnd), title, class_name, rect, int(owner.value)))
+        return True
+
+    user32.EnumWindows(enum_proc, 0)
+    if not matches:
+        return None
+    matches.sort(key=lambda item: item.rect["width"] * item.rect["height"], reverse=True)
+    return matches[0]
+
+
+def foreground_window_pid() -> int | None:
+    """Return the PID of the current foreground window without changing focus."""
+    if os.name != "nt":
+        return None
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return int(pid.value) or None
+
+
+def is_process_foreground(pid: int) -> bool:
+    """Check foreground ownership only; never focuses or moves the cursor."""
+    return foreground_window_pid() == int(pid)
 
 
 def _matches_window(title: str, class_name: str, title_substring: str, class_substring: str) -> bool:

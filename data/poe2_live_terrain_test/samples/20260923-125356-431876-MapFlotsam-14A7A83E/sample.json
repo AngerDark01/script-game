@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "saved_at": "2026-09-23T12:54:01.042158+00:00",
+  "captured_at": "2026-09-23T12:53:56.431876+00:00",
+  "monitor_config": {
+    "binding": {
+      "rect": {
+        "left": 2249,
+        "top": 107,
+        "width": 200,
+        "height": 200
+      },
+      "screen_id": "primary",
+      "coordinate_space": "physical_desktop",
+      "dpi_scale_x": 1.5,
+      "dpi_scale_y": 1.5,
+      "player_marker_position": [
+        100,
+        100
+      ]
+    },
+    "search_radius": 92,
+    "match_threshold": 0.72,
+    "sample_interval_ms": 33,
+    "profile_id": "a6ccb4c6767e",
+    "profile_name": "默认配置",
+    "selection_mode": "center",
+    "capture_size": 200,
+    "shape": "square",
+    "circle_radius": 160.0,
+    "recognizer_params": {
+      "wall_hsv_min": [
+        22,
+        207,
+        0
+      ],
+      "wall_hsv_max": [
+        32,
+        247,
+        255
+      ],
+      "fog_hsv_min": [
+        91,
+        174,
+        188
+      ],
+      "fog_hsv_max": [
+        108,
+        243,
+        255
+      ],
+      "player_hsv_min": [
+        0,
+        235,
+        235
+      ],
+      "player_hsv_max": [
+        10,
+        255,
+        255
+      ],
+      "enable_wall": true,
+      "enable_fog": false,
+      "clahe_enabled": false,
+      "deepen_enabled": false,
+      "gamma_enabled": true,
+      "tophat_enabled": true,
+      "sat_filter_enabled": true,
+      "clahe_clip": 3.0,
+      "clahe_grid": 4,
+      "deepen_factor": 1.0,
+      "blue_boost": 1.0,
+      "gamma_value": 2.0,
+      "tophat_strength": 4,
+      "tophat_kernel_size": 13,
+      "trans_sat_penalty": 1.5,
+      "trans_wall_thresh": 54,
+      "transparent_mode": true,
+      "sat_filter_thresh": 45,
+      "sat_filter_radius": 1,
+      "player_clear_radius": 22,
+      "wall_weight": 44,
+      "edge_weight": 29,
+      "edge_low": 50,
+      "edge_high": 150,
+      "kernel_small_size": 3,
+      "kernel_medium_size": 5
+    },
+    "stitcher_params": {
+      "conf_thresh": 0.3,
+      "keyframe_thresh": 0.25,
+      "weight_add": 0.3,
+      "weight_cap": 5.0,
+      "draw_quality_gate": 0.35,
+      "use_precise_visibility_mask": true,
+      "precise_visibility_min_pixels": 16,
+      "wall_close_kernel_size": 3,
+      "canvas_size": 5000,
+      "draw_scale": 2.0
+    }
+  },
+  "terrain": {
+    "status": "available",
+    "area_id": "MapFlotsam",
+    "area_hash": "14A7A83E",
+    "instance_id": "MapFlotsam:14A7A83E",
+    "width": 2968,
+    "height": 2277,
+    "native_width": 2968,
+    "native_height": 2277,
+    "coordinate_space": "native",
+    "captured_at": "2026-09-23T12:53:20.807748+00:00"
+  },
+  "player_position": {
+    "status": "available",
+    "area_instance": "MapFlotsam:14A7A83E",
+    "captured_at": "2026-09-23T12:54:00.833267+00:00",
+    "world": [
+      3103.2607421875,
+      4548.9130859375,
+      -594.7950439453125
+    ],
+    "grid": [
+      285.49998828125,
+      418.50000390625
+    ],
+    "terrain_grid": [
+      285.49998828125,
+      418.50000390625
+    ]
+  },
+  "images": {
+    "raw": {
+      "file": "raw.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "8d2dc823d97d4414dcb826597dc6f8c5ed37b649f853a32346847c4b4943ad8a"
+    },
+    "processed": {
+      "file": "processed.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "8294639d0983fe0254790698235d7fe1fb4418f21a70ee53005eec0f845d0fad"
+    },
+    "feature": {
+      "file": "feature.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "708974ec623f286e0b66ed3245a55cbf72346a4885a89254450e30db960abe1c"
+    },
+    "wall_mask": {
+      "file": "wall_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "3291a725129f493ccc123444f0d963d11112cdb16f4546a69eb603f26af4d14b"
+    },
+    "fog_mask": {
+      "file": "fog_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "ceb92cbcacc13900672dfa26b92f1dfeb38d3428a5b96ecfba0cc7a3e99ae600"
+    },
+    "raw_gray": {
+      "file": "raw_gray.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "53e1288b2cdb1f1fcfe9a94a5f61f27190102a22d714e28d696058fc3dbcc4c5"
+    },
+    "terrain": {
+      "file": "terrain.png",
+      "width": 2968,
+      "height": 2277,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "87d33688285368d5af86d26b29fbdbe7762e4f240f51e327c18f43c7bc0c824f"
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "frame_id": 1791231849582,
+  "captured_at_ms": 1791231849582,
+  "status": "degraded",
+  "reason": "markers_missing_grace",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "candidates": [],
+  "diagnostics": {
+    "consecutive_wall_failures": 0,
+    "wall_shift": [
+      0.0,
+      0.0
+    ],
+    "visible_identities": [],
+    "wall_trusted": true,
+    "role_observations": {
+      "Metadata/Characters/StrDex/StrDexFourb": {
+        "visible": false,
+        "available": true,
+        "last_seen_at_ms": 1791231849489,
+        "age_ms": 93,
+        "uncertainty_native": 0.9185
+      },
+      "Metadata/Characters/Dex/DexFourb": {
+        "visible": false,
+        "available": true,
+        "last_seen_at_ms": 1791231849489,
+        "age_ms": 93,
+        "uncertainty_native": 0.9185
+      }
+    },
+    "observation_bounds": {
+      "max_age_ms": 2000,
+      "max_uncertainty_native": 10.0
+    },
+    "assignment": {
+      "candidate_ids": [],
+      "options": []
+    },
+    "warmup_assumed_stationary": false,
+    "marker_dropout_failures": 2,
+    "marker_dropout_grace": 2,
+    "identity_dropout_failures": {
+      "Metadata/Characters/StrDex/StrDexFourb": 2,
+      "Metadata/Characters/Dex/DexFourb": 2
+    },
+    "missing_identities": [
+      "Metadata/Characters/StrDex/StrDexFourb",
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "prediction_hint_identities": [],
+    "local_player_hint": [
+      89.0,
+      150.0
+    ]
+  }
+}

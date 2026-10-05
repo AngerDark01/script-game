@@ -1,0 +1,669 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-21T08:39:31.517763+00:00",
+  "sample": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\samples\\20260921-075556-840709-MapFlotsam-F6A61E51",
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\20260921-mapflotsam-f6a61e51-low-scales",
+  "map_instance": {
+    "status": "available",
+    "area_id": "MapFlotsam",
+    "area_hash": "F6A61E51",
+    "instance_id": "MapFlotsam:F6A61E51",
+    "width": 1864,
+    "height": 2829,
+    "captured_at": "2026-09-21T07:55:43.470136+00:00"
+  },
+  "player_local_position": [
+    100.0,
+    100.0
+  ],
+  "recognizer_params": {
+    "wall_hsv_min": [
+      0,
+      197,
+      87
+    ],
+    "wall_hsv_max": [
+      105,
+      252,
+      255
+    ],
+    "fog_hsv_min": [
+      91,
+      174,
+      188
+    ],
+    "fog_hsv_max": [
+      108,
+      243,
+      255
+    ],
+    "player_hsv_min": [
+      167,
+      218,
+      175
+    ],
+    "player_hsv_max": [
+      177,
+      255,
+      215
+    ],
+    "enable_wall": true,
+    "enable_fog": true,
+    "clahe_enabled": false,
+    "deepen_enabled": true,
+    "gamma_enabled": true,
+    "tophat_enabled": true,
+    "sat_filter_enabled": false,
+    "clahe_clip": 3.0,
+    "clahe_grid": 4,
+    "deepen_factor": 1.0,
+    "blue_boost": 1.0,
+    "gamma_value": 2.0,
+    "tophat_strength": 4,
+    "tophat_kernel_size": 13,
+    "trans_sat_penalty": 1.5,
+    "trans_wall_thresh": 54,
+    "transparent_mode": true,
+    "sat_filter_thresh": 45,
+    "sat_filter_radius": 1,
+    "player_clear_radius": 22,
+    "wall_weight": 43,
+    "edge_weight": 29,
+    "edge_low": 50,
+    "edge_high": 150,
+    "kernel_small_size": 3,
+    "kernel_medium_size": 5
+  },
+  "parameter_overrides": {},
+  "probe_config": {
+    "angles": [
+      0.0,
+      45.0,
+      90.0,
+      135.0,
+      180.0,
+      225.0,
+      270.0,
+      315.0
+    ],
+    "reflect_horizontal": [
+      false,
+      true
+    ],
+    "scales": [
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95,
+      1.0
+    ],
+    "coarse_factor": 0.25,
+    "coarse_per_variant": 2,
+    "coarse_keep": 40,
+    "refine_angle_offsets": [
+      -4.0,
+      0.0,
+      4.0
+    ],
+    "refine_scale_offsets": [
+      -0.04,
+      0.0,
+      0.04
+    ],
+    "refine_radius": 48,
+    "match_tolerance": 3.0,
+    "reverse_tolerance": 3.0,
+    "min_component_area": 20,
+    "min_component_span": 24,
+    "player_clear_radius": 22,
+    "terrain_border_clear": 2,
+    "max_results": 12,
+    "min_spatial_separation": 42.0
+  },
+  "features": {
+    "stored_nonzero": 1339,
+    "rebuilt_nonzero": 1339,
+    "stored_rebuilt_equal": false,
+    "cleaned_nonzero": 1113,
+    "terrain_edge_nonzero": 63635,
+    "components": [
+      {
+        "label": 1,
+        "area": 937,
+        "bbox": [
+          60,
+          0,
+          140,
+          154
+        ],
+        "touches_border": true,
+        "kept": true
+      },
+      {
+        "label": 15,
+        "area": 122,
+        "bbox": [
+          75,
+          113,
+          18,
+          17
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 2,
+        "area": 101,
+        "bbox": [
+          167,
+          0,
+          33,
+          56
+        ],
+        "touches_border": true,
+        "kept": true
+      },
+      {
+        "label": 7,
+        "area": 75,
+        "bbox": [
+          159,
+          29,
+          41,
+          35
+        ],
+        "touches_border": true,
+        "kept": true
+      },
+      {
+        "label": 24,
+        "area": 59,
+        "bbox": [
+          173,
+          177,
+          9,
+          17
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 23,
+        "area": 16,
+        "bbox": [
+          119,
+          146,
+          16,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 3,
+        "area": 3,
+        "bbox": [
+          180,
+          2,
+          1,
+          3
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 11,
+        "area": 3,
+        "bbox": [
+          141,
+          41,
+          1,
+          3
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 4,
+        "area": 2,
+        "bbox": [
+          143,
+          21,
+          2,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 6,
+        "area": 2,
+        "bbox": [
+          149,
+          29,
+          2,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 13,
+        "area": 2,
+        "bbox": [
+          198,
+          77,
+          2,
+          1
+        ],
+        "touches_border": true,
+        "kept": false
+      },
+      {
+        "label": 14,
+        "area": 2,
+        "bbox": [
+          75,
+          81,
+          1,
+          2
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 18,
+        "area": 2,
+        "bbox": [
+          83,
+          120,
+          1,
+          2
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 19,
+        "area": 2,
+        "bbox": [
+          83,
+          123,
+          2,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 20,
+        "area": 2,
+        "bbox": [
+          76,
+          130,
+          2,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 5,
+        "area": 1,
+        "bbox": [
+          136,
+          28,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 8,
+        "area": 1,
+        "bbox": [
+          162,
+          28,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 9,
+        "area": 1,
+        "bbox": [
+          136,
+          34,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 10,
+        "area": 1,
+        "bbox": [
+          148,
+          39,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 12,
+        "area": 1,
+        "bbox": [
+          91,
+          72,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 16,
+        "area": 1,
+        "bbox": [
+          151,
+          112,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 17,
+        "area": 1,
+        "bbox": [
+          158,
+          119,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 21,
+        "area": 1,
+        "bbox": [
+          87,
+          130,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      },
+      {
+        "label": 22,
+        "area": 1,
+        "bbox": [
+          85,
+          145,
+          1,
+          1
+        ],
+        "touches_border": false,
+        "kept": false
+      }
+    ]
+  },
+  "result": {
+    "candidate_count": 12,
+    "top_score": 0.717401329645457,
+    "second_score": 0.7156293867036083,
+    "score_margin": 0.001771942941848681,
+    "candidates": [
+      {
+        "angle": 86.0,
+        "reflect_horizontal": true,
+        "scale": 0.26,
+        "top_left": [
+          1223,
+          471
+        ],
+        "player_position": [
+          1250.811,
+          498.829
+        ],
+        "mean_distance": 1.5119646787643433,
+        "forward_coverage": 0.8354430379746836,
+        "reverse_coverage": 0.4340425531914894,
+        "score": 0.717401329645457,
+        "edge_pixels": 79,
+        "rank": 1
+      },
+      {
+        "angle": 225.0,
+        "reflect_horizontal": true,
+        "scale": 0.35,
+        "top_left": [
+          1269,
+          785
+        ],
+        "player_position": [
+          1318.35,
+          834.103
+        ],
+        "mean_distance": 1.7586396932601929,
+        "forward_coverage": 0.8292682926829268,
+        "reverse_coverage": 0.5264054514480409,
+        "score": 0.7156293867036083,
+        "edge_pixels": 164,
+        "rank": 2
+      },
+      {
+        "angle": 4.0,
+        "reflect_horizontal": false,
+        "scale": 0.26,
+        "top_left": [
+          1133,
+          1221
+        ],
+        "player_position": [
+          1160.829,
+          1248.811
+        ],
+        "mean_distance": 1.7042267322540283,
+        "forward_coverage": 0.8227848101265823,
+        "reverse_coverage": 0.4776902887139108,
+        "score": 0.7069781285031919,
+        "edge_pixels": 79,
+        "rank": 3
+      },
+      {
+        "angle": 319.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          857,
+          2020
+        ],
+        "player_position": [
+          900.491,
+          2063.725
+        ],
+        "mean_distance": 1.8637816905975342,
+        "forward_coverage": 0.7727272727272727,
+        "reverse_coverage": 0.38513513513513514,
+        "score": 0.655723321825869,
+        "edge_pixels": 110,
+        "rank": 4
+      },
+      {
+        "angle": 176.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          1162,
+          1384
+        ],
+        "player_position": [
+          1194.871,
+          1416.85
+        ],
+        "mean_distance": 2.012899875640869,
+        "forward_coverage": 0.7788461538461539,
+        "reverse_coverage": 0.3493150684931507,
+        "score": 0.6475084991709981,
+        "edge_pixels": 104,
+        "rank": 5
+      },
+      {
+        "angle": 270.0,
+        "reflect_horizontal": false,
+        "scale": 0.35,
+        "top_left": [
+          1292,
+          320
+        ],
+        "player_position": [
+          1326.825,
+          355.175
+        ],
+        "mean_distance": 2.6403470039367676,
+        "forward_coverage": 0.7153846153846154,
+        "reverse_coverage": 0.6004962779156328,
+        "score": 0.6229889452568881,
+        "edge_pixels": 130,
+        "rank": 6
+      },
+      {
+        "angle": 131.0,
+        "reflect_horizontal": true,
+        "scale": 0.36000000000000004,
+        "top_left": [
+          775,
+          1334
+        ],
+        "player_position": [
+          826.014,
+          1384.778
+        ],
+        "mean_distance": 2.2175846099853516,
+        "forward_coverage": 0.7551020408163265,
+        "reverse_coverage": 0.31923601637107774,
+        "score": 0.6203211791785791,
+        "edge_pixels": 147,
+        "rank": 7
+      },
+      {
+        "angle": 319.0,
+        "reflect_horizontal": false,
+        "scale": 0.31,
+        "top_left": [
+          928,
+          1198
+        ],
+        "player_position": [
+          971.725,
+          1241.929
+        ],
+        "mean_distance": 2.3003859519958496,
+        "forward_coverage": 0.7547169811320755,
+        "reverse_coverage": 0.29770992366412213,
+        "score": 0.6136114918234064,
+        "edge_pixels": 106,
+        "rank": 8
+      },
+      {
+        "angle": 315.0,
+        "reflect_horizontal": true,
+        "scale": 0.36000000000000004,
+        "top_left": [
+          854,
+          2055
+        ],
+        "player_position": [
+          904.505,
+          2105.76
+        ],
+        "mean_distance": 2.212033987045288,
+        "forward_coverage": 0.7116564417177914,
+        "reverse_coverage": 0.3276283618581907,
+        "score": 0.5957337437035223,
+        "edge_pixels": 163,
+        "rank": 9
+      },
+      {
+        "angle": 49.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1292,
+          1536
+        ],
+        "player_position": [
+          1335.725,
+          1579.929
+        ],
+        "mean_distance": 2.7862884998321533,
+        "forward_coverage": 0.7454545454545455,
+        "reverse_coverage": 0.3112391930835735,
+        "score": 0.5927191415265686,
+        "edge_pixels": 110,
+        "rank": 10
+      },
+      {
+        "angle": 90.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          1466,
+          973
+        ],
+        "player_position": [
+          1497.0,
+          1004.0
+        ],
+        "mean_distance": 2.674211025238037,
+        "forward_coverage": 0.7075471698113207,
+        "reverse_coverage": 0.4330357142857143,
+        "score": 0.5920035914984182,
+        "edge_pixels": 106,
+        "rank": 11
+      },
+      {
+        "angle": 131.0,
+        "reflect_horizontal": true,
+        "scale": 0.31,
+        "top_left": [
+          954,
+          2067
+        ],
+        "player_position": [
+          997.929,
+          2110.725
+        ],
+        "mean_distance": 2.422079086303711,
+        "forward_coverage": 0.6981132075471698,
+        "reverse_coverage": 0.28864569083447333,
+        "score": 0.5736733228961836,
+        "edge_pixels": 106,
+        "rank": 12
+      }
+    ]
+  }
+}

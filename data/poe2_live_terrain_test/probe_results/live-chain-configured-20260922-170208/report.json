@@ -1,0 +1,54 @@
+{
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-chain-configured-20260922-170208",
+  "source_frame": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-chain-20260922-170100\\first_frame_raw.png",
+  "snapshot": {
+    "instance_id": "MapFlotsam:1E44BF94",
+    "shape": [
+      2277,
+      2416
+    ],
+    "captured_at": "2026-09-22T09:02:16.078293+00:00"
+  },
+  "evidence": {
+    "feature_pixels": 2417,
+    "wall_pixels": 1192
+  },
+  "state": {
+    "mode": "recovery_required",
+    "source": "failed",
+    "confidence": 0.0,
+    "position": null,
+    "reason": "absolute_registration_failed",
+    "diagnostics": {
+      "status": "ambiguous",
+      "reason": "top anchored candidates are not sufficiently separated",
+      "search_mode": "full_similarity",
+      "coarse_variant_count": 352,
+      "candidate_count": 7,
+      "best_score": 0.6424045022113832,
+      "best_anchored_score": 0.6986315615617382,
+      "best_forward_coverage": 0.949119373776908,
+      "best_angle": 219.0,
+      "best_reflection": true,
+      "best_scale": 0.8499999999999999,
+      "best_anchor_error": 10.614980830975755,
+      "best_player_on_walkable": true
+    },
+    "memory_read_count": 1
+  },
+  "registrar_last_diagnostics": {
+    "status": "ambiguous",
+    "reason": "top anchored candidates are not sufficiently separated",
+    "search_mode": "full_similarity",
+    "coarse_variant_count": 352,
+    "candidate_count": 7,
+    "best_score": 0.6424045022113832,
+    "best_anchored_score": 0.6986315615617382,
+    "best_forward_coverage": 0.949119373776908,
+    "best_angle": 219.0,
+    "best_reflection": true,
+    "best_scale": 0.8499999999999999,
+    "best_anchor_error": 10.614980830975755,
+    "best_player_on_walkable": true
+  }
+}

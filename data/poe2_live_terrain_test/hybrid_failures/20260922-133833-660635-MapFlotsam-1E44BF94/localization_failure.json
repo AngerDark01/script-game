@@ -1,0 +1,38 @@
+{
+  "tool": "poe2-hybrid-localization-failure",
+  "mode": "recovery_required",
+  "source": "failed",
+  "confidence": 0.0,
+  "position": null,
+  "latest_confirmed_position": null,
+  "trajectory": [],
+  "reason": "absolute_registration_failed",
+  "recovery_revision": 1,
+  "memory_read_count": 1,
+  "frame_elapsed_ms": 4927.720699997735,
+  "diagnostics": {
+    "status": "rejected",
+    "reason": "best candidate forward coverage is below threshold",
+    "search_mode": "full_similarity",
+    "coarse_variant_count": 352,
+    "candidate_count": 20,
+    "best_score": 0.5512777835171186,
+    "best_anchored_score": 0.6572831057510391,
+    "best_forward_coverage": 0.6336056009334889,
+    "best_angle": 219.0,
+    "best_reflection": true,
+    "best_scale": 0.81,
+    "best_anchor_error": 1.9760742037759609,
+    "best_player_on_walkable": true
+  },
+  "frame": {
+    "frame_id": 1,
+    "captured_at_ms": 1790084313618,
+    "local_player": [
+      100.0,
+      100.0
+    ]
+  },
+  "last_confirmed_transform": null,
+  "sample_manifest": "sample.json"
+}

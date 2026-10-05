@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from collections import OrderedDict
 from dataclasses import dataclass
-import math
 
 import cv2
 import numpy as np
@@ -37,12 +37,17 @@ class ShapeScore:
 
 @dataclass(frozen=True)
 class ReferenceGeometry:
+    # Keep the normalized reference alive for as long as the cache entry is
+    # alive.  The cache key uses its data pointer for speed; without a strong
+    # reference a later NumPy allocation could reuse that pointer and return a
+    # distance field belonging to a different map.
+    source: np.ndarray
     distance: np.ndarray
     points: np.ndarray
     tangents: np.ndarray
 
 
-_REFERENCE_CACHE: "OrderedDict[tuple[object, ...], ReferenceGeometry]" = OrderedDict()
+_REFERENCE_CACHE: OrderedDict[tuple[object, ...], ReferenceGeometry] = OrderedDict()
 _REFERENCE_CACHE_LIMIT = 8
 
 
@@ -78,13 +83,15 @@ def _reference_geometry(
     *,
     include_tangents: bool = True,
 ) -> ReferenceGeometry:
-    reference = np.asarray(reference_boundary) > 0
-    pointer = int(reference.__array_interface__["data"][0])
+    source = np.asarray(reference_boundary)
+    reference = source > 0
+    pointer = int(source.__array_interface__["data"][0])
     key = (
         pointer,
-        reference.shape,
-        reference.strides,
-        int(np.count_nonzero(reference)),
+        source.shape,
+        source.strides,
+        source.dtype.str,
+        int(np.count_nonzero(source)),
         bool(include_tangents),
     )
     cached = _REFERENCE_CACHE.get(key)
@@ -93,6 +100,7 @@ def _reference_geometry(
         return cached
     points = np.column_stack(np.nonzero(reference))[:, ::-1].astype(np.float64)
     geometry = ReferenceGeometry(
+        source=source,
         distance=_distance_field(reference),
         points=points,
         tangents=(

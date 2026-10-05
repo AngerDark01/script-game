@@ -1,0 +1,83 @@
+{
+  "frame_id": 1791231791137,
+  "captured_at_ms": 1791231791137,
+  "status": "degraded",
+  "reason": "markers_missing_grace",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "candidates": [],
+  "diagnostics": {
+    "consecutive_wall_failures": 0,
+    "wall_shift": [
+      2.2259542013780163,
+      0.697903932764234
+    ],
+    "visible_identities": [],
+    "wall_trusted": true,
+    "role_observations": {
+      "Metadata/Characters/StrDex/StrDexFourb": {
+        "visible": false,
+        "available": true,
+        "last_seen_at_ms": 1791231790962,
+        "age_ms": 175,
+        "uncertainty_native": 1.2875
+      },
+      "Metadata/Characters/Dex/DexFourb": {
+        "visible": false,
+        "available": true,
+        "last_seen_at_ms": 1791231791076,
+        "age_ms": 61,
+        "uncertainty_native": 0.7745
+      }
+    },
+    "observation_bounds": {
+      "max_age_ms": 2000,
+      "max_uncertainty_native": 10.0
+    },
+    "assignment": {
+      "candidate_ids": [],
+      "options": []
+    },
+    "warmup_assumed_stationary": false,
+    "marker_dropout_failures": 4,
+    "marker_dropout_grace": 2,
+    "identity_dropout_failures": {
+      "Metadata/Characters/StrDex/StrDexFourb": 4,
+      "Metadata/Characters/Dex/DexFourb": 1
+    },
+    "missing_identities": [
+      "Metadata/Characters/StrDex/StrDexFourb",
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "prediction_hint_identities": [
+      "Metadata/Characters/StrDex/StrDexFourb",
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "local_player_hint": [
+      64.43300151774756,
+      150.95169157377165
+    ]
+  }
+}

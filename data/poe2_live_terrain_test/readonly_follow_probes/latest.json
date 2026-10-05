@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "tool": "poe2-follow-readonly-probe",
+  "read_only": true,
+  "started_at": "2026-10-04T07:14:03.167768+00:00",
+  "limits": {
+    "frame_count": 1,
+    "interval_seconds": 0.0,
+    "save_frames": 0,
+    "input_calls": 0,
+    "network_calls": 0
+  },
+  "run_root": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\readonly_follow_probes\\20261004-151403-167",
+  "steps": [],
+  "frames": [],
+  "errors": [
+    {
+      "type": "PermissionError",
+      "message": "[WinError 5] 拒绝访问。"
+    }
+  ],
+  "elapsed_ms": 28.608399999939138,
+  "finished_at": "2026-10-04T07:14:03.196834+00:00"
+}

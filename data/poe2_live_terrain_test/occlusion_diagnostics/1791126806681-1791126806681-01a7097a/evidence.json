@@ -1,0 +1,161 @@
+{
+  "frame_id": 1791126806681,
+  "captured_at_ms": 1791126806681,
+  "status": "degraded",
+  "reason": "markers_partial_grace",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "candidates": [
+    {
+      "id": "observation-0",
+      "position": [
+        101.0,
+        179.0
+      ],
+      "confidence": 0.9408585858585858,
+      "area": 35.5,
+      "bbox": [
+        96,
+        175,
+        11,
+        9
+      ],
+      "color_features": {
+        "identity_hint": "玩家2",
+        "area": 35.5,
+        "bbox": [
+          96,
+          175,
+          11,
+          9
+        ],
+        "compactness": 0.35858585858585856,
+        "hue": 102.0,
+        "detector": "configured_components",
+        "profile": "玩家2",
+        "profile_index": 1
+      }
+    },
+    {
+      "id": "observation-1",
+      "position": [
+        61.0,
+        124.0
+      ],
+      "confidence": 0.8896590909090909,
+      "area": 30.5,
+      "bbox": [
+        55,
+        121,
+        11,
+        8
+      ],
+      "color_features": {
+        "identity_hint": "玩家1",
+        "area": 30.5,
+        "bbox": [
+          55,
+          121,
+          11,
+          8
+        ],
+        "compactness": 0.3465909090909091,
+        "hue": 13.0,
+        "detector": "configured_components",
+        "profile": "玩家1",
+        "profile_index": 0
+      }
+    }
+  ],
+  "diagnostics": {
+    "consecutive_wall_failures": 0,
+    "wall_shift": [
+      0.0,
+      0.0
+    ],
+    "visible_identities": [
+      "Metadata/Characters/StrDex/StrDexFourb"
+    ],
+    "wall_trusted": true,
+    "role_observations": {
+      "Metadata/Characters/StrDex/StrDexFourb": {
+        "visible": true,
+        "available": true,
+        "last_seen_at_ms": 1791126806681,
+        "age_ms": 0,
+        "uncertainty_native": 0.5
+      },
+      "Metadata/Characters/Dex/DexFourb": {
+        "visible": false,
+        "available": true,
+        "last_seen_at_ms": 1791126806614,
+        "age_ms": 67,
+        "uncertainty_native": 0.8015
+      }
+    },
+    "observation_bounds": {
+      "max_age_ms": 2000,
+      "max_uncertainty_native": 10.0
+    },
+    "assignment": {
+      "candidate_ids": [
+        "observation-0",
+        "observation-1"
+      ],
+      "options": [
+        {
+          "cost": 1.7103407170320162e-11,
+          "identities": [
+            "Metadata/Characters/StrDex/StrDexFourb"
+          ],
+          "candidate_ids": [
+            "observation-1"
+          ],
+          "distances": [
+            1.7103407170320162e-11
+          ]
+        }
+      ]
+    },
+    "warmup_assumed_stationary": false,
+    "marker_dropout_failures": 1,
+    "marker_dropout_grace": 2,
+    "identity_dropout_failures": {
+      "Metadata/Characters/StrDex/StrDexFourb": 0,
+      "Metadata/Characters/Dex/DexFourb": 1
+    },
+    "missing_identities": [
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "prediction_hint_identities": [
+      "Metadata/Characters/StrDex/StrDexFourb",
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "local_player_hint": [
+      61.0,
+      124.0
+    ]
+  }
+}

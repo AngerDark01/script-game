@@ -1,0 +1,128 @@
+{
+  "instance": "MapFlotsam:E7645418",
+  "anchors": {
+    "Metadata/Characters/StrDex/StrDexFourb": [
+      264.5,
+      428.49997265625
+    ],
+    "Metadata/Characters/Dex/DexFourb": [
+      296.3883544921875,
+      405.39719140625
+    ]
+  },
+  "candidates": [
+    {
+      "position": [
+        106.0,
+        148.0
+      ],
+      "profile": "玩家2",
+      "profile_index": 1
+    },
+    {
+      "position": [
+        55.0,
+        155.0
+      ],
+      "profile": "玩家1",
+      "profile_index": 0
+    }
+  ],
+  "elapsed_ms": 438.98559999797726,
+  "result": {
+    "status": "accepted",
+    "reason": "one transform explains both player markers and memory anchors",
+    "players": {
+      "Metadata/Characters/StrDex/StrDexFourb": {
+        "identity": "Metadata/Characters/StrDex/StrDexFourb",
+        "candidate_id": "observation-1",
+        "screen_position": [
+          55.0,
+          155.0
+        ],
+        "memory_position": [
+          264.5,
+          428.49997265625
+        ],
+        "mapped_position": [
+          264.5,
+          428.49997265625
+        ],
+        "anchor_error": 0.0,
+        "confidence": 0.7792278412180533,
+        "accepted": true
+      },
+      "Metadata/Characters/Dex/DexFourb": {
+        "identity": "Metadata/Characters/Dex/DexFourb",
+        "candidate_id": "observation-0",
+        "screen_position": [
+          106.0,
+          148.0
+        ],
+        "memory_position": [
+          296.3883544921875,
+          405.39719140625
+        ],
+        "mapped_position": [
+          296.3883544921875,
+          405.39719140625
+        ],
+        "anchor_error": 0.0,
+        "confidence": 0.7792278412180533,
+        "accepted": true
+      }
+    },
+    "diagnostics": {
+      "identity_count": 2,
+      "candidate_count": 2,
+      "assignment_count": 2,
+      "evaluated_assignment_count": 4,
+      "failed_assignments": [],
+      "max_anchor_error": 12.0,
+      "minimum_pair_confidence": 0.7,
+      "evaluated_variant_count": 4,
+      "best_pair_confidence": 0.8564980967917347,
+      "best_mean_anchor_error": 0.0,
+      "best_assignment": {
+        "Metadata/Characters/StrDex/StrDexFourb": "observation-1",
+        "Metadata/Characters/Dex/DexFourb": "observation-0"
+      },
+      "registration": {
+        "status": "joint_direct",
+        "joint_shape_coverage": 0.7792278412180533,
+        "joint_angle": 28.107645360769695,
+        "joint_scale": 0.7649406571396208
+      },
+      "joint_initialization": {
+        "angle": 28.107645360769695,
+        "reflect_horizontal": false,
+        "scale": 0.7649406571396208,
+        "screen_midpoint": [
+          80.5,
+          151.5
+        ],
+        "native_midpoint": [
+          280.4441772460938,
+          416.94858203125
+        ],
+        "screen_delta": [
+          51.0,
+          -7.0
+        ],
+        "native_delta": [
+          31.88835449218749,
+          -23.10278125000002
+        ],
+        "pair_distance_error": 3.552713678800501e-15,
+        "registration_pair_distance_error": 0.0,
+        "pair_confidence": 1.0,
+        "profile_consistency": 1.0
+      },
+      "assignment_margin": 0.16652527070478018,
+      "assignment_scores": {
+        "observation-1,observation-0": 0.8564980967917347,
+        "observation-0,observation-1": 0.6899728260869545
+      }
+    }
+  }
+}

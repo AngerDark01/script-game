@@ -1,0 +1,280 @@
+{
+  "sample": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\samples\\20260923-125356-431876-MapFlotsam-14A7A83E",
+  "status": "ambiguous",
+  "reason": "top anchored candidates are not sufficiently separated",
+  "anchor_grid": [
+    285.49998828125,
+    418.50000390625
+  ],
+  "crop_bounds": [
+    175,
+    309,
+    396,
+    530
+  ],
+  "config": {
+    "crop_radius": 150,
+    "refine_crop_radius": 110,
+    "capture_reference_size": 200,
+    "top_exclusion_rows": 40,
+    "player_clear_radius": 22,
+    "max_anchor_error": 80.0,
+    "anchor_weight": 0.25,
+    "minimum_score": 0.5,
+    "minimum_forward_coverage": 0.65,
+    "minimum_forward_coverage_when_anchored": 0.6,
+    "anchor_acceptance_radius": 8.0,
+    "anchor_disambiguation_gap": 2.0,
+    "minimum_margin": 0.03,
+    "coarse_angles": [
+      0.0,
+      45.0,
+      90.0,
+      135.0,
+      180.0,
+      225.0,
+      270.0,
+      315.0
+    ],
+    "coarse_reflections": [
+      false,
+      true
+    ],
+    "coarse_scales": [
+      0.35,
+      0.45,
+      0.55,
+      0.65,
+      0.75,
+      0.85,
+      0.95,
+      1.05,
+      1.15,
+      1.25,
+      1.35,
+      1.45,
+      1.55,
+      1.65,
+      1.75,
+      1.85,
+      1.95,
+      2.05,
+      2.15,
+      2.25,
+      2.35,
+      2.45
+    ],
+    "refine_angle_radius": 12.0,
+    "refine_angle_step": 2.0,
+    "refine_scale_radius": 0.16,
+    "refine_scale_step": 0.02,
+    "refine_seed_count": 8,
+    "refine_orientation_seed_count": 4,
+    "refine_seed_margin": 0.1
+  },
+  "best": {
+    "angle": 219.0,
+    "reflect_horizontal": true,
+    "scale": 0.75,
+    "top_left": [
+      8,
+      6
+    ],
+    "player_position": [
+      113.43,
+      110.848
+    ],
+    "mean_distance": 1.868094563484192,
+    "forward_coverage": 0.7972972972972973,
+    "reverse_coverage": 0.33756345177664976,
+    "walkable_coverage": 0.29902747615900294,
+    "player_on_walkable": true,
+    "score": 0.5556692578004909,
+    "edge_pixels": 370,
+    "rank": 1,
+    "global_player_position": [
+      288.4304345889027,
+      419.84757511781
+    ],
+    "anchor_error": 3.2254400835018564,
+    "anchored_score": 0.6566724430894249,
+    "basin_angle": 225.0,
+    "basin_reflection": true
+  },
+  "candidates": [
+    {
+      "angle": 219.0,
+      "reflect_horizontal": true,
+      "scale": 0.75,
+      "top_left": [
+        8,
+        6
+      ],
+      "player_position": [
+        113.43,
+        110.848
+      ],
+      "mean_distance": 1.868094563484192,
+      "forward_coverage": 0.7972972972972973,
+      "reverse_coverage": 0.33756345177664976,
+      "walkable_coverage": 0.29902747615900294,
+      "player_on_walkable": true,
+      "score": 0.5556692578004909,
+      "edge_pixels": 370,
+      "rank": 1,
+      "global_player_position": [
+        288.4304345889027,
+        419.84757511781
+      ],
+      "anchor_error": 3.2254400835018564,
+      "anchored_score": 0.6566724430894249,
+      "basin_angle": 225.0,
+      "basin_reflection": true
+    },
+    {
+      "angle": 223.0,
+      "reflect_horizontal": true,
+      "scale": 0.65,
+      "top_left": [
+        19,
+        23
+      ],
+      "player_position": [
+        110.666,
+        114.191
+      ],
+      "mean_distance": 2.245568037033081,
+      "forward_coverage": 0.7841726618705036,
+      "reverse_coverage": 0.2932216298552932,
+      "walkable_coverage": 0.3193918748422912,
+      "player_on_walkable": true,
+      "score": 0.5391205215109269,
+      "edge_pixels": 278,
+      "rank": 2,
+      "global_player_position": [
+        285.66604048600595,
+        423.1906605799535
+      ],
+      "anchor_error": 4.693594929823326,
+      "anchored_score": 0.6396729069774973,
+      "basin_angle": 225.0,
+      "basin_reflection": true
+    },
+    {
+      "angle": 98.0,
+      "reflect_horizontal": false,
+      "scale": 0.47000000000000003,
+      "top_left": [
+        57,
+        62
+      ],
+      "player_position": [
+        110.075,
+        114.61
+      ],
+      "mean_distance": 3.174891948699951,
+      "forward_coverage": 0.6861313868613139,
+      "reverse_coverage": 0.176056338028169,
+      "walkable_coverage": 0.4103682170542636,
+      "player_on_walkable": true,
+      "score": 0.48667336297210806,
+      "edge_pixels": 137,
+      "rank": 3,
+      "global_player_position": [
+        285.0750073174287,
+        423.60958132512013
+      ],
+      "anchor_error": 5.127220515936282,
+      "anchored_score": 0.5989824581167802,
+      "basin_angle": 90.0,
+      "basin_reflection": false
+    },
+    {
+      "angle": 92.0,
+      "reflect_horizontal": false,
+      "scale": 0.5900000000000001,
+      "top_left": [
+        35,
+        53
+      ],
+      "player_position": [
+        96.055,
+        113.465
+      ],
+      "mean_distance": 2.3986353874206543,
+      "forward_coverage": 0.7136563876651982,
+      "reverse_coverage": 0.3858560794044665,
+      "walkable_coverage": 0.2599585539949344,
+      "player_on_walkable": true,
+      "score": 0.4997428189735294,
+      "edge_pixels": 227,
+      "rank": 4,
+      "global_player_position": [
+        271.05452494244344,
+        422.46488435450215
+      ],
+      "anchor_error": 14.979709210853756,
+      "anchored_score": 0.577995522946229,
+      "basin_angle": 90.0,
+      "basin_reflection": false
+    },
+    {
+      "angle": 80.0,
+      "reflect_horizontal": false,
+      "scale": 0.45,
+      "top_left": [
+        30,
+        60
+      ],
+      "player_position": [
+        82.236,
+        111.792
+      ],
+      "mean_distance": 2.973085880279541,
+      "forward_coverage": 0.6592592592592592,
+      "reverse_coverage": 0.28699551569506726,
+      "walkable_coverage": 0.3191038048521808,
+      "player_on_walkable": true,
+      "score": 0.46749245741573103,
+      "edge_pixels": 135,
+      "rank": 5,
+      "global_player_position": [
+        257.2356525844028,
+        420.79248909554735
+      ],
+      "anchor_error": 28.35715360763872,
+      "anchored_score": 0.5120032380379272,
+      "basin_angle": 90.0,
+      "basin_reflection": false
+    },
+    {
+      "angle": 231.0,
+      "reflect_horizontal": true,
+      "scale": 0.39,
+      "top_left": [
+        28,
+        46
+      ],
+      "player_position": [
+        82.766,
+        100.521
+      ],
+      "mean_distance": 3.1600594520568848,
+      "forward_coverage": 0.6153846153846154,
+      "reverse_coverage": 0.21988795518207283,
+      "walkable_coverage": 0.39281332164767746,
+      "player_on_walkable": true,
+      "score": 0.4576137607796975,
+      "edge_pixels": 104,
+      "rank": 6,
+      "global_player_position": [
+        257.76617401377064,
+        409.52073906126117
+      ],
+      "anchor_error": 29.151186099016538,
+      "anchored_score": 0.5021128640253465,
+      "basin_angle": 225.0,
+      "basin_reflection": true
+    }
+  ]
+}

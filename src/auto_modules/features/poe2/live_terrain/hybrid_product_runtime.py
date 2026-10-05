@@ -28,9 +28,21 @@ class Poe2HybridProductState:
     match_mask: Any = None
     local_position: tuple[float, float] | None = None
     frame_elapsed_ms: float = 0.0
+    dual_players: Mapping[str, tuple[float, float] | None] = field(default_factory=dict)
+    dual_screen_positions: Mapping[str, tuple[float, float] | None] = field(default_factory=dict)
+    dual_trajectories: Mapping[str, tuple[tuple[float, float], ...]] = field(default_factory=dict)
+    dual_status: str | None = None
+    dual_wall_quality: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
+        object.__setattr__(self, "dual_players", MappingProxyType(dict(self.dual_players)))
+        object.__setattr__(self, "dual_screen_positions", MappingProxyType(dict(self.dual_screen_positions)))
+        object.__setattr__(
+            self,
+            "dual_trajectories",
+            MappingProxyType({key: tuple(value) for key, value in self.dual_trajectories.items()}),
+        )
 
     @property
     def failure_reason(self) -> str:
@@ -78,7 +90,20 @@ class Poe2HybridProductRuntime:
         return self._experiment
 
     def configure_monitor(self, config: Any) -> None:
+        previous_mode = getattr(self._config, "tracking_mode", "single")
         self._config = config
+        current_mode = getattr(config, "tracking_mode", "single")
+        if (
+            self._snapshot is not None
+            and self._experiment is not None
+            and previous_mode != current_mode
+        ):
+            self.stop()
+            self._experiment = self._factory(self._snapshot, lambda: self._config)
+            self._last_state_signature = None
+            self._recorded_failures.clear()
+            self._reset_performance_window()
+            self._log("step=product_localization.mode_rebuilt mode=%s", current_mode)
 
     def configure_snapshot(self, snapshot: Any) -> None:
         if snapshot is None:
@@ -132,15 +157,41 @@ class Poe2HybridProductRuntime:
         if match_mask is None:
             match_mask = getattr(evidence, "feature", None)
         provider = getattr(experiment, "anchor_provider", None)
+        dual_players = dict(getattr(state, "players", {}) or {})
+        dual_screen_positions = dict(getattr(state, "screen_positions", {}) or {})
+        dual_trajectories = dict(getattr(state, "trajectories", {}) or {})
+        is_dual = hasattr(state, "players") or hasattr(state, "screen_positions")
+        if is_dual:
+            primary = next(iter(dual_players.values()), None)
+            trajectory = tuple(dual_trajectories.get(next(iter(dual_players), ""), ()) or ())
+            mode = getattr(state, "status", "unknown")
+            registration = getattr(state, "registration", None)
+            source = str(getattr(state, "source", "dual_failed"))
+            confidence = float(getattr(state, "confidence", 0.0))
+            reason = str(getattr(state, "reason", "") or "")
+            dual_status = str(getattr(state, "status", mode))
+            wall_quality = float(getattr(state, "wall_quality", 0.0))
+            local_position = next(iter(dual_screen_positions.values()), None)
+        else:
+            primary = getattr(state, "position", None)
+            trajectory = tuple(getattr(state, "trajectory", ()) or ())
+            mode = getattr(state, "mode", "unknown")
+            registration = getattr(state, "registration", None)
+            source = str(getattr(state, "source", "failed"))
+            confidence = float(getattr(state, "confidence", 0.0))
+            reason = str(getattr(state, "reason", "") or "")
+            dual_status = None
+            wall_quality = 0.0
+            local_position = getattr(frame, "local_player", None)
         return Poe2HybridProductState(
-            mode=getattr(state, "mode", "unknown"),
-            position=getattr(state, "position", None),
-            latest_confirmed_position=getattr(state, "latest_confirmed_position", None),
-            trajectory=tuple(getattr(state, "trajectory", ()) or ()),
-            registration=getattr(state, "registration", None),
-            source=str(getattr(state, "source", "failed")),
-            confidence=float(getattr(state, "confidence", 0.0)),
-            reason=str(getattr(state, "reason", "") or ""),
+            mode=mode,
+            position=primary,
+            latest_confirmed_position=primary,
+            trajectory=trajectory,
+            registration=registration,
+            source=source,
+            confidence=confidence,
+            reason=reason,
             recovery_revision=int(getattr(state, "recovery_revision", 0)),
             memory_read_count=int(getattr(provider, "read_count", 0)),
             diagnostics={
@@ -150,8 +201,13 @@ class Poe2HybridProductRuntime:
             raw_frame=getattr(session, "last_raw_frame", None),
             processed_frame=processed,
             match_mask=match_mask,
-            local_position=getattr(frame, "local_player", None),
+            local_position=local_position,
             frame_elapsed_ms=elapsed_ms,
+            dual_players=dual_players,
+            dual_screen_positions=dual_screen_positions,
+            dual_trajectories=dual_trajectories,
+            dual_status=dual_status,
+            dual_wall_quality=wall_quality,
         )
 
     def _log(self, message: str, *args: Any) -> None:

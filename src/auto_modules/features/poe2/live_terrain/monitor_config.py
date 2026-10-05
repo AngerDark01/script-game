@@ -18,10 +18,32 @@ from auto_modules.core.spatial.monitor_binding import (
     MonitorBinding,
     resize_binding_around_marker,
 )
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.models import (
+    MarkerColorProfile,
+)
 
 
 def _default_stitcher_params() -> dict:
     return MapStitcher.default_params(canvas_size=5000, draw_scale=2.0)
+
+
+def _default_dual_marker_profiles() -> tuple[dict, ...]:
+    return (
+        MarkerColorProfile(
+            name="玩家1",
+            hue_min=5,
+            hue_max=38,
+            saturation_min=130,
+            value_min=130,
+        ).to_dict(),
+        MarkerColorProfile(
+            name="玩家2",
+            hue_min=82,
+            hue_max=125,
+            saturation_min=110,
+            value_min=100,
+        ).to_dict(),
+    )
 
 
 @dataclass(frozen=True)
@@ -37,10 +59,12 @@ class Poe2MonitorConfig:
     preview_fps: int = 12
     profile_id: str = "default"
     profile_name: str = "默认配置"
+    tracking_mode: str = "single"
     selection_mode: str = "region"
     capture_size: int = 320
     shape: CaptureShape = CaptureShape.SQUARE
     circle_radius: float | None = None
+    dual_marker_profiles: tuple[dict, ...] = field(default_factory=_default_dual_marker_profiles)
     recognizer_params: dict = field(default_factory=dict)
     stitcher_params: dict = field(default_factory=_default_stitcher_params)
 
@@ -73,6 +97,9 @@ class Poe2MonitorConfig:
         selection_mode = str(self.selection_mode).strip().lower()
         if selection_mode not in {"region", "center"}:
             raise ValueError("selection_mode must be region or center")
+        tracking_mode = str(self.tracking_mode).strip().lower()
+        if tracking_mode not in {"single", "dual"}:
+            raise ValueError("tracking_mode must be single or dual")
         if int(self.capture_size) <= 0:
             raise ValueError("capture_size must be positive")
         shape = CaptureShape.coerce(self.shape)
@@ -85,6 +112,7 @@ class Poe2MonitorConfig:
         object.__setattr__(self, "profile_id", str(self.profile_id).strip())
         object.__setattr__(self, "profile_name", str(self.profile_name).strip())
         object.__setattr__(self, "selection_mode", selection_mode)
+        object.__setattr__(self, "tracking_mode", tracking_mode)
         object.__setattr__(self, "capture_size", int(self.capture_size))
         if selection_mode == "center" and self.binding is not None:
             object.__setattr__(
@@ -104,6 +132,11 @@ class Poe2MonitorConfig:
         )
         if not isinstance(self.recognizer_params, dict):
             raise TypeError("recognizer_params must be a dictionary")
+        profiles: list[dict] = []
+        for item in self.dual_marker_profiles:
+            profile = item if isinstance(item, MarkerColorProfile) else MarkerColorProfile.from_dict(item)
+            profiles.append(profile.to_dict())
+        object.__setattr__(self, "dual_marker_profiles", tuple(profiles))
         object.__setattr__(self, "recognizer_params", deepcopy(self.recognizer_params))
         if not isinstance(self.stitcher_params, dict):
             raise TypeError("stitcher_params must be a dictionary")
@@ -124,10 +157,12 @@ class Poe2MonitorConfig:
             "preview_fps": self.preview_fps,
             "profile_id": self.profile_id,
             "profile_name": self.profile_name,
+            "tracking_mode": self.tracking_mode,
             "selection_mode": self.selection_mode,
             "capture_size": self.capture_size,
             "shape": self.shape.value,
             "circle_radius": self.circle_radius,
+            "dual_marker_profiles": [deepcopy(item) for item in self.dual_marker_profiles],
             "recognizer_params": deepcopy(self.recognizer_params),
             "stitcher_params": deepcopy(self.stitcher_params),
         }
@@ -148,10 +183,12 @@ class Poe2MonitorConfig:
             preview_fps=data.get("preview_fps", 12),
             profile_id=data.get("profile_id", "default"),
             profile_name=data.get("profile_name", "默认配置"),
+            tracking_mode=data.get("tracking_mode", "single"),
             selection_mode=data.get("selection_mode", "region"),
             capture_size=data.get("capture_size", 320),
             shape=data.get("shape", CaptureShape.SQUARE.value),
             circle_radius=data.get("circle_radius"),
+            dual_marker_profiles=tuple(data.get("dual_marker_profiles", _default_dual_marker_profiles())),
             recognizer_params=data.get("recognizer_params", {}),
             stitcher_params=data.get("stitcher_params", _default_stitcher_params()),
         )

@@ -1,10 +1,10 @@
+import itertools
 import math
+from collections.abc import Mapping
 
-from PySide6.QtWidgets import (
-    QLabel, QScrollArea, QVBoxLayout, QWidget, QSizePolicy
-)
-from PySide6.QtCore import QPoint, QPointF, Signal, Qt
-from PySide6.QtGui import QMouseEvent, QWheelEvent, QPainter, QPen, QColor, QBrush
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QWheelEvent
+from PySide6.QtWidgets import QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 
 class _MapOverlayLabel(QLabel):
@@ -19,20 +19,55 @@ class _MapOverlayLabel(QLabel):
         self._position: tuple[float, float] | None = None
         self._trajectory: tuple[tuple[float, float], ...] = ()
         self._candidates: tuple[tuple[float, float], ...] = ()
+        self._players: tuple[tuple[str, tuple[float, float]], ...] = ()
+        self._player_trajectories: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
+        self._target: tuple[float, float] | None = None
+        self._routes: tuple[tuple[str, tuple[tuple[float, float], ...]], ...] = ()
 
     def set_geometry(self, *, source_size, scale_factor):
         self._source_size = (int(source_size[0]), int(source_size[1]))
         self._scale_factor = float(scale_factor)
         self.update()
 
-    def set_overlay(self, *, position=None, trajectory=(), candidates=()):
+    def set_overlay(
+        self,
+        *,
+        position=None,
+        trajectory=(),
+        candidates=(),
+        players: Mapping | None = None,
+        player_trajectories: Mapping | None = None,
+        target=None,
+        routes: Mapping | None = None,
+    ):
         self._position = position
         self._trajectory = tuple(trajectory or ())
         self._candidates = tuple(candidates or ())
+        self._players = tuple(
+            (str(identity), tuple(point))
+            for identity, point in (players or {}).items()
+            if point is not None
+        )
+        self._player_trajectories = tuple(
+            (str(identity), tuple(tuple(point) for point in points))
+            for identity, points in (player_trajectories or {}).items()
+            if points
+        )
+        self._target = tuple(target) if target is not None else None
+        self._routes = tuple(
+            (str(identity), tuple(tuple(point) for point in points))
+            for identity, points in (routes or {}).items()
+            if points
+        )
         self.update()
 
     def clear_overlay(self):
         self.set_overlay()
+
+    def set_target(self, target=None):
+        """Update only the target marker without replacing other overlays."""
+        self._target = tuple(target) if target is not None else None
+        self.update()
 
     def _point(self, point):
         width = self._source_size[0] * self._scale_factor
@@ -61,12 +96,59 @@ class _MapOverlayLabel(QLabel):
                 painter.setPen(QPen(QColor(255, 196, 0), max(2, int(2 * self._scale_factor))))
                 for first, second in zip(self._trajectory, self._trajectory[1:]):
                     painter.drawLine(self._point(first), self._point(second))
+            if self._player_trajectories:
+                colors = (
+                    QColor(20, 230, 120),
+                    QColor(80, 170, 255),
+                    QColor(255, 170, 40),
+                    QColor(220, 90, 220),
+                )
+                for index, (_identity, points) in enumerate(self._player_trajectories):
+                    if len(points) < 2:
+                        continue
+                    painter.setPen(QPen(colors[index % len(colors)], max(2, int(2 * self._scale_factor))))
+                    for first, second in itertools.pairwise(points):
+                        painter.drawLine(self._point(first), self._point(second))
+            if self._routes:
+                colors = (
+                    QColor(255, 220, 60, 220),
+                    QColor(255, 120, 60, 220),
+                    QColor(190, 120, 255, 220),
+                )
+                for index, (_identity, points) in enumerate(self._routes):
+                    if len(points) < 2:
+                        continue
+                    painter.setPen(QPen(colors[index % len(colors)], max(2, int(3 * self._scale_factor))))
+                    for first, second in itertools.pairwise(points):
+                        painter.drawLine(self._point(first), self._point(second))
+            if self._target is not None:
+                point = self._point(self._target)
+                radius = max(11.0, 11.0 * self._scale_factor)
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 80, 80, 230), max(2, int(3 * self._scale_factor))) )
+                painter.drawEllipse(point, radius, radius)
+                painter.drawLine(point + QPointF(-radius, 0), point + QPointF(radius, 0))
+                painter.drawLine(point + QPointF(0, -radius), point + QPointF(0, radius))
             if self._position is not None:
                 point = self._point(self._position)
                 radius = max(9.0, 9.0 * self._scale_factor)
                 painter.setPen(QPen(QColor(20, 230, 120), max(2, int(2 * self._scale_factor))))
                 painter.setBrush(QBrush(QColor(20, 230, 120, 180)))
                 painter.drawEllipse(point, radius, radius)
+            if self._players:
+                colors = (
+                    QColor(20, 230, 120),
+                    QColor(80, 170, 255),
+                    QColor(255, 170, 40),
+                    QColor(220, 90, 220),
+                )
+                for index, (_identity, player_position) in enumerate(self._players):
+                    point = self._point(player_position)
+                    color = colors[index % len(colors)]
+                    radius = max(9.0, 9.0 * self._scale_factor)
+                    painter.setPen(QPen(color, max(2, int(2 * self._scale_factor))))
+                    painter.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 180)))
+                    painter.drawEllipse(point, radius, radius)
         finally:
             painter.end()
 
@@ -94,6 +176,7 @@ class ScalableMapWidget(QWidget):
         self._drag_total_delta = 0
         self._needs_fit_to_view = False
         self._focus_base_scale = None
+        self._last_focus_scroll = None
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -107,6 +190,7 @@ class ScalableMapWidget(QWidget):
         self.overlay_label = _MapOverlayLabel(self.image_label)
         self.overlay_label.setGeometry(self.image_label.rect())
         self.overlay_label.raise_()
+        self.image_label.installEventFilter(self)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.scroll_area)
@@ -116,12 +200,18 @@ class ScalableMapWidget(QWidget):
         self.image_label.mouseReleaseEvent = self._mouse_release_event
         self.image_label.wheelEvent = self._wheel_event
 
+    def eventFilter(self, watched, event):
+        if watched is self.image_label and event.type() == QEvent.Resize:
+            self.overlay_label.setGeometry(self.image_label.rect())
+        return super().eventFilter(watched, event)
+
     def set_image(self, pixmap):
         self.original_pixmap = pixmap
         self.current_pixmap = pixmap
         self.scale_factor = 1.0 # Reset scale on new image
         self._needs_fit_to_view = True
         self._focus_base_scale = None
+        self._last_focus_scroll = None
         self.overlay_label.clear_overlay()
         if pixmap:
             self.image_label.setPixmap(pixmap)
@@ -132,16 +222,34 @@ class ScalableMapWidget(QWidget):
         else:
             self.image_label.clear()
 
-    def set_overlay(self, *, position=None, trajectory=(), candidates=()):
+    def set_overlay(
+        self,
+        *,
+        position=None,
+        trajectory=(),
+        candidates=(),
+        players: Mapping | None = None,
+        player_trajectories: Mapping | None = None,
+        target=None,
+        routes: Mapping | None = None,
+    ):
         """Update markers without replacing or rescaling the map pixmap."""
         self.overlay_label.set_overlay(
             position=position,
             trajectory=trajectory,
             candidates=candidates,
+            players=players,
+            player_trajectories=player_trajectories,
+            target=target,
+            routes=routes,
         )
 
     def clear_overlay(self):
         self.overlay_label.clear_overlay()
+
+    def set_target(self, target=None):
+        """Update only the target marker without replacing other overlays."""
+        self.overlay_label.set_target(target)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -204,29 +312,42 @@ class ScalableMapWidget(QWidget):
         viewport = self.scroll_area.viewport().size()
         scaled_x = x * self.scale_factor
         scaled_y = y * self.scale_factor
-        horizontal = int(round(scaled_x - viewport.width() / 2.0))
-        vertical = int(round(scaled_y - viewport.height() / 2.0))
+        horizontal = round(scaled_x - viewport.width() / 2.0)
+        vertical = round(scaled_y - viewport.height() / 2.0)
+        target_scroll = (horizontal, vertical)
+        # The tracker publishes at frame rate.  Avoid scheduling two scroll
+        # bar updates/repaints when the rounded viewport target did not change;
+        # this keeps the map presentation bounded without changing coordinates.
+        if target_scroll == self._last_focus_scroll:
+            return
+        self._last_focus_scroll = target_scroll
         self.scroll_area.horizontalScrollBar().setValue(horizontal)
         self.scroll_area.verticalScrollBar().setValue(vertical)
 
     def zoom_in(self):
         self._focus_base_scale = None
+        self._last_focus_scroll = None
         new_scale = self.scale_factor * 1.2
         if new_scale <= self.max_scale:
             self.set_scale(new_scale)
 
     def zoom_out(self):
         self._focus_base_scale = None
+        self._last_focus_scroll = None
         new_scale = self.scale_factor / 1.2
         if new_scale >= self.min_scale:
             self.set_scale(new_scale)
 
     def reset_zoom(self):
         self._focus_base_scale = None
+        self._last_focus_scroll = None
         self.set_scale(1.0)
 
     def set_scale(self, scale):
-        self.scale_factor = max(self.min_scale, min(scale, self.max_scale))
+        new_scale = max(self.min_scale, min(scale, self.max_scale))
+        if abs(new_scale - self.scale_factor) > 1e-6:
+            self._last_focus_scroll = None
+        self.scale_factor = new_scale
         self._apply_scale()
 
     def _apply_scale(self):

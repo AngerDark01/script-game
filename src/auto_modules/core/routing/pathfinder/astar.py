@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import heapq
 
-
 NEIGHBORS_8 = (
     (0, 1),
     (0, -1),
@@ -15,8 +14,8 @@ NEIGHBORS_8 = (
 )
 
 
-def astar_path(grid, start, end):
-    """Run 8-neighbor A* on an obstacle grid."""
+def astar_path(grid, start, end, *, cost_map=None):
+    """Run 8-neighbor A* on an obstacle grid with optional soft costs."""
     h, w = grid.shape
 
     open_set = []
@@ -45,6 +44,11 @@ def astar_path(grid, start, end):
                 continue
 
             move_cost = 1.414 if dx != 0 and dy != 0 else 1.0
+            if cost_map is not None:
+                move_cost *= (
+                    float(cost_map[current[1], current[0]])
+                    + float(cost_map[neighbor[1], neighbor[0]])
+                ) / 2.0
             tentative_g_score = g_score[current] + move_cost
 
             if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
@@ -64,8 +68,19 @@ def diagonal_cuts_corner(grid, current, dx: int, dy: int) -> bool:
 
 
 def heuristic(a, b):
-    """Manhattan distance heuristic."""
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    """Return the admissible octile distance for an 8-neighbor grid.
+
+    The grid permits diagonal movement with a cost of ``sqrt(2)``.  A
+    Manhattan heuristic overestimates that movement and can make A* close a
+    safer/shorter branch before it is examined.  Octile distance is the
+    matching lower bound and remains admissible when the optional clearance
+    multiplier is at least one.
+    """
+    dx = abs(a[0] - b[0])
+    dy = abs(a[1] - b[1])
+    diagonal = min(dx, dy)
+    straight = max(dx, dy) - diagonal
+    return diagonal * 1.414 + straight
 
 
 def reconstruct_path(came_from, current):

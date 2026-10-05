@@ -1,7 +1,10 @@
 import pytest
 import numpy as np
 
-from auto_modules.core.localization.displacement import transform_local_displacement
+from auto_modules.core.localization.displacement import (
+    inverse_transform_local_displacement,
+    transform_local_displacement,
+)
 from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.similarity_search import (
     transform_feature,
 )
@@ -74,6 +77,22 @@ def test_reflection_is_applied_before_rotation():
         reflect_horizontal=True,
         scale=1.0,
     ) == pytest.approx((-2.0, 0.0))
+
+
+def test_inverse_transform_recovers_local_vector_from_registered_native_vector():
+    local = (3.5, -2.0)
+    native = transform_local_displacement(
+        local,
+        angle_degrees=37.0,
+        reflect_horizontal=True,
+        scale=1.25,
+    )
+    assert inverse_transform_local_displacement(
+        native,
+        angle_degrees=37.0,
+        reflect_horizontal=True,
+        scale=1.25,
+    ) == pytest.approx(local, abs=1e-6)
 
 
 @pytest.mark.parametrize("shift", [(float("nan"), 0.0), (0.0, float("inf"))])

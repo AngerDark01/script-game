@@ -1,0 +1,143 @@
+{
+  "frame_id": 1791125077108,
+  "captured_at_ms": 1791125077108,
+  "status": "recovery_required",
+  "reason": "markers_missing",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "candidates": [
+    {
+      "id": "observation-0",
+      "position": [
+        101.0,
+        179.0
+      ],
+      "confidence": 0.9408585858585858,
+      "area": 35.5,
+      "bbox": [
+        96,
+        175,
+        11,
+        9
+      ],
+      "color_features": {
+        "identity_hint": "玩家2",
+        "area": 35.5,
+        "bbox": [
+          96,
+          175,
+          11,
+          9
+        ],
+        "compactness": 0.35858585858585856,
+        "hue": 102.0,
+        "detector": "configured_components",
+        "profile": "玩家2",
+        "profile_index": 1
+      }
+    },
+    {
+      "id": "observation-1",
+      "position": [
+        61.0,
+        124.0
+      ],
+      "confidence": 0.8896590909090909,
+      "area": 30.5,
+      "bbox": [
+        55,
+        121,
+        11,
+        8
+      ],
+      "color_features": {
+        "identity_hint": "玩家1",
+        "area": 30.5,
+        "bbox": [
+          55,
+          121,
+          11,
+          8
+        ],
+        "compactness": 0.3465909090909091,
+        "hue": 13.0,
+        "detector": "configured_components",
+        "profile": "玩家1",
+        "profile_index": 0
+      }
+    }
+  ],
+  "diagnostics": {
+    "consecutive_wall_failures": 3,
+    "failed_frame_id": 1791125077108,
+    "expired_marker_identities": [
+      "Metadata/Characters/Dex/DexFourb"
+    ],
+    "identity_dropout_failures": {
+      "Metadata/Characters/StrDex/StrDexFourb": 0,
+      "Metadata/Characters/Dex/DexFourb": 34
+    },
+    "role_observations": {
+      "Metadata/Characters/StrDex/StrDexFourb": {
+        "visible": true,
+        "available": true,
+        "last_seen_at_ms": 1791125077108,
+        "age_ms": 0,
+        "uncertainty_native": 0.5
+      },
+      "Metadata/Characters/Dex/DexFourb": {
+        "visible": false,
+        "available": false,
+        "last_seen_at_ms": 1791125074679,
+        "age_ms": 2429,
+        "uncertainty_native": 11.4305
+      }
+    },
+    "observation_bounds": {
+      "max_age_ms": 2000,
+      "max_uncertainty_native": 10.0
+    },
+    "assignment": {
+      "candidate_ids": [
+        "observation-0",
+        "observation-1"
+      ],
+      "options": [
+        {
+          "cost": 0.0,
+          "identities": [
+            "Metadata/Characters/StrDex/StrDexFourb"
+          ],
+          "candidate_ids": [
+            "observation-1"
+          ],
+          "distances": [
+            0.0
+          ]
+        }
+      ]
+    }
+  }
+}

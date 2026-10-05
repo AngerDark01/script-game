@@ -1,0 +1,35 @@
+{
+  "frame_id": 1791131266273,
+  "captured_at_ms": 1791131266273,
+  "status": "recovery_required",
+  "reason": "wall_and_local_match_failed",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "candidates": [],
+  "diagnostics": {
+    "consecutive_wall_failures": 3,
+    "failed_frame_id": 1791131266273
+  }
+}

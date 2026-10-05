@@ -63,13 +63,62 @@ def apply_safety_margin(binary_map, *, safety_margin: int, downsample_factor: in
     if int(safety_margin) <= 0:
         return binary_map
 
-    grid_margin = int(round(int(safety_margin) / max(1, int(downsample_factor))))
+    grid_margin = round(int(safety_margin) / max(1, int(downsample_factor)))
     if grid_margin <= 0:
         return binary_map
 
     kernel_size = grid_margin * 2 + 1
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     return cv2.dilate(binary_map, kernel)
+
+
+def build_clearance_cost_map(
+    obstacle_map,
+    *,
+    clearance_radius: float = 0.0,
+    clearance_weight: float = 0.0,
+    dead_end_weight: float = 0.0,
+):
+    """Return a positive traversal-cost map that prefers open space.
+
+    ``obstacle_map`` remains the authoritative binary collision grid.  The
+    returned values only bias A* among walkable cells, so callers can keep
+    the existing collision contract while penalising routes that skim walls.
+    The cost decays smoothly with distance from the nearest obstacle and is
+    capped at ``1 + clearance_weight``.
+    """
+    radius = float(clearance_radius)
+    weight = float(clearance_weight)
+    topology_weight = float(dead_end_weight)
+    if (radius <= 0.0 or weight <= 0.0) and topology_weight <= 0.0:
+        return None
+    binary = np.asarray(obstacle_map)
+    if binary.ndim != 2:
+        raise ValueError("obstacle_map must be two-dimensional")
+    free = np.where(binary > 0, 0, 255).astype(np.uint8)
+    distance = cv2.distanceTransform(free, cv2.DIST_L2, 3)
+    cost = np.ones(binary.shape, dtype=np.float32)
+    if radius > 0.0 and weight > 0.0:
+        # Cells inside the configured safety band are still walkable only
+        # when the collision grid permits them, but receive the largest soft
+        # penalty.
+        proximity = np.clip((radius - distance) / radius, 0.0, 1.0)
+        cost += weight * proximity
+    if topology_weight > 0.0:
+        # Penalise one/two-exit cells so a route through a narrow spur loses
+        # to a similarly short open route.  The hard obstacle grid remains
+        # authoritative; if the corridor is the only connection, A* still
+        # uses it rather than declaring a valid map unreachable.
+        walkable = (binary == 0).astype(np.uint8)
+        degree = cv2.filter2D(
+            walkable.astype(np.float32),
+            cv2.CV_32F,
+            np.ones((3, 3), dtype=np.int32),
+            borderType=cv2.BORDER_CONSTANT,
+        ) - walkable.astype(np.float32)
+        narrowness = np.clip((3.0 - degree.astype(np.float32)) / 3.0, 0.0, 1.0)
+        cost += topology_weight * narrowness * walkable
+    return cost
 
 
 def clear_start_area(
@@ -80,7 +129,7 @@ def clear_start_area(
     downsample_factor: int,
 ):
     """Forgive local wall noise around the live player position."""
-    radius = int(round(int(start_clear_radius) / max(1, int(downsample_factor))))
+    radius = round(int(start_clear_radius) / max(1, int(downsample_factor)))
     if radius <= 0:
         return obstacle_map
 

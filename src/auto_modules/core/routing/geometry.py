@@ -1,8 +1,15 @@
 import math
 
+import cv2
+import numpy as np
+
 from .route_progress import (
     build_cumulative_lengths as _build_cumulative_lengths,
+)
+from .route_progress import (
     interpolate_by_distance as _interpolate_by_distance,
+)
+from .route_progress import (
     project_point_on_polyline,
 )
 
@@ -68,6 +75,88 @@ def line_is_walkable(wall_map, start, end, obstacle_threshold: int = 1, *, corne
                 return False
         previous = (x, y)
     return True
+
+
+def line_min_clearance(
+    wall_map,
+    start,
+    end,
+    *,
+    obstacle_threshold: int = 1,
+    distance_map=None,
+) -> float:
+    """Return the minimum map-space distance from a segment to an obstacle.
+
+    ``line_is_walkable`` answers the hard collision question.  This companion
+    check answers the separate safety question and lets a caller reject a
+    route that technically stays walkable while scraping a wall.  The
+    distance transform is calculated per call because this function is used
+    at route-validation boundaries; high-frequency tracking should cache the
+    resulting verdict rather than call it for every stick tick.
+    """
+    values = np.asarray(wall_map)
+    if values.ndim != 2:
+        raise ValueError("wall_map must be two-dimensional")
+    if distance_map is None:
+        free = np.where(values >= obstacle_threshold, 0, 255).astype(np.uint8)
+        distance = cv2.distanceTransform(free, cv2.DIST_L2, 3)
+    else:
+        distance = np.asarray(distance_map)
+        if distance.shape != values.shape:
+            raise ValueError("distance_map shape must match wall_map")
+    height, width = values.shape
+    minimum = float("inf")
+    for x, y in _bresenham_points(start, end):
+        if x < 0 or y < 0 or x >= width or y >= height:
+            return 0.0
+        minimum = min(minimum, float(distance[y, x]))
+    return 0.0 if minimum == float("inf") else minimum
+
+
+def line_clearance_stats(
+    wall_map,
+    start,
+    end,
+    *,
+    obstacle_threshold: int = 1,
+    distance_map=None,
+    clearance_band: float = 0.0,
+):
+    """Measure the clearance profile along a route segment.
+
+    A minimum alone overreacts to one raster cell and misses a long stretch
+    that scrapes a wall.  The returned mean and low-clearance fraction let
+    planners prefer an open corridor while still accepting a doorway when it
+    is the only connection.
+    """
+    values = np.asarray(wall_map)
+    if values.ndim != 2:
+        raise ValueError("wall_map must be two-dimensional")
+    if distance_map is None:
+        free = np.where(values >= obstacle_threshold, 0, 255).astype(np.uint8)
+        distance = cv2.distanceTransform(free, cv2.DIST_L2, 3)
+    else:
+        distance = np.asarray(distance_map)
+        if distance.shape != values.shape:
+            raise ValueError("distance_map shape must match wall_map")
+    samples = []
+    height, width = values.shape
+    for x, y in _bresenham_points(start, end):
+        if x < 0 or y < 0 or x >= width or y >= height:
+            return {"minimum": 0.0, "mean": 0.0, "low_fraction": 1.0, "samples": len(samples)}
+        samples.append(float(distance[y, x]))
+    if not samples:
+        return {"minimum": 0.0, "mean": 0.0, "low_fraction": 1.0, "samples": 0}
+    band = max(0.0, float(clearance_band))
+    return {
+        "minimum": min(samples),
+        "mean": sum(samples) / len(samples),
+        "low_fraction": (
+            sum(value < band for value in samples) / len(samples)
+            if band > 0.0 else 0.0
+        ),
+        "samples": len(samples),
+    }
 
 
 def shortcut_path(wall_map, path, *, corner_safe: bool = False):

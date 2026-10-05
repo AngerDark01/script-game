@@ -54,6 +54,12 @@ class PositionStateEstimator:
             return None
         return float(position[0]), float(position[1])
 
+    @property
+    def snapshot(self) -> EstimateUpdate | None:
+        if self._position is None:
+            return None
+        return self._snapshot(False, "snapshot")
+
     def reset(self, position: tuple[float, float], *, covariance: np.ndarray | None = None, now_ms: int | None = None) -> EstimateUpdate:
         position_array = np.asarray(position, dtype=np.float64)
         if position_array.shape != (2,) or not np.isfinite(position_array).all():

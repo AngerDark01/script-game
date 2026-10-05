@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "saved_at": "2026-09-22T13:39:00.640460+00:00",
+  "captured_at": "2026-09-22T13:38:59.176592+00:00",
+  "monitor_config": {
+    "binding": {
+      "rect": {
+        "left": 2249,
+        "top": 107,
+        "width": 200,
+        "height": 200
+      },
+      "screen_id": "primary",
+      "coordinate_space": "physical_desktop",
+      "dpi_scale_x": 1.5,
+      "dpi_scale_y": 1.5,
+      "player_marker_position": [
+        100,
+        100
+      ]
+    },
+    "search_radius": 92,
+    "match_threshold": 0.72,
+    "sample_interval_ms": 33,
+    "profile_id": "a6ccb4c6767e",
+    "profile_name": "默认配置",
+    "selection_mode": "center",
+    "capture_size": 200,
+    "shape": "square",
+    "circle_radius": 160.0,
+    "map_rotation": 0,
+    "map_flip_horizontal": false,
+    "map_flip_vertical": false,
+    "recognizer_params": {
+      "wall_hsv_min": [
+        22,
+        207,
+        0
+      ],
+      "wall_hsv_max": [
+        32,
+        247,
+        255
+      ],
+      "fog_hsv_min": [
+        91,
+        174,
+        188
+      ],
+      "fog_hsv_max": [
+        108,
+        243,
+        255
+      ],
+      "player_hsv_min": [
+        0,
+        235,
+        235
+      ],
+      "player_hsv_max": [
+        10,
+        255,
+        255
+      ],
+      "enable_wall": true,
+      "enable_fog": false,
+      "clahe_enabled": false,
+      "deepen_enabled": false,
+      "gamma_enabled": true,
+      "tophat_enabled": true,
+      "sat_filter_enabled": true,
+      "clahe_clip": 3.0,
+      "clahe_grid": 4,
+      "deepen_factor": 1.0,
+      "blue_boost": 1.0,
+      "gamma_value": 2.0,
+      "tophat_strength": 4,
+      "tophat_kernel_size": 13,
+      "trans_sat_penalty": 1.5,
+      "trans_wall_thresh": 54,
+      "transparent_mode": true,
+      "sat_filter_thresh": 45,
+      "sat_filter_radius": 1,
+      "player_clear_radius": 22,
+      "wall_weight": 44,
+      "edge_weight": 29,
+      "edge_low": 50,
+      "edge_high": 150,
+      "kernel_small_size": 3,
+      "kernel_medium_size": 5
+    },
+    "stitcher_params": {
+      "conf_thresh": 0.3,
+      "keyframe_thresh": 0.25,
+      "weight_add": 0.3,
+      "weight_cap": 5.0,
+      "draw_quality_gate": 0.35,
+      "use_precise_visibility_mask": true,
+      "precise_visibility_min_pixels": 16,
+      "wall_close_kernel_size": 3,
+      "canvas_size": 5000,
+      "draw_scale": 2.0
+    }
+  },
+  "terrain": {
+    "status": "available",
+    "area_id": "MapFlotsam",
+    "area_hash": "1E44BF94",
+    "instance_id": "MapFlotsam:1E44BF94",
+    "width": 2416,
+    "height": 2277,
+    "native_width": 2416,
+    "native_height": 2277,
+    "coordinate_space": "oriented-preview",
+    "orientation": {
+      "rotation": 0,
+      "flip_horizontal": false,
+      "flip_vertical": false
+    },
+    "captured_at": "2026-09-22T13:38:25.507955+00:00"
+  },
+  "player_position": {
+    "status": "missing",
+    "reason": "no current player position sample"
+  },
+  "images": {
+    "raw": {
+      "file": "raw.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "ae49bbeb8eb07696af19dfa483eba27441bae868d5e9feb552f1a59b4e1f1ab7"
+    },
+    "processed": {
+      "file": "processed.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "1086333919389dcd618a638fea20c0679757ff1b09f306592df590510ed4be0c"
+    },
+    "feature": {
+      "file": "feature.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "5744fd245495aacf10432459874ad031e64554e30cc4c4e636b607e8c246c0aa"
+    },
+    "wall_mask": {
+      "file": "wall_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "23a19e599bf0e74b641f1e423a679760089c0d443fd8c6e0deba53d62bbadc54"
+    },
+    "fog_mask": {
+      "file": "fog_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "ceb92cbcacc13900672dfa26b92f1dfeb38d3428a5b96ecfba0cc7a3e99ae600"
+    },
+    "raw_gray": {
+      "file": "raw_gray.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "dtype": "uint8",
+      "sha256": "b028396791279bf1882479c7cb10329cf073aa0ef58e7207f4b07c3489ecddb6"
+    },
+    "terrain": {
+      "file": "terrain.png",
+      "width": 2416,
+      "height": 2277,
+      "channels": 3,
+      "dtype": "uint8",
+      "sha256": "53a9e0c5d6f92dd0f399cc36929e586bf5b895c041c064f07fd7a7f54f2c4bfe"
+    }
+  }
+}

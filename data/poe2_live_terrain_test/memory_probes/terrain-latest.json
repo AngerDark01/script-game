@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "tool": "manual-live-terrain-capture",
+  "captured_at": "2026-09-22T03:27:56.873172+00:00",
+  "area_id": "MapFlotsam",
+  "area_hash": "BB9AA6DE",
+  "instance_id": "MapFlotsam:BB9AA6DE",
+  "width": 3382,
+  "height": 1863,
+  "raw_sha256": "cf598b1e20805f9e28b02c8e52f6389fe524f54bd7a562192aa8f4413eba441a",
+  "run_directory": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\runs\\poe2-20260922-112756-BB9AA6DE-4b7248",
+  "preview": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\output\\latest.png",
+  "native_grid": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\output\\latest.npz",
+  "timings_ms": {
+    "session_and_process": 31.877,
+    "descriptor_resolution": 136.535,
+    "guarded_capture_and_export": 1740.708,
+    "latest_publication": 35.623,
+    "total_before_manifest": 1944.743
+  }
+}

@@ -12,6 +12,11 @@ from .memory_store import MemoryTerrainStore
 from .monitor_config import Poe2MonitorConfig, Poe2MonitorConfigStore, Poe2MonitorProfileStore
 from .orientation import TerrainOrientation
 from .monitor_source import MonitorFrameSource
+from .movement import (
+    POE2_MAP_TO_STICK_BASIS,
+    native_map_vector_to_local,
+    native_route_vector_for_program_output,
+)
 from .native_grid import load_native_grid
 from .player_policy import select_single_player, select_single_player_frame
 from .player_position import PlayerPositionError, PlayerPositionSample, Poe2PlayerPositionSource
@@ -41,6 +46,9 @@ __all__ = [
     "MemoryTerrainStore",
     "MinimapCalibration",
     "MonitorFrameSource",
+    "POE2_MAP_TO_STICK_BASIS",
+    "native_map_vector_to_local",
+    "native_route_vector_for_program_output",
     "Poe2Calibration",
     "Poe2CaptureAdapter",
     "Poe2FrameInput",

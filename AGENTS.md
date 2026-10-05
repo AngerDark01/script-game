@@ -12,6 +12,20 @@ Before changing virtual gamepad, LAN input, OCR, or desktop-control behavior,
 trace the affected path and run focused tests. Do not send real input or start
 network synchronization unless the task explicitly requests it.
 
+## Mandatory Checkpoint Discipline
+
+Every task must have a durable checkpoint document before implementation or
+diagnosis begins. Use the task's existing checkpoint when one exists; otherwise
+create one under `docs/` with a clear task name. Update it immediately after
+each material finding, root-cause conclusion, implementation boundary,
+verification result, unresolved risk, or user decision. Keep the checkpoint
+concise but concrete: record the evidence, affected call chain, files and
+symbols, current status, and the exact next action. Also append a short entry
+to `ITERATION_LOG.md` for repository-level traceability. After context
+compaction, the first action is to read the checkpoint and iteration entry
+before inspecting code or repeating experiments. Never rely on chat history as
+the only record of a decision or failed experiment.
+
 ## Architecture Design Philosophy: Generalize From the Bottom Up
 
 Every layer must achieve the maximum **practical** generality within its own

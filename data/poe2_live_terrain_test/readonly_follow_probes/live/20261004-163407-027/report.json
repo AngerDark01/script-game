@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "tool": "poe2-follow-readonly-probe",
+  "read_only": true,
+  "started_at": "2026-10-04T08:34:07.028536+00:00",
+  "limits": {
+    "frame_count": 12,
+    "interval_seconds": 0.1,
+    "save_frames": 6,
+    "input_calls": 0,
+    "network_calls": 0
+  },
+  "run_root": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\readonly_follow_probes\\live\\20261004-163407-027",
+  "steps": [],
+  "frames": [],
+  "errors": [
+    {
+      "type": "FileExistsError",
+      "message": "[WinError 183] 当文件已存在时，无法创建该文件。: 'D:\\\\ACloud\\\\auto_modules\\\\data\\\\poe2_live_terrain_test\\\\readonly_follow_probes\\\\live\\\\20261004-163407-027\\\\terrain_capture'"
+    }
+  ],
+  "elapsed_ms": 6645.392899999933,
+  "finished_at": "2026-10-04T08:34:13.674200+00:00"
+}

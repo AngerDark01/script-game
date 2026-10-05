@@ -1,0 +1,417 @@
+{
+  "tool": "poe2-dual-player-entity-probe",
+  "read_only": true,
+  "instance": "MapFlotsam:73681455",
+  "samples": [
+    {
+      "sample": 0,
+      "captured_at": "2026-09-25T03:45:13.864478+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 1,
+      "captured_at": "2026-09-25T03:45:13.966370+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 2,
+      "captured_at": "2026-09-25T03:45:14.070077+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 3,
+      "captured_at": "2026-09-25T03:45:14.172510+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 4,
+      "captured_at": "2026-09-25T03:45:14.277314+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 5,
+      "captured_at": "2026-09-25T03:45:14.379911+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 6,
+      "captured_at": "2026-09-25T03:45:14.482255+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 7,
+      "captured_at": "2026-09-25T03:45:14.585258+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 8,
+      "captured_at": "2026-09-25T03:45:14.688397+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    },
+    {
+      "sample": 9,
+      "captured_at": "2026-09-25T03:45:14.789373+00:00",
+      "vector_begin": "0x2e7ca25e5d0",
+      "vector_end": "0x2e7ca25e5e0",
+      "count": 2,
+      "players": [
+        {
+          "index": 0,
+          "entity": "0x2e7af96a200",
+          "render": "0x2e8b4202880",
+          "metadata": "Metadata/Characters/StrDex/StrDexFourb",
+          "world": [
+            10396.7392578125,
+            4679.34765625,
+            -594.7950439453125
+          ],
+          "grid": [
+            956.50001171875,
+            430.499984375
+          ],
+          "component_count": 13
+        },
+        {
+          "index": 1,
+          "entity": "0x2e8b950ba00",
+          "render": "0x2e8b4202eb0",
+          "metadata": "Metadata/Characters/Dex/DexFourb",
+          "world": [
+            10461.9560546875,
+            4614.13037109375,
+            -585.7335815429688
+          ],
+          "grid": [
+            962.49995703125,
+            424.499994140625
+          ],
+          "component_count": 13
+        }
+      ]
+    }
+  ]
+}

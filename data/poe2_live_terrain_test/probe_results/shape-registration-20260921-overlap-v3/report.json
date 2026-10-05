@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "accepted": false,
+  "reason": "low_score",
+  "score_margin": 0.0028040729221063265,
+  "input": {
+    "session": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\stitching_sessions\\20260921-121018-260622-a6ccb4c6767e",
+    "terrain": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\samples\\20260921-090840-957906-MapFlotsam-5C048CD0\\terrain.png",
+    "terrain_source": "explicit",
+    "stitched_sha256": "98122f3933a959cecd0c6eec82e8c59b2f544721413fb5fd79a7836cb14ceef3",
+    "terrain_sha256": "1832957e66c2dd896b61ff912f86732b4de310475d878f9da2474967826a0848",
+    "local_player": [
+      387.0,
+      280.0
+    ]
+  },
+  "normalization": {
+    "local_skeleton_pixels": 1572,
+    "terrain_skeleton_pixels": 41339
+  },
+  "config": {
+    "hough": {
+      "min_angle": 0.0,
+      "max_angle": 360.0,
+      "angle_step": 5.0,
+      "min_scale": 0.1,
+      "max_scale": 0.5,
+      "scale_step": 0.02,
+      "min_distance": 24.0,
+      "position_threshold": 8,
+      "angle_threshold": 20,
+      "scale_threshold": 10
+    },
+    "trim_fraction": 0.2,
+    "distance_tolerance": 3.0,
+    "max_candidates": 24,
+    "min_skeleton_pixels": 80,
+    "candidate_downsample": 0.25,
+    "candidate_line_width": 5,
+    "peaks_per_transform": 2,
+    "minimum_score": 0.68,
+    "minimum_margin": 0.05
+  },
+  "candidates": [
+    {
+      "center": [
+        1814.5,
+        2179.0
+      ],
+      "angle": 0.0,
+      "scale": 0.1,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.47174972313759056,
+      "forward_coverage": 0.5648148148148148,
+      "reverse_coverage": 0.4270833333333333,
+      "forward_distance": 2.3112871646881104,
+      "reverse_distance": 3.227182388305664,
+      "proposal_score": 0.5457234382629395,
+      "source": "overlap",
+      "projected_player": [
+        1823.55,
+        2158.5
+      ],
+      "overlay": "candidate_01_overlay.png"
+    },
+    {
+      "center": [
+        982.5,
+        974.0
+      ],
+      "angle": 270.0,
+      "scale": 0.1,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.46894565021548423,
+      "forward_coverage": 0.5471698113207547,
+      "reverse_coverage": 0.5268456375838926,
+      "forward_distance": 3.266693592071533,
+      "reverse_distance": 3.2382001876831055,
+      "proposal_score": 0.5427993535995483,
+      "source": "overlap",
+      "projected_player": [
+        962.0,
+        983.05
+      ],
+      "overlay": "candidate_02_overlay.png"
+    },
+    {
+      "center": [
+        2006.499984741211,
+        1795.0
+      ],
+      "angle": 135.0,
+      "scale": 0.1,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.4668707745240984,
+      "forward_coverage": 0.4794952681388013,
+      "reverse_coverage": 0.835820895522388,
+      "forward_distance": 8.791863441467285,
+      "reverse_distance": 1.2071398496627808,
+      "proposal_score": 0.5425191521644592,
+      "source": "overlap",
+      "projected_player": [
+        2027.3949901252734,
+        1803.096372644586
+      ],
+      "overlay": "candidate_03_overlay.png"
+    },
+    {
+      "center": [
+        1818.4999961853027,
+        2174.9999961853027
+      ],
+      "angle": 185.0,
+      "scale": 0.1,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.459604577668718,
+      "forward_coverage": 0.5529801324503312,
+      "reverse_coverage": 0.42355371900826444,
+      "forward_distance": 2.3615293502807617,
+      "reverse_distance": 3.465482711791992,
+      "proposal_score": 0.5341459512710571,
+      "source": "overlap",
+      "projected_player": [
+        1825.728865476706,
+        2196.21074696805
+      ],
+      "overlay": "candidate_04_overlay.png"
+    },
+    {
+      "center": [
+        1970.5000038146973,
+        1307.0000038146973
+      ],
+      "angle": 355.0,
+      "scale": 0.1,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.4471169625015994,
+      "forward_coverage": 0.5311475409836065,
+      "reverse_coverage": 0.42892156862745096,
+      "forward_distance": 2.5741591453552246,
+      "reverse_distance": 3.488151788711548,
+      "proposal_score": 0.5247771143913269,
+      "source": "overlap",
+      "projected_player": [
+        1959.69774907064,
+        1287.3667719756827
+      ],
+      "overlay": "candidate_05_overlay.png"
+    },
+    {
+      "center": [
+        1818.5,
+        2174.0
+      ],
+      "angle": 270.0,
+      "scale": 0.1,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.43784915881306397,
+      "forward_coverage": 0.5345911949685535,
+      "reverse_coverage": 0.39501039501039503,
+      "forward_distance": 2.5815179347991943,
+      "reverse_distance": 3.5837275981903076,
+      "proposal_score": 0.5303499698638916,
+      "source": "overlap",
+      "projected_player": [
+        1798.0,
+        2164.95
+      ],
+      "overlay": "candidate_06_overlay.png"
+    }
+  ]
+}

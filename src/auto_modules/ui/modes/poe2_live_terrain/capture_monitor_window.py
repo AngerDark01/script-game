@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
+    QSplitter,
     QVBoxLayout,
 )
 
@@ -28,6 +30,7 @@ from auto_modules.features.poe2.live_terrain import (
 from auto_modules.features.poe2.live_terrain.orientation import TerrainOrientation
 from auto_modules.ui.modes.mapping.map_renderer import render_global_map_pixmap
 from auto_modules.ui.widgets.scalable_map import ScalableMapWidget
+from auto_modules.ui.widgets.aspect_preview import AspectPreviewLabel
 
 from .presenter import frame_pixmap, present_localization_overlay, present_snapshot
 
@@ -103,7 +106,7 @@ class Poe2CaptureMonitorWindow(QDialog):
         root.addWidget(self.error_label)
         root.addWidget(self.hybrid_status_label)
 
-        workspace = QHBoxLayout()
+        self.workspace_splitter = QSplitter(Qt.Horizontal, self)
         previews = QGroupBox("当前同步证据")
         preview_grid = QGridLayout(previews)
         self.raw_preview = self._preview_label("尚未截图")
@@ -122,10 +125,12 @@ class Poe2CaptureMonitorWindow(QDialog):
         ):
             row, column = divmod(index, 3)
             panel = QVBoxLayout()
-            panel.addWidget(QLabel(title))
-            panel.addWidget(label)
+            title_label = QLabel(title)
+            title_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            panel.addWidget(title_label)
+            panel.addWidget(label, 1)
             preview_grid.addLayout(panel, row, column)
-        workspace.addWidget(previews, 2)
+        self.workspace_splitter.addWidget(previews)
 
         stitching = QGroupBox("启动局部地图拼接")
         stitching_root = QVBoxLayout(stitching)
@@ -156,8 +161,10 @@ class Poe2CaptureMonitorWindow(QDialog):
         self.stitching_status_label = QLabel("绘图：未开始")
         self.stitching_status_label.setWordWrap(True)
         stitching_root.addWidget(self.stitching_status_label)
-        workspace.addWidget(stitching, 3)
-        root.addLayout(workspace, 4)
+        self.workspace_splitter.addWidget(stitching)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setStretchFactor(0, 2)
+        self.workspace_splitter.setStretchFactor(1, 3)
 
         history = QGroupBox("历史样本对比")
         history_root = QVBoxLayout(history)
@@ -197,7 +204,14 @@ class Poe2CaptureMonitorWindow(QDialog):
         history_views.addLayout(previous_panel)
         history_views.addLayout(current_panel)
         history_root.addLayout(history_views)
-        root.addWidget(history, 2)
+        self.content_splitter = QSplitter(Qt.Vertical, self)
+        self.content_splitter.addWidget(self.workspace_splitter)
+        self.content_splitter.addWidget(history)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setStretchFactor(0, 4)
+        self.content_splitter.setStretchFactor(1, 2)
+        self.content_splitter.setSizes([650, 260])
+        root.addWidget(self.content_splitter, 1)
 
         self.stop_button.setEnabled(False)
         self.save_button.setEnabled(False)
@@ -205,9 +219,8 @@ class Poe2CaptureMonitorWindow(QDialog):
 
     @staticmethod
     def _preview_label(message: str) -> QLabel:
-        label = QLabel(message)
+        label = AspectPreviewLabel(message)
         label.setMinimumSize(240, 160)
-        label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet("background: #101318; border: 1px solid #39414d;")
         return label
 
@@ -515,11 +528,13 @@ class Poe2CaptureMonitorWindow(QDialog):
         if pixmap is None or pixmap.isNull():
             Poe2CaptureMonitorWindow._clear_label(label, missing)
             return
-        label.clear()
-        label.setPixmap(pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.FastTransformation))
+        label.set_source_pixmap(pixmap)
 
     @staticmethod
     def _clear_label(label: QLabel, message: str) -> None:
+        if isinstance(label, AspectPreviewLabel):
+            label.clear_source(message)
+            return
         label.clear()
         label.setText(message)
 

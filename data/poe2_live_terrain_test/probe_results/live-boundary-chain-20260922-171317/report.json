@@ -1,0 +1,94 @@
+{
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-boundary-chain-20260922-171317",
+  "absolute": {
+    "status": "anchored_candidate",
+    "reason": "single-frame geometry is consistent with the memory anchor",
+    "anchor": [
+      296.069970703125,
+      409.66153515625
+    ],
+    "boundary_pixels": 86703,
+    "candidate_count": 2,
+    "candidates": [
+      {
+        "angle": 221.0,
+        "reflect_horizontal": true,
+        "scale": 0.79,
+        "top_left": [
+          18,
+          19
+        ],
+        "player_position": [
+          129.429,
+          129.833
+        ],
+        "mean_distance": 2.1430230140686035,
+        "forward_coverage": 0.7651991614255765,
+        "reverse_coverage": 0.4157014157014157,
+        "walkable_coverage": 0.34142992017852547,
+        "player_on_walkable": true,
+        "score": 0.5549808221357493,
+        "edge_pixels": 477,
+        "rank": 1,
+        "global_player_position": [
+          295.42896696773676,
+          409.83274639936076
+        ],
+        "anchor_error": 0.6634750022037296,
+        "anchored_score": 0.6641622572199253,
+        "basin_angle": 225.0,
+        "basin_reflection": true
+      },
+      {
+        "angle": 233.0,
+        "reflect_horizontal": true,
+        "scale": 0.59,
+        "top_left": [
+          31,
+          44
+        ],
+        "player_position": [
+          113.542,
+          126.187
+        ],
+        "mean_distance": 3.2102744579315186,
+        "forward_coverage": 0.6680497925311203,
+        "reverse_coverage": 0.3743427970557308,
+        "walkable_coverage": 0.41086286594761173,
+        "player_on_walkable": true,
+        "score": 0.5022795358843364,
+        "edge_pixels": 241,
+        "rank": 2,
+        "global_player_position": [
+          279.5419379563659,
+          406.18686709270617
+        ],
+        "anchor_error": 16.889321615439517,
+        "anchored_score": 0.5739305218650038,
+        "basin_angle": 225.0,
+        "basin_reflection": true
+      }
+    ]
+  },
+  "local": {
+    "prior_top_left": [
+      184.0,
+      299.0
+    ],
+    "valid": false,
+    "confidence": 0.0,
+    "origin": null,
+    "metadata": {
+      "mean_wall_error_px": 3.2642502784729004,
+      "candidate_margin": 0.03513598442077637,
+      "search_origins": [
+        88,
+        203,
+        280,
+        395
+      ],
+      "elapsed_ms": 11.16109999929904
+    },
+    "position": null
+  }
+}

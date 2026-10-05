@@ -1,0 +1,189 @@
+{
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-chain-20260922-170100",
+  "config": {
+    "profile_id": "a6ccb4c6767e",
+    "profile_name": "默认配置",
+    "binding": {
+      "rect": {
+        "left": 2249,
+        "top": 107,
+        "width": 200,
+        "height": 200
+      },
+      "screen_id": "primary",
+      "coordinate_space": "physical_desktop",
+      "dpi_scale_x": 1.5,
+      "dpi_scale_y": 1.5,
+      "player_marker_position": [
+        100,
+        100
+      ]
+    },
+    "selection_mode": "center",
+    "shape": "square",
+    "map_rotation": 0,
+    "map_flip_horizontal": false,
+    "map_flip_vertical": false,
+    "recognizer_params": {
+      "wall_hsv_min": [
+        22,
+        207,
+        0
+      ],
+      "wall_hsv_max": [
+        32,
+        247,
+        255
+      ],
+      "fog_hsv_min": [
+        91,
+        174,
+        188
+      ],
+      "fog_hsv_max": [
+        108,
+        243,
+        255
+      ],
+      "player_hsv_min": [
+        0,
+        235,
+        235
+      ],
+      "player_hsv_max": [
+        10,
+        255,
+        255
+      ],
+      "enable_wall": true,
+      "enable_fog": false,
+      "clahe_enabled": false,
+      "deepen_enabled": false,
+      "gamma_enabled": true,
+      "tophat_enabled": true,
+      "sat_filter_enabled": true,
+      "clahe_clip": 3.0,
+      "clahe_grid": 4,
+      "deepen_factor": 1.0,
+      "blue_boost": 1.0,
+      "gamma_value": 2.0,
+      "tophat_strength": 4,
+      "tophat_kernel_size": 13,
+      "trans_sat_penalty": 1.5,
+      "trans_wall_thresh": 54,
+      "transparent_mode": true,
+      "sat_filter_thresh": 45,
+      "sat_filter_radius": 1,
+      "player_clear_radius": 22,
+      "wall_weight": 44,
+      "edge_weight": 29,
+      "edge_low": 50,
+      "edge_high": 150,
+      "kernel_small_size": 3,
+      "kernel_medium_size": 5
+    }
+  },
+  "recognizer_params_before_config": {
+    "wall_hsv_min": [
+      118,
+      5,
+      54
+    ],
+    "wall_hsv_max": [
+      132,
+      90,
+      225
+    ],
+    "fog_hsv_min": [
+      91,
+      174,
+      188
+    ],
+    "fog_hsv_max": [
+      108,
+      243,
+      255
+    ],
+    "player_hsv_min": [
+      40,
+      100,
+      100
+    ],
+    "player_hsv_max": [
+      80,
+      255,
+      255
+    ],
+    "enable_wall": true,
+    "enable_fog": true,
+    "clahe_enabled": true,
+    "deepen_enabled": true,
+    "gamma_enabled": true,
+    "tophat_enabled": true,
+    "sat_filter_enabled": true,
+    "clahe_clip": 3.0,
+    "clahe_grid": 4,
+    "deepen_factor": 1.0,
+    "blue_boost": 1.0,
+    "gamma_value": 2,
+    "tophat_strength": 4,
+    "tophat_kernel_size": 15,
+    "trans_sat_penalty": 1.5,
+    "trans_wall_thresh": 50,
+    "transparent_mode": true,
+    "sat_filter_thresh": 40,
+    "sat_filter_radius": 0,
+    "player_clear_radius": 22,
+    "wall_weight": 70,
+    "edge_weight": 30,
+    "edge_low": 50,
+    "edge_high": 150,
+    "kernel_small_size": 3,
+    "kernel_medium_size": 5
+  },
+  "snapshot": {
+    "area_id": "MapFlotsam",
+    "instance_id": "MapFlotsam:1E44BF94",
+    "shape": [
+      2277,
+      2416
+    ],
+    "captured_at": "2026-09-22T09:01:07.307318+00:00",
+    "wall_pixels": 4784934,
+    "known_pixels": 5501232,
+    "walkable_pixels": 716298
+  },
+  "first_frame": {
+    "shape": [
+      200,
+      200,
+      3
+    ],
+    "mean_bgr": [
+      28.904775,
+      22.81435,
+      17.690475
+    ],
+    "feature_pixels": 350,
+    "wall_pixels": 348,
+    "marker": [
+      100,
+      100
+    ]
+  },
+  "state": {
+    "mode": "recovery_required",
+    "source": "failed",
+    "confidence": 0.0,
+    "position": null,
+    "latest_confirmed_position": null,
+    "reason": "absolute_registration_error",
+    "recovery_revision": 1,
+    "diagnostics": {
+      "error": "cleaned feature contains fewer than 8 edge pixels",
+      "error_type": "ValueError"
+    },
+    "memory_read_count": 1
+  },
+  "registrar_last_diagnostics": {}
+}

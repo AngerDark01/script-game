@@ -1,0 +1,72 @@
+{
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-local-tracker-20260922-171100",
+  "first_state": {
+    "mode": "local_tracking",
+    "source": "anchored_absolute",
+    "position": [
+      285.487825867423,
+      408.8272518001846
+    ],
+    "reason": "",
+    "diagnostics": {
+      "status": "anchored_candidate",
+      "reason": "single-frame geometry is consistent with the memory anchor",
+      "search_mode": "full_similarity",
+      "coarse_variant_count": 352,
+      "candidate_count": 8,
+      "best_score": 0.6440210979830971,
+      "best_anchored_score": 0.6998440083905236,
+      "best_forward_coverage": 0.9508506616257089,
+      "best_angle": 219.0,
+      "best_reflection": true,
+      "best_scale": 0.8499999999999999,
+      "best_anchor_error": 10.614980830975755,
+      "best_player_on_walkable": true
+    },
+    "reads": 1
+  },
+  "local_input": {
+    "fixed_transform": {
+      "angle_degrees": 219.0,
+      "reflect_horizontal": true,
+      "scale": 0.8499999999999999,
+      "translation": [
+        166.0,
+        290.0
+      ]
+    },
+    "raw_wall_pixels": 1222,
+    "transformed_pixels": 887,
+    "transformed_shape": [
+      240,
+      240
+    ],
+    "transformed_player": [
+      119.48782586742303,
+      118.82725180018461
+    ],
+    "runtime_shape": [
+      2277,
+      2416
+    ],
+    "search_radius": 96.0
+  },
+  "local_candidate": {
+    "valid": false,
+    "confidence": 0.0,
+    "frame_origin_global": null,
+    "source": "local_chamfer",
+    "metadata": {
+      "mean_wall_error_px": 0.0,
+      "candidate_margin": 0.0,
+      "search_origins": [
+        70,
+        194,
+        262,
+        386
+      ],
+      "elapsed_ms": 10.913100002653664
+    }
+  },
+  "tracker_result": null
+}

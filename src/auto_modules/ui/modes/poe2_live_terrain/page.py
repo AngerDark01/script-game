@@ -92,6 +92,7 @@ class Poe2LiveTerrainPage(QWidget):
         player_position_source: Any | None = None,
         hybrid_localization_factory: Any | None = None,
         multiframe_localization_factory: Any | None = None,
+        program_output_factory: Any | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -109,6 +110,7 @@ class Poe2LiveTerrainPage(QWidget):
         self.player_position_source = player_position_source
         self.hybrid_localization_factory = hybrid_localization_factory
         self.multiframe_localization_factory = multiframe_localization_factory
+        self.program_output_factory = program_output_factory
         active_profile = profile_store.active() if profile_store is not None else None
         self.monitor_config = active_profile or (
             config_store.load() if config_store is not None else Poe2MonitorConfig()
@@ -119,6 +121,10 @@ class Poe2LiveTerrainPage(QWidget):
         self._map_display_pixmap = None
         self._runtime_active = False
         self._localization_worker: Poe2LocalizationWorker | None = None
+        # A worker that outlives the bounded stop wait must stay strongly
+        # referenced until its own finished signal arrives.  Releasing it
+        # while MSS/Qt resources are still in use can corrupt native heaps.
+        self._retired_localization_workers: list[Poe2LocalizationWorker] = []
         self._worker_generation = 0
         self._last_preview_at = 0.0
         self._ui_window_started = perf_counter()
@@ -251,6 +257,7 @@ class Poe2LiveTerrainPage(QWidget):
                 player_position_source=self.player_position_source,
                 hybrid_localization_factory=self.hybrid_localization_factory,
                 multiframe_localization_factory=self.multiframe_localization_factory,
+                program_output_factory=self.program_output_factory,
                 open_config=self.open_monitor_config,
                 parent=self.tabs,
             )
@@ -377,6 +384,17 @@ class Poe2LiveTerrainPage(QWidget):
     def start_monitoring(self) -> None:
         if self._localization_worker is not None:
             return
+        self._retired_localization_workers = [
+            worker
+            for worker in self._retired_localization_workers
+            if worker.is_running
+        ]
+        if self._retired_localization_workers:
+            self._logger.warning(
+                "step=ui.monitor_start_deferred retired_workers=%s",
+                len(self._retired_localization_workers),
+            )
+            return
         if self.runtime is None:
             self._show_error(RuntimeError("PoE2 定位运行时未注入"))
             return
@@ -408,7 +426,11 @@ class Poe2LiveTerrainPage(QWidget):
                 )
                 worker.state_available.connect(self._on_worker_state)
                 worker.failed.connect(self._on_worker_error)
-                worker.finished.connect(self._on_worker_finished)
+                worker.finished.connect(
+                    lambda generation, worker=worker: self._on_worker_finished(
+                        generation, worker
+                    )
+                )
                 self._localization_worker = worker
                 self.set_runtime_active(True)
                 worker.start()
@@ -434,6 +456,22 @@ class Poe2LiveTerrainPage(QWidget):
         worker = self._localization_worker
         if worker is not None:
             worker.stop()
+            completed = worker.wait(3000)
+            if completed:
+                self._localization_worker = None
+                self._logger.info(
+                    "step=ui.monitor_worker_stop_completed generation=%s",
+                    worker.generation,
+                )
+            else:
+                self._localization_worker = None
+                if worker not in self._retired_localization_workers:
+                    self._retired_localization_workers.append(worker)
+                self._logger.warning(
+                    "step=ui.monitor_worker_stop_timeout generation=%s retired=%s",
+                    worker.generation,
+                    len(self._retired_localization_workers),
+                )
         elif self.runtime is not None:
             stop = getattr(self.runtime, "stop", None)
             if callable(stop):
@@ -472,8 +510,21 @@ class Poe2LiveTerrainPage(QWidget):
         self.stop_monitoring()
         self._show_error(error)
 
-    def _on_worker_finished(self, generation: int) -> None:
+    def _on_worker_finished(
+        self,
+        generation: int,
+        worker: Poe2LocalizationWorker | None = None,
+    ) -> None:
+        if worker is not None and worker in self._retired_localization_workers:
+            self._retired_localization_workers.remove(worker)
+            self._logger.info(
+                "step=ui.retired_monitor_worker_released generation=%s retired=%s",
+                generation,
+                len(self._retired_localization_workers),
+            )
         if generation != self._worker_generation:
+            return
+        if worker is not None and self._localization_worker not in (None, worker):
             return
         self._localization_worker = None
         self.set_runtime_active(False)
@@ -539,13 +590,29 @@ class Poe2LiveTerrainPage(QWidget):
         )
         revision = int(getattr(state, "recovery_revision", 0))
         read_count = int(getattr(state, "memory_read_count", 0))
+        dual_players = dict(getattr(state, "dual_players", {}) or {})
+        dual_trajectories = dict(getattr(state, "dual_trajectories", {}) or {})
+        dual_status = getattr(state, "dual_status", None)
+        dual_mode = dual_status is not None or bool(dual_players)
         recovery_note = " | 需要重新定位" if mode_name == "recovery_required" else ""
+        dual_note = ""
+        if dual_mode:
+            visible = [
+                f"{identity}:{point or '-'}"
+                for identity, point in dual_players.items()
+            ]
+            dual_note = (
+                f" | 双人状态：{dual_status or mode_name}"
+                f" | 玩家：{'，'.join(visible) if visible else '-'}"
+                f" | 墙体质量：{float(getattr(state, 'dual_wall_quality', 0.0)):.2f}"
+            )
         self.localization_status.setText(
             f"定位：{source} | 模式：{mode_name} | 置信度：{confidence:.2f} | "
             f"局部：{local_position or '-'} | 本帧全局：{position or '-'} | "
             f"最后可信：{latest_position or '-'} | 恢复版本：{revision} | "
             f"内存读取：{read_count} | 帧耗时：{float(getattr(state, 'frame_elapsed_ms', 0.0)):.1f} ms"
             + (f" | 原因：{failure}" if failure else "")
+            + dual_note
             + recovery_note
         )
         diagnostics = dict(
@@ -613,6 +680,9 @@ class Poe2LiveTerrainPage(QWidget):
             position,
             latest_position,
             tuple(getattr(state, "trajectory", ()) or ()),
+            tuple(sorted((identity, point) for identity, point in dual_players.items())),
+            tuple(sorted((identity, tuple(points)) for identity, points in dual_trajectories.items())),
+            dual_status,
             float(getattr(transform, "angle_degrees", 0.0)) if transform is not None else 0.0,
             bool(getattr(transform, "reflect_horizontal", False)) if transform is not None else False,
         )
@@ -648,10 +718,32 @@ class Poe2LiveTerrainPage(QWidget):
                 for candidate_position in (getattr(candidate, "position", None),)
                 if candidate_position is not None
             )
+            display_players = {
+                identity: localization_display_point(
+                    point,
+                    source_size=source_size,
+                    transform=transform,
+                )
+                for identity, point in dual_players.items()
+                if point is not None
+            }
+            display_player_trajectories = {
+                identity: tuple(
+                    localization_display_point(
+                        point,
+                        source_size=source_size,
+                        transform=transform,
+                    )
+                    for point in points
+                )
+                for identity, points in dual_trajectories.items()
+            }
             self.map_widget.set_overlay(
-                position=display_position,
+                position=None if dual_mode else display_position,
                 trajectory=display_trajectory,
                 candidates=display_candidates,
+                players=display_players,
+                player_trajectories=display_player_trajectories,
             )
             self._focus_map_on_state(state, source_size=base_pixmap.size())
             self._last_overlay_signature = overlay_signature
@@ -784,6 +876,15 @@ class Poe2LiveTerrainPage(QWidget):
 
     def shutdown(self) -> None:
         self.stop_monitoring()
+        if self._localization_worker is not None or any(
+            worker.is_running for worker in self._retired_localization_workers
+        ):
+            self._logger.error(
+                "step=ui.shutdown_deferred active_monitor_workers=%s",
+                int(self._localization_worker is not None)
+                + sum(worker.is_running for worker in self._retired_localization_workers),
+            )
+            return
         if self.capture_test_page is not None:
             self.capture_test_page.shutdown()
         self.service.reset()

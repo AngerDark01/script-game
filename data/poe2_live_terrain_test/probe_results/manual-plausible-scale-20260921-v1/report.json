@@ -1,0 +1,1253 @@
+{
+  "schema_version": 1,
+  "accepted": false,
+  "reason": "low_score",
+  "score_margin": 0.012477233298507528,
+  "input": {
+    "session": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\stitching_sessions\\20260921-144659-321287-a6ccb4c6767e",
+    "terrain": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\stitching_sessions\\20260921-144659-321287-a6ccb4c6767e\\terrain.png",
+    "terrain_source": "session",
+    "stitched_sha256": "9657d6a0342f0dd74f23b2974c5a3b7fce18d5082d8948b205662fefcc520de3",
+    "terrain_sha256": "edd01ae114b8b50d993efa3729b0db079233b983caf270cb82cbbb68b9db1719",
+    "local_player": [
+      408.0,
+      346.0
+    ]
+  },
+  "normalization": {
+    "local_skeleton_pixels": 1758,
+    "terrain_skeleton_pixels": 35111
+  },
+  "rendered_candidate_count": 6,
+  "config": {
+    "hough": {
+      "min_angle": 0.0,
+      "max_angle": 360.0,
+      "angle_step": 5.0,
+      "min_scale": 0.4,
+      "max_scale": 0.9,
+      "scale_step": 0.05,
+      "min_distance": 24.0,
+      "position_threshold": 8,
+      "angle_threshold": 20,
+      "scale_threshold": 10
+    },
+    "trim_fraction": 0.2,
+    "distance_tolerance": 3.0,
+    "max_candidates": 24,
+    "min_skeleton_pixels": 80,
+    "candidate_downsample": 0.25,
+    "candidate_line_width": 5,
+    "peaks_per_transform": 2,
+    "minimum_score": 0.68,
+    "minimum_margin": 0.05
+  },
+  "candidates": [
+    {
+      "center": [
+        1106.5,
+        697.5000152587891
+      ],
+      "angle": 0.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.20884365500171576,
+      "forward_coverage": 0.4120032441200324,
+      "reverse_coverage": 0.13201896680808586,
+      "forward_distance": 4.044668674468994,
+      "reverse_distance": 16.69507598876953,
+      "proposal_score": 0.22344613075256348,
+      "source": "overlap",
+      "projected_player": [
+        1069.5,
+        636.5000152587891
+      ],
+      "overlay": "candidate_01_overlay.png"
+    },
+    {
+      "center": [
+        2191.5,
+        1084.5
+      ],
+      "angle": 50.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.19636642170320823,
+      "forward_coverage": 0.3765625,
+      "reverse_coverage": 0.1373898678414097,
+      "forward_distance": 4.703460216522217,
+      "reverse_distance": 15.845641136169434,
+      "proposal_score": 0.2088736891746521,
+      "source": "overlap",
+      "projected_player": [
+        2262.0118525886596,
+        1073.6336002045232
+      ],
+      "overlay": "candidate_02_overlay.png"
+    },
+    {
+      "center": [
+        654.5000152587891,
+        859.5
+      ],
+      "angle": 95.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.18454481488467056,
+      "forward_coverage": 0.3111455108359133,
+      "reverse_coverage": 0.21467391304347827,
+      "forward_distance": 10.804193496704102,
+      "reverse_distance": 13.188642501831055,
+      "proposal_score": 0.25317618250846863,
+      "source": "overlap",
+      "projected_player": [
+        718.4926543240489,
+        827.9572964782126
+      ],
+      "overlay": "candidate_03_overlay.png"
+    },
+    {
+      "center": [
+        2137.499984741211,
+        930.5
+      ],
+      "angle": 90.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1828879791487191,
+      "forward_coverage": 0.3560421735604217,
+      "reverse_coverage": 0.11569390402075228,
+      "forward_distance": 4.519518852233887,
+      "reverse_distance": 15.949196815490723,
+      "proposal_score": 0.2146885246038437,
+      "source": "overlap",
+      "projected_player": [
+        2198.499984741211,
+        893.5
+      ],
+      "overlay": "candidate_04_overlay.png"
+    },
+    {
+      "center": [
+        2630.499984741211,
+        1025.500015258789
+      ],
+      "angle": 10.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.17651313883476993,
+      "forward_coverage": 0.24743892828999212,
+      "reverse_coverage": 0.30903490759753593,
+      "forward_distance": 33.374000549316406,
+      "reverse_distance": 9.436287879943848,
+      "proposal_score": 0.25404974818229675,
+      "source": "overlap",
+      "projected_player": [
+        2604.654636717442,
+        959.0017597513679
+      ],
+      "overlay": "candidate_05_overlay.png"
+    },
+    {
+      "center": [
+        2187.500015258789,
+        914.5
+      ],
+      "angle": 355.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.17011138167204992,
+      "forward_coverage": 0.3292021688613478,
+      "reverse_coverage": 0.11036094520903661,
+      "forward_distance": 4.775908470153809,
+      "reverse_distance": 16.072078704833984,
+      "proposal_score": 0.21487480401992798,
+      "source": "overlap",
+      "projected_player": [
+        2219.0427187805767,
+        850.5073609347402
+      ],
+      "overlay": "candidate_06_overlay.png"
+    },
+    {
+      "center": [
+        2630.5,
+        1013.5
+      ],
+      "angle": 190.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1648153217733868,
+      "forward_coverage": 0.22957198443579765,
+      "reverse_coverage": 0.2909090909090909,
+      "forward_distance": 34.41996765136719,
+      "reverse_distance": 8.82728385925293,
+      "proposal_score": 0.23951967060565948,
+      "source": "overlap",
+      "projected_player": [
+        2583.4695743008656,
+        1067.1482903600684
+      ]
+    },
+    {
+      "center": [
+        638.5,
+        661.5000152587891
+      ],
+      "angle": 0.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1643612444449256,
+      "forward_coverage": 0.3122465531224655,
+      "reverse_coverage": 0.12103233461880747,
+      "forward_distance": 5.610080718994141,
+      "reverse_distance": 16.219337463378906,
+      "proposal_score": 0.2176106572151184,
+      "source": "overlap",
+      "projected_player": [
+        675.5,
+        600.5000152587891
+      ]
+    },
+    {
+      "center": [
+        2628.5,
+        1027.5
+      ],
+      "angle": 10.0,
+      "scale": 0.5,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15947328796385218,
+      "forward_coverage": 0.20891783567134267,
+      "reverse_coverage": 0.30358785648574055,
+      "forward_distance": 49.22739028930664,
+      "reverse_distance": 14.05832290649414,
+      "proposal_score": 0.22264918684959412,
+      "source": "overlap",
+      "projected_player": [
+        2596.1933149702886,
+        944.3771806157235
+      ]
+    },
+    {
+      "center": [
+        2627.5,
+        1038.499984741211
+      ],
+      "angle": 15.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15813613281236977,
+      "forward_coverage": 0.2219626168224299,
+      "reverse_coverage": 0.27644710578842313,
+      "forward_distance": 33.670013427734375,
+      "reverse_distance": 10.057567596435547,
+      "proposal_score": 0.2281970977783203,
+      "source": "overlap",
+      "projected_player": [
+        2607.5487061785584,
+        970.0022046687845
+      ]
+    },
+    {
+      "center": [
+        2138.5,
+        923.5
+      ],
+      "angle": 275.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15786132737990685,
+      "forward_coverage": 0.30536130536130535,
+      "reverse_coverage": 0.10516979219462746,
+      "forward_distance": 5.197493553161621,
+      "reverse_distance": 16.490320205688477,
+      "proposal_score": 0.207370325922966,
+      "source": "overlap",
+      "projected_player": [
+        2080.956885898067,
+        881.3242958629983
+      ]
+    },
+    {
+      "center": [
+        671.5000152587891,
+        686.5000152587891
+      ],
+      "angle": 180.0,
+      "scale": 0.45,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15587092699764507,
+      "forward_coverage": 0.30532915360501567,
+      "reverse_coverage": 0.11801242236024845,
+      "forward_distance": 6.705920219421387,
+      "reverse_distance": 19.779735565185547,
+      "proposal_score": 0.20644310116767883,
+      "source": "overlap",
+      "projected_player": [
+        713.1250152587891,
+        755.1250152587891
+      ]
+    },
+    {
+      "center": [
+        2203.499984741211,
+        914.5
+      ],
+      "angle": 0.0,
+      "scale": 0.45,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15467046374544544,
+      "forward_coverage": 0.30031347962382443,
+      "reverse_coverage": 0.1087669948429442,
+      "forward_distance": 5.942105770111084,
+      "reverse_distance": 17.23457908630371,
+      "proposal_score": 0.2081594169139862,
+      "source": "overlap",
+      "projected_player": [
+        2245.124984741211,
+        845.875
+      ]
+    },
+    {
+      "center": [
+        2625.5,
+        1030.499984741211
+      ],
+      "angle": 100.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15433358161308627,
+      "forward_coverage": 0.21167315175097276,
+      "reverse_coverage": 0.27614213197969545,
+      "forward_distance": 30.72565269470215,
+      "reverse_distance": 7.205713748931885,
+      "proposal_score": 0.2598550617694855,
+      "source": "overlap",
+      "projected_player": [
+        2679.148290360068,
+        1077.5304104403453
+      ]
+    },
+    {
+      "center": [
+        2134.5,
+        979.5000152587891
+      ],
+      "angle": 270.0,
+      "scale": 0.45,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15383345591831588,
+      "forward_coverage": 0.30219435736677114,
+      "reverse_coverage": 0.10949929808142256,
+      "forward_distance": 5.952551364898682,
+      "reverse_distance": 18.87895965576172,
+      "proposal_score": 0.2068786323070526,
+      "source": "overlap",
+      "projected_player": [
+        2065.875,
+        1021.1250152587891
+      ]
+    },
+    {
+      "center": [
+        666.4999847412109,
+        879.5
+      ],
+      "angle": 285.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15251759328548473,
+      "forward_coverage": 0.26009316770186336,
+      "reverse_coverage": 0.17803660565723795,
+      "forward_distance": 14.962655067443848,
+      "reverse_distance": 11.910572052001953,
+      "proposal_score": 0.21514588594436646,
+      "source": "overlap",
+      "projected_player": [
+        617.154814006371,
+        827.9727826760508
+      ]
+    },
+    {
+      "center": [
+        2617.499984741211,
+        1022.5
+      ],
+      "angle": 95.0,
+      "scale": 0.45,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15152766876636456,
+      "forward_coverage": 0.20335820895522388,
+      "reverse_coverage": 0.2803921568627451,
+      "forward_distance": 37.09759521484375,
+      "reverse_distance": 12.746362686157227,
+      "proposal_score": 0.21959587931632996,
+      "source": "overlap",
+      "projected_player": [
+        2682.2359881058856,
+        1069.947667154127
+      ]
+    },
+    {
+      "center": [
+        2634.5,
+        997.4999847412109
+      ],
+      "angle": 185.0,
+      "scale": 0.45,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15071737546538821,
+      "forward_coverage": 0.20398009950248755,
+      "reverse_coverage": 0.27637130801687765,
+      "forward_distance": 43.84701156616211,
+      "reverse_distance": 11.85807991027832,
+      "proposal_score": 0.22943952679634094,
+      "source": "overlap",
+      "projected_player": [
+        2587.052332845873,
+        1062.2359881058858
+      ]
+    },
+    {
+      "center": [
+        2629.5,
+        1028.5
+      ],
+      "angle": 10.0,
+      "scale": 0.55,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.15050426943595976,
+      "forward_coverage": 0.18811475409836065,
+      "reverse_coverage": 0.30102915951972553,
+      "forward_distance": 58.634708404541016,
+      "reverse_distance": 17.509241104125977,
+      "proposal_score": 0.20491157472133636,
+      "source": "overlap",
+      "projected_player": [
+        2593.962646467318,
+        937.064898677296
+      ]
+    },
+    {
+      "center": [
+        2631.5,
+        1014.5
+      ],
+      "angle": 5.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.14959212493225668,
+      "forward_coverage": 0.20975232198142416,
+      "reverse_coverage": 0.26198083067092653,
+      "forward_distance": 34.509368896484375,
+      "reverse_distance": 10.416426658630371,
+      "proposal_score": 0.2366214543581009,
+      "source": "overlap",
+      "projected_player": [
+        2599.9572964782124,
+        950.5073609347402
+      ]
+    },
+    {
+      "center": [
+        2201.500015258789,
+        910.5000152587891
+      ],
+      "angle": 270.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.14840000669455666,
+      "forward_coverage": 0.2798053527980535,
+      "reverse_coverage": 0.1075597554196776,
+      "forward_distance": 5.360918998718262,
+      "reverse_distance": 16.223651885986328,
+      "proposal_score": 0.20995791256427765,
+      "source": "overlap",
+      "projected_player": [
+        2140.500015258789,
+        947.5000152587891
+      ]
+    },
+    {
+      "center": [
+        2625.500015258789,
+        1042.5
+      ],
+      "angle": 280.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.14755943707816932,
+      "forward_coverage": 0.20724980299448384,
+      "reverse_coverage": 0.25664621676891614,
+      "forward_distance": 31.440458297729492,
+      "reverse_distance": 7.890533447265625,
+      "proposal_score": 0.24073466658592224,
+      "source": "overlap",
+      "projected_player": [
+        2559.001759751368,
+        1068.345348023769
+      ]
+    },
+    {
+      "center": [
+        2632.5,
+        995.5000305175781
+      ],
+      "angle": 185.0,
+      "scale": 0.55,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.14412006207504885,
+      "forward_coverage": 0.18479630407391853,
+      "reverse_coverage": 0.2808022922636103,
+      "forward_distance": 61.25602722167969,
+      "reverse_distance": 15.537089347839355,
+      "proposal_score": 0.20040160417556763,
+      "source": "overlap",
+      "projected_player": [
+        2574.5084068116225,
+        1074.6218124077361
+      ]
+    },
+    {
+      "center": [
+        2285.499984741211,
+        1010.5
+      ],
+      "angle": 90.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.143730032439374,
+      "forward_coverage": 0.2643957826439578,
+      "reverse_coverage": 0.12167553191489362,
+      "forward_distance": 8.141134262084961,
+      "reverse_distance": 14.87492561340332,
+      "proposal_score": 0.22002065181732178,
+      "source": "overlap",
+      "projected_player": [
+        2346.499984741211,
+        1047.5
+      ]
+    },
+    {
+      "center": [
+        1227.5000305175781,
+        800.5
+      ],
+      "angle": 90.0,
+      "scale": 0.7000000000000001,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.14226490121625607,
+      "forward_coverage": 0.3035806953814219,
+      "reverse_coverage": 0.07660315310958507,
+      "forward_distance": 5.0045576095581055,
+      "reverse_distance": 27.02372932434082,
+      "proposal_score": 0.16786357760429382,
+      "source": "overlap",
+      "projected_player": [
+        1334.2500305175781,
+        735.75
+      ]
+    },
+    {
+      "center": [
+        2622.5,
+        1031.5
+      ],
+      "angle": 275.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1383235234903959,
+      "forward_coverage": 0.184984520123839,
+      "reverse_coverage": 0.2549634273772205,
+      "forward_distance": 30.11640739440918,
+      "reverse_distance": 8.208606719970703,
+      "proposal_score": 0.24276936054229736,
+      "source": "overlap",
+      "projected_player": [
+        2558.50736093474,
+        1063.0427035217874
+      ]
+    },
+    {
+      "center": [
+        2626.5,
+        1029.5
+      ],
+      "angle": 10.0,
+      "scale": 0.6000000000000001,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.138296873618013,
+      "forward_coverage": 0.171939477303989,
+      "reverse_coverage": 0.27808326787117044,
+      "forward_distance": 64.43634796142578,
+      "reverse_distance": 20.109460830688477,
+      "proposal_score": 0.1702215075492859,
+      "source": "overlap",
+      "projected_player": [
+        2587.7319779643467,
+        929.7526167388683
+      ]
+    },
+    {
+      "center": [
+        2631.5,
+        994.5
+      ],
+      "angle": 185.0,
+      "scale": 0.6000000000000001,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.13729611469852399,
+      "forward_coverage": 0.17180464149636301,
+      "reverse_coverage": 0.2742960944595822,
+      "forward_distance": 67.87635803222656,
+      "reverse_distance": 17.419952392578125,
+      "proposal_score": 0.18045324087142944,
+      "source": "overlap",
+      "projected_player": [
+        2568.2364437944975,
+        1080.8146711528998
+      ]
+    },
+    {
+      "center": [
+        2631.5,
+        1026.5
+      ],
+      "angle": 195.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.135113375827531,
+      "forward_coverage": 0.18711180124223603,
+      "reverse_coverage": 0.24012474012474014,
+      "forward_distance": 35.02751541137695,
+      "reverse_distance": 8.746359825134277,
+      "proposal_score": 0.21938154101371765,
+      "source": "overlap",
+      "projected_player": [
+        2579.972782676051,
+        1075.84517073484
+      ]
+    },
+    {
+      "center": [
+        2594.499984741211,
+        1077.500015258789
+      ],
+      "angle": 10.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1337126556117012,
+      "forward_coverage": 0.18365758754863815,
+      "reverse_coverage": 0.23917322834645668,
+      "forward_distance": 32.103912353515625,
+      "reverse_distance": 7.751137733459473,
+      "proposal_score": 0.23136886954307556,
+      "source": "overlap",
+      "projected_player": [
+        2641.5304104403453,
+        1023.8517248987208
+      ]
+    },
+    {
+      "center": [
+        2626.500015258789,
+        991.5
+      ],
+      "angle": 95.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1335915650803047,
+      "forward_coverage": 0.1806201550387597,
+      "reverse_coverage": 0.24422442244224424,
+      "forward_distance": 34.501258850097656,
+      "reverse_distance": 8.12767505645752,
+      "proposal_score": 0.22653645277023315,
+      "source": "overlap",
+      "projected_player": [
+        2690.492654324049,
+        959.9572964782126
+      ]
+    },
+    {
+      "center": [
+        2599.5,
+        1070.5
+      ],
+      "angle": 5.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.13242767040566097,
+      "forward_coverage": 0.1857031857031857,
+      "reverse_coverage": 0.23092369477911648,
+      "forward_distance": 31.78193473815918,
+      "reverse_distance": 8.635698318481445,
+      "proposal_score": 0.21492739021778107,
+      "source": "overlap",
+      "projected_player": [
+        2641.675704137002,
+        1012.9568858980668
+      ]
+    },
+    {
+      "center": [
+        2622.5,
+        1043.5
+      ],
+      "angle": 105.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1310440894562454,
+      "forward_coverage": 0.18478260869565216,
+      "reverse_coverage": 0.22606120434353405,
+      "forward_distance": 30.326322555541992,
+      "reverse_distance": 7.730811595916748,
+      "proposal_score": 0.2349126785993576,
+      "source": "overlap",
+      "projected_player": [
+        2671.84517073484,
+        1095.0272173239493
+      ]
+    },
+    {
+      "center": [
+        2618.499984741211,
+        1055.5
+      ],
+      "angle": 285.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1303754634847018,
+      "forward_coverage": 0.1838006230529595,
+      "reverse_coverage": 0.22606120434353405,
+      "forward_distance": 32.85061264038086,
+      "reverse_distance": 8.771376609802246,
+      "proposal_score": 0.22182118892669678,
+      "source": "overlap",
+      "projected_player": [
+        2550.0022046687845,
+        1075.4512938214418
+      ]
+    },
+    {
+      "center": [
+        646.5,
+        903.5
+      ],
+      "angle": 275.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.13020199789662118,
+      "forward_coverage": 0.19519752130131682,
+      "reverse_coverage": 0.20268256333830104,
+      "forward_distance": 23.67961883544922,
+      "reverse_distance": 9.228888511657715,
+      "proposal_score": 0.23327146470546722,
+      "source": "overlap",
+      "projected_player": [
+        582.5073609347402,
+        935.0427035217874
+      ]
+    },
+    {
+      "center": [
+        1256.5,
+        769.5
+      ],
+      "angle": 90.0,
+      "scale": 0.75,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.12991102026451193,
+      "forward_coverage": 0.28118609406952966,
+      "reverse_coverage": 0.0668171935106205,
+      "forward_distance": 5.562245845794678,
+      "reverse_distance": 31.454872131347656,
+      "proposal_score": 0.15068627893924713,
+      "source": "overlap",
+      "projected_player": [
+        1370.875,
+        700.125
+      ]
+    },
+    {
+      "center": [
+        2625.499984741211,
+        978.5
+      ],
+      "angle": 90.0,
+      "scale": 0.4,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.12888806471321593,
+      "forward_coverage": 0.18085969180859693,
+      "reverse_coverage": 0.2236842105263158,
+      "forward_distance": 29.443517684936523,
+      "reverse_distance": 8.542030334472656,
+      "proposal_score": 0.21593405306339264,
+      "source": "overlap",
+      "projected_player": [
+        2686.499984741211,
+        941.5
+      ]
+    },
+    {
+      "center": [
+        2568.499969482422,
+        1079.5
+      ],
+      "angle": 25.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1280272803551845,
+      "forward_coverage": 0.1904012588512982,
+      "reverse_coverage": 0.20499108734402852,
+      "forward_distance": 27.008468627929688,
+      "reverse_distance": 11.016982078552246,
+      "proposal_score": 0.20592592656612396,
+      "source": "overlap",
+      "projected_player": [
+        2627.8130715689604,
+        1039.8521006751703
+      ]
+    },
+    {
+      "center": [
+        2617.499984741211,
+        1006.5
+      ],
+      "angle": 90.0,
+      "scale": 0.4,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1269054588348167,
+      "forward_coverage": 0.18248175182481752,
+      "reverse_coverage": 0.21283422459893048,
+      "forward_distance": 26.02159881591797,
+      "reverse_distance": 11.230140686035156,
+      "proposal_score": 0.21227504312992096,
+      "source": "overlap",
+      "projected_player": [
+        2678.499984741211,
+        1043.5
+      ]
+    },
+    {
+      "center": [
+        1301.5000305175781,
+        735.4999389648438
+      ],
+      "angle": 275.0,
+      "scale": 0.8500000000000001,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.118826586029332,
+      "forward_coverage": 0.26034990472891045,
+      "reverse_coverage": 0.057729007633587785,
+      "forward_distance": 6.256487846374512,
+      "reverse_distance": 37.10485076904297,
+      "proposal_score": 0.14229430258274078,
+      "source": "overlap",
+      "projected_player": [
+        1179.2209130509702,
+        645.876567673715
+      ]
+    },
+    {
+      "center": [
+        2199.499969482422,
+        902.5
+      ],
+      "angle": 0.0,
+      "scale": 0.65,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.1162409933796738,
+      "forward_coverage": 0.23388527498521586,
+      "reverse_coverage": 0.0846774193548387,
+      "forward_distance": 8.12984561920166,
+      "reverse_distance": 24.515254974365234,
+      "proposal_score": 0.16462671756744385,
+      "source": "overlap",
+      "projected_player": [
+        2259.624969482422,
+        803.375
+      ]
+    },
+    {
+      "center": [
+        2200.5,
+        903.4999694824219
+      ],
+      "angle": 0.0,
+      "scale": 0.7000000000000001,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.11553412992835656,
+      "forward_coverage": 0.23118837571354436,
+      "reverse_coverage": 0.08890251379521766,
+      "forward_distance": 9.752494812011719,
+      "reverse_distance": 26.490345001220703,
+      "proposal_score": 0.16242554783821106,
+      "source": "overlap",
+      "projected_player": [
+        2265.25,
+        796.7499694824219
+      ]
+    },
+    {
+      "center": [
+        1258.5,
+        792.5000305175781
+      ],
+      "angle": 175.0,
+      "scale": 0.9,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.11550551586025669,
+      "forward_coverage": 0.2535167722986551,
+      "reverse_coverage": 0.05517241379310345,
+      "forward_distance": 6.321005344390869,
+      "reverse_distance": 35.93743133544922,
+      "proposal_score": 0.13160578906536102,
+      "source": "overlap",
+      "projected_player": [
+        1187.5289170759784,
+        936.4834684144128
+      ]
+    },
+    {
+      "center": [
+        1284.4999694824219,
+        758.5
+      ],
+      "angle": 95.0,
+      "scale": 0.9,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.11244105593975501,
+      "forward_coverage": 0.2450525664811379,
+      "reverse_coverage": 0.0569616238503013,
+      "forward_distance": 7.009686470031738,
+      "reverse_distance": 38.43927001953125,
+      "proposal_score": 0.13522477447986603,
+      "source": "overlap",
+      "projected_player": [
+        1428.4834073792565,
+        687.5289170759783
+      ]
+    },
+    {
+      "center": [
+        2208.500030517578,
+        938.5
+      ],
+      "angle": 355.0,
+      "scale": 0.8,
+      "reflected": true,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.10204033045202707,
+      "forward_coverage": 0.20487613055446324,
+      "reverse_coverage": 0.07939097335508428,
+      "forward_distance": 13.183588981628418,
+      "reverse_distance": 30.47357177734375,
+      "proposal_score": 0.14520063996315002,
+      "source": "overlap",
+      "projected_player": [
+        2271.585437561153,
+        810.5147218694804
+      ]
+    },
+    {
+      "center": [
+        673.5000305175781,
+        582.5000305175781
+      ],
+      "angle": 270.0,
+      "scale": 0.8,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.097905709898912,
+      "forward_coverage": 0.20045950603101664,
+      "reverse_coverage": 0.06985376827896513,
+      "forward_distance": 10.036154747009277,
+      "reverse_distance": 33.22940444946289,
+      "proposal_score": 0.1417333483695984,
+      "source": "overlap",
+      "projected_player": [
+        551.5000305175781,
+        656.5000305175781
+      ]
+    },
+    {
+      "center": [
+        2244.5,
+        1020.5
+      ],
+      "angle": 50.0,
+      "scale": 0.8500000000000001,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.09752544674663058,
+      "forward_coverage": 0.19769045156842469,
+      "reverse_coverage": 0.07374249028154081,
+      "forward_distance": 19.47370719909668,
+      "reverse_distance": 41.44082260131836,
+      "proposal_score": 0.13487736880779266,
+      "source": "overlap",
+      "projected_player": [
+        2293.2593351276932,
+        876.9484117541526
+      ]
+    },
+    {
+      "center": [
+        2707.500030517578,
+        1002.5000305175781
+      ],
+      "angle": 180.0,
+      "scale": 0.65,
+      "reflected": false,
+      "hough_votes": [
+        0,
+        0,
+        0
+      ],
+      "score": 0.0894151524737761,
+      "forward_coverage": 0.09343583678296866,
+      "reverse_coverage": 0.20816326530612245,
+      "forward_distance": 103.84788513183594,
+      "reverse_distance": 12.029727935791016,
+      "proposal_score": 0.16255386173725128,
+      "source": "overlap",
+      "projected_player": [
+        2767.625030517578,
+        1101.6250305175781
+      ]
+    }
+  ]
+}

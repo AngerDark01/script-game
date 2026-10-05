@@ -1,0 +1,620 @@
+{
+  "schema_version": 1,
+  "saved_at": "2026-09-21T12:10:17.368849+00:00",
+  "captured_at": "2026-09-21T12:10:17.271077+00:00",
+  "state": "paused",
+  "map_origin": [
+    2220,
+    1809
+  ],
+  "current_position": [
+    2607,
+    2089
+  ],
+  "trajectory": [
+    [
+      2500,
+      2500
+    ],
+    [
+      2507,
+      2500
+    ],
+    [
+      2517,
+      2496
+    ],
+    [
+      2526,
+      2489
+    ],
+    [
+      2532,
+      2484
+    ],
+    [
+      2536,
+      2480
+    ],
+    [
+      2546,
+      2472
+    ],
+    [
+      2547,
+      2471
+    ],
+    [
+      2552,
+      2468
+    ],
+    [
+      2560,
+      2461
+    ],
+    [
+      2570,
+      2453
+    ],
+    [
+      2580,
+      2445
+    ],
+    [
+      2590,
+      2437
+    ],
+    [
+      2601,
+      2428
+    ],
+    [
+      2611,
+      2420
+    ],
+    [
+      2623,
+      2411
+    ],
+    [
+      2629,
+      2406
+    ],
+    [
+      2641,
+      2396
+    ],
+    [
+      2676,
+      2368
+    ],
+    [
+      2679,
+      2367
+    ],
+    [
+      2682,
+      2364
+    ],
+    [
+      2692,
+      2356
+    ],
+    [
+      2701,
+      2349
+    ],
+    [
+      2710,
+      2341
+    ],
+    [
+      2713,
+      2339
+    ],
+    [
+      2718,
+      2335
+    ],
+    [
+      2731,
+      2332
+    ],
+    [
+      2741,
+      2332
+    ],
+    [
+      2760,
+      2333
+    ],
+    [
+      2774,
+      2333
+    ],
+    [
+      2788,
+      2334
+    ],
+    [
+      2796,
+      2334
+    ],
+    [
+      2806,
+      2334
+    ],
+    [
+      2862,
+      2345
+    ],
+    [
+      2867,
+      2353
+    ],
+    [
+      2867,
+      2370
+    ],
+    [
+      2867,
+      2384
+    ],
+    [
+      2867,
+      2399
+    ],
+    [
+      2866,
+      2406
+    ],
+    [
+      2854,
+      2413
+    ],
+    [
+      2849,
+      2413
+    ],
+    [
+      2833,
+      2414
+    ],
+    [
+      2826,
+      2414
+    ],
+    [
+      2820,
+      2414
+    ],
+    [
+      2817,
+      2414
+    ],
+    [
+      2811,
+      2414
+    ],
+    [
+      2811,
+      2400
+    ],
+    [
+      2822,
+      2388
+    ],
+    [
+      2833,
+      2380
+    ],
+    [
+      2837,
+      2376
+    ],
+    [
+      2853,
+      2365
+    ],
+    [
+      2867,
+      2360
+    ],
+    [
+      2882,
+      2354
+    ],
+    [
+      2895,
+      2349
+    ],
+    [
+      2896,
+      2348
+    ],
+    [
+      2893,
+      2348
+    ],
+    [
+      2885,
+      2348
+    ],
+    [
+      2883,
+      2360
+    ],
+    [
+      2882,
+      2364
+    ],
+    [
+      2867,
+      2369
+    ],
+    [
+      2853,
+      2370
+    ],
+    [
+      2846,
+      2364
+    ],
+    [
+      2840,
+      2360
+    ],
+    [
+      2824,
+      2347
+    ],
+    [
+      2808,
+      2335
+    ],
+    [
+      2806,
+      2320
+    ],
+    [
+      2806,
+      2306
+    ],
+    [
+      2806,
+      2288
+    ],
+    [
+      2806,
+      2276
+    ],
+    [
+      2806,
+      2262
+    ],
+    [
+      2806,
+      2260
+    ],
+    [
+      2806,
+      2248
+    ],
+    [
+      2806,
+      2232
+    ],
+    [
+      2806,
+      2216
+    ],
+    [
+      2806,
+      2202
+    ],
+    [
+      2806,
+      2193
+    ],
+    [
+      2806,
+      2178
+    ],
+    [
+      2803,
+      2164
+    ],
+    [
+      2793,
+      2151
+    ],
+    [
+      2781,
+      2152
+    ],
+    [
+      2773,
+      2152
+    ],
+    [
+      2752,
+      2153
+    ],
+    [
+      2731,
+      2153
+    ],
+    [
+      2716,
+      2154
+    ],
+    [
+      2698,
+      2154
+    ],
+    [
+      2679,
+      2155
+    ],
+    [
+      2658,
+      2156
+    ],
+    [
+      2640,
+      2156
+    ],
+    [
+      2618,
+      2157
+    ],
+    [
+      2600,
+      2158
+    ],
+    [
+      2586,
+      2159
+    ],
+    [
+      2576,
+      2159
+    ],
+    [
+      2555,
+      2160
+    ],
+    [
+      2533,
+      2161
+    ],
+    [
+      2514,
+      2164
+    ],
+    [
+      2507,
+      2165
+    ],
+    [
+      2505,
+      2166
+    ],
+    [
+      2520,
+      2166
+    ],
+    [
+      2534,
+      2156
+    ],
+    [
+      2548,
+      2144
+    ],
+    [
+      2554,
+      2139
+    ],
+    [
+      2564,
+      2132
+    ],
+    [
+      2577,
+      2121
+    ],
+    [
+      2593,
+      2109
+    ],
+    [
+      2605,
+      2098
+    ],
+    [
+      2607,
+      2095
+    ],
+    [
+      2607,
+      2089
+    ]
+  ],
+  "statistics": {
+    "total_frames": 217,
+    "successful_matches": 216,
+    "failed_matches": 0,
+    "match_quality": 0.7377219530105591,
+    "match_rate": 99.53917050691244,
+    "keyframe_switches": 4,
+    "exploration": 0.0,
+    "avg_displacement": 0.0,
+    "redundant_prevented": 24,
+    "low_quality_skipped": 9
+  },
+  "draw_scale": 2.0,
+  "player_position": [
+    100.0,
+    100.0
+  ],
+  "capture_size": [
+    200,
+    200
+  ],
+  "monitor_config": {
+    "binding": {
+      "rect": {
+        "left": 2249,
+        "top": 107,
+        "width": 200,
+        "height": 200
+      },
+      "screen_id": "primary",
+      "coordinate_space": "physical_desktop",
+      "dpi_scale_x": 1.5,
+      "dpi_scale_y": 1.5,
+      "player_marker_position": [
+        100,
+        100
+      ]
+    },
+    "search_radius": 92,
+    "match_threshold": 0.72,
+    "sample_interval_ms": 33,
+    "profile_id": "a6ccb4c6767e",
+    "profile_name": "默认配置",
+    "selection_mode": "center",
+    "capture_size": 200,
+    "shape": "square",
+    "circle_radius": 160.0,
+    "map_rotation": 0,
+    "map_flip_horizontal": false,
+    "map_flip_vertical": false,
+    "recognizer_params": {
+      "wall_hsv_min": [
+        22,
+        207,
+        0
+      ],
+      "wall_hsv_max": [
+        32,
+        247,
+        255
+      ],
+      "fog_hsv_min": [
+        91,
+        174,
+        188
+      ],
+      "fog_hsv_max": [
+        108,
+        243,
+        255
+      ],
+      "player_hsv_min": [
+        0,
+        235,
+        235
+      ],
+      "player_hsv_max": [
+        10,
+        255,
+        255
+      ],
+      "enable_wall": true,
+      "enable_fog": false,
+      "clahe_enabled": false,
+      "deepen_enabled": false,
+      "gamma_enabled": true,
+      "tophat_enabled": true,
+      "sat_filter_enabled": true,
+      "clahe_clip": 3.0,
+      "clahe_grid": 4,
+      "deepen_factor": 1.0,
+      "blue_boost": 1.0,
+      "gamma_value": 2.0,
+      "tophat_strength": 4,
+      "tophat_kernel_size": 13,
+      "trans_sat_penalty": 1.5,
+      "trans_wall_thresh": 54,
+      "transparent_mode": true,
+      "sat_filter_thresh": 45,
+      "sat_filter_radius": 1,
+      "player_clear_radius": 22,
+      "wall_weight": 44,
+      "edge_weight": 29,
+      "edge_low": 50,
+      "edge_high": 150,
+      "kernel_small_size": 3,
+      "kernel_medium_size": 5
+    },
+    "stitcher_params": {
+      "conf_thresh": 0.3,
+      "keyframe_thresh": 0.25,
+      "weight_add": 0.3,
+      "weight_cap": 5.0,
+      "draw_quality_gate": 0.35,
+      "use_precise_visibility_mask": true,
+      "precise_visibility_min_pixels": 16,
+      "wall_close_kernel_size": 3,
+      "canvas_size": 5000,
+      "draw_scale": 2.0
+    }
+  },
+  "terrain": {
+    "status": "missing",
+    "reason": "no current terrain snapshot"
+  },
+  "images": {
+    "stitched_map": {
+      "file": "stitched_map.png",
+      "width": 956,
+      "height": 971,
+      "channels": 3,
+      "sha256": "98122f3933a959cecd0c6eec82e8c59b2f544721413fb5fd79a7836cb14ceef3"
+    },
+    "stitched_map_overlay": {
+      "file": "stitched_map_overlay.png",
+      "width": 956,
+      "height": 971,
+      "channels": 3,
+      "sha256": "f4138f35a16e19370daf2d14ee77ef172f9c3bcc4705812f8d8fbb36021806f3"
+    },
+    "raw": {
+      "file": "raw.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "sha256": "e36d162863deda02c5667e652f34ae703116b4ca0eb6bf24efde092dc7fcc5d9"
+    },
+    "processed": {
+      "file": "processed.png",
+      "width": 200,
+      "height": 200,
+      "channels": 3,
+      "sha256": "9fa85e316614498101d386fb209882cfd5f3ecb3eb23540a6095abeb3b4ac757"
+    },
+    "feature": {
+      "file": "feature.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "sha256": "67fc23d94034e70b37d48b158c7f4005788ab956285197434e77ec7f6ec812e9"
+    },
+    "wall_mask": {
+      "file": "wall_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "sha256": "11d79e9bf679b63e839bedddd7898dbb72be50d64c5ce4404597b1b1b2688baf"
+    },
+    "fog_mask": {
+      "file": "fog_mask.png",
+      "width": 200,
+      "height": 200,
+      "channels": 1,
+      "sha256": "ceb92cbcacc13900672dfa26b92f1dfeb38d3428a5b96ecfba0cc7a3e99ae600"
+    }
+  }
+}

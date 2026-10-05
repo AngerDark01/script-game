@@ -7,7 +7,7 @@ from .coordinates import (
     in_grid_bounds,
     map_to_grid,
 )
-from .grid import build_obstacle_map, clear_start_area
+from .grid import build_clearance_cost_map, build_obstacle_map, clear_start_area
 from .snap import find_nearest_walkable, walkable_snap_grid_radius
 
 
@@ -21,12 +21,18 @@ class PathFinder:
         wall_shrink_iterations=0,
         start_clear_radius=30,
         walkable_snap_radius=18,
+        clearance_radius=0.0,
+        clearance_weight=0.0,
+        dead_end_weight=0.0,
     ):
         self.downsample_factor = downsample_factor
         self.safety_margin = max(0, int(safety_margin))
         self.wall_shrink_iterations = max(0, int(wall_shrink_iterations))
         self.start_clear_radius = max(0, int(start_clear_radius))
         self.walkable_snap_radius = max(0, int(walkable_snap_radius))
+        self.clearance_radius = max(0.0, float(clearance_radius))
+        self.clearance_weight = max(0.0, float(clearance_weight))
+        self.dead_end_weight = max(0.0, float(dead_end_weight))
 
     def find_path(self, wall_map, start_pos, end_pos, explored_map=None):
         """Find a map-space path from start_pos to end_pos, or None if blocked."""
@@ -89,7 +95,13 @@ class PathFinder:
         )
 
     def _astar(self, grid, start, end):
-        return astar_path(grid, start, end)
+        costs = build_clearance_cost_map(
+            grid,
+            clearance_radius=self.clearance_radius / max(1, self.downsample_factor),
+            clearance_weight=self.clearance_weight,
+            dead_end_weight=self.dead_end_weight,
+        )
+        return astar_path(grid, start, end, cost_map=costs)
 
     def _heuristic(self, a, b):
         return heuristic(a, b)

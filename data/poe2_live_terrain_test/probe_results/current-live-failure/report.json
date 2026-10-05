@@ -1,0 +1,49 @@
+{
+  "instance": "MapFlotsam:1E44BF94",
+  "anchor": [
+    315.5528798828125,
+    397.7779921875
+  ],
+  "crop_bounds": [
+    136,
+    218,
+    497,
+    579
+  ],
+  "current_wall_pixels": 1100,
+  "current_components": 4,
+  "old_wall_pixels": 1117,
+  "old_components": 4,
+  "terrain_edge_pixels": 96034,
+  "status": "anchored_candidate",
+  "reason": "single-frame geometry is consistent with the memory anchor",
+  "best": {
+    "angle": 280.0,
+    "reflect_horizontal": false,
+    "scale": 0.8699999999999999,
+    "top_left": [
+      4,
+      11
+    ],
+    "player_position": [
+      104.132,
+      111.989
+    ],
+    "mean_distance": 0.9433429837226868,
+    "forward_coverage": 0.9177330895795247,
+    "reverse_coverage": 0.08107307439104675,
+    "walkable_coverage": 0.29992557677995535,
+    "player_on_walkable": true,
+    "score": 0.610590401781288,
+    "edge_pixels": 547,
+    "rank": 1,
+    "global_player_position": [
+      290.1321455847248,
+      379.9889283298454
+    ],
+    "anchor_error": 31.026835565131083,
+    "anchored_score": 0.6109839401949313,
+    "basin_angle": 270.0,
+    "basin_reflection": false
+  }
+}

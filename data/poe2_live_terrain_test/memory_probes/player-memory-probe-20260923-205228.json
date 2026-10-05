@@ -1,0 +1,708 @@
+{
+  "schema_version": 1,
+  "tool": "poe2-player-memory-probe",
+  "captured_at": "2026-09-23T12:52:24.018077+00:00",
+  "read_only": true,
+  "process": {
+    "pid": 17736,
+    "created_filetime": 134346408640961572,
+    "exe_sha256": "dc3b3f1bedbf664a21fb71ff6fd178db5e55f588efc53ead026a87d963468714",
+    "exe_path": "D:\\GAMES\\PathOfExile.exe"
+  },
+  "client_build": "8A102202FEA9B2498EA95BAE",
+  "descriptor": {
+    "module_base": "0x7FF7CCE70000",
+    "resolved_global_slot_rva": "0x45D4E68",
+    "metadata": {
+      "schema_version": 1,
+      "source_kind": "live_process",
+      "client_build": "8A102202FEA9B2498EA95BAE",
+      "source_version": "terrain-lab-aob-recovery/7D590956246142B5",
+      "client_exe_sha256": "dc3b3f1bedbf664a21fb71ff6fd178db5e55f588efc53ead026a87d963468714",
+      "session_id": "17736:134346408640961572",
+      "instance_id": "MapFlotsam:14A7A83E",
+      "area_id": "MapFlotsam",
+      "captured_at": "2026-09-23T12:52:28.312313+00:00",
+      "stage": "player-memory-probe",
+      "identity_status": "validated",
+      "layout_status": "validated",
+      "width": 2968,
+      "height": 2277,
+      "row_stride_bytes": 1484,
+      "cell_encoding": "packed_u4_low_first",
+      "coordinates": {
+        "frame_id": "poe2-terrain:MapFlotsam:14A7A83E",
+        "axis_order": "yx",
+        "origin": [
+          0,
+          0
+        ],
+        "world_to_grid": [
+          [
+            0.092,
+            0,
+            0
+          ],
+          [
+            0,
+            0.092,
+            0
+          ]
+        ]
+      },
+      "cell_semantics": {
+        "status": "validated",
+        "walkable_values": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "blocked_values": [
+          0
+        ]
+      },
+      "completeness": "unverified",
+      "area_hash": "14A7A83E",
+      "area_instance_address": "0x421E1FDA000",
+      "player_metadata": "Metadata/Characters/StrDex/StrDexFourb"
+    }
+  },
+  "addresses": {
+    "module_base": "0x7FF7CCE70000",
+    "slot": "0x7FF7D1444E68",
+    "root": "0x421DEEB0D00",
+    "state": "0x421DEE52F00",
+    "area": "0x421E1FDA000",
+    "player": "0x421E0BD1680",
+    "details": "0x421B6091D90",
+    "terrain": "0x421E1FDA8D0",
+    "buffer_start": "0x42268CC0010",
+    "buffer_end": "0x42268FF8F8C",
+    "components": {
+      "Positioned": "0x42283F96EC0",
+      "Stats": "0x422850133C0",
+      "Pathfinding": "0x42284F48CD0",
+      "Buffs": "0x421DAEBE740",
+      "Life": "0x42285046750",
+      "Animated": "0x42283EB8130",
+      "Player": "0x421E0864030",
+      "PlayerClass": "0x421C4BDA830",
+      "Inventories": "0x421E12B4030",
+      "Actor": "0x422850A4210",
+      "Render": "0x4228443A8D0",
+      "Targetable": "0x421E09ED030",
+      "BuffOrbs": "0x421C5D58030"
+    }
+  },
+  "layout": {
+    "area_id": "MapFlotsam",
+    "area_hash": "14A7A83E",
+    "width": 2968,
+    "height": 2277,
+    "bytes_per_row": 1484
+  },
+  "player_metadata": "Metadata/Characters/StrDex/StrDexFourb",
+  "components": [
+    {
+      "entry": 0,
+      "name": "Positioned",
+      "slot": 0,
+      "address": "0x42283F96EC0"
+    },
+    {
+      "entry": 1,
+      "name": "Stats",
+      "slot": 1,
+      "address": "0x422850133C0"
+    },
+    {
+      "entry": 2,
+      "name": "Pathfinding",
+      "slot": 2,
+      "address": "0x42284F48CD0"
+    },
+    {
+      "entry": 3,
+      "name": "Buffs",
+      "slot": 3,
+      "address": "0x421DAEBE740"
+    },
+    {
+      "entry": 4,
+      "name": "Life",
+      "slot": 4,
+      "address": "0x42285046750"
+    },
+    {
+      "entry": 5,
+      "name": "Animated",
+      "slot": 5,
+      "address": "0x42283EB8130"
+    },
+    {
+      "entry": 6,
+      "name": "Player",
+      "slot": 6,
+      "address": "0x421E0864030"
+    },
+    {
+      "entry": 7,
+      "name": "PlayerClass",
+      "slot": 7,
+      "address": "0x421C4BDA830"
+    },
+    {
+      "entry": 8,
+      "name": "Inventories",
+      "slot": 8,
+      "address": "0x421E12B4030"
+    },
+    {
+      "entry": 9,
+      "name": "Actor",
+      "slot": 9,
+      "address": "0x422850A4210"
+    },
+    {
+      "entry": 10,
+      "name": "Render",
+      "slot": 10,
+      "address": "0x4228443A8D0"
+    },
+    {
+      "entry": 11,
+      "name": "Targetable",
+      "slot": 11,
+      "address": "0x421E09ED030"
+    },
+    {
+      "entry": 12,
+      "name": "BuffOrbs",
+      "slot": 12,
+      "address": "0x421C5D58030"
+    }
+  ],
+  "position": {
+    "samples": [
+      {
+        "index": 0,
+        "world": [
+          3103.2607421875,
+          4548.9130859375,
+          -594.7950439453125
+        ],
+        "grid": [
+          285.49998828125,
+          418.50000390625
+        ],
+        "in_bounds": true
+      },
+      {
+        "index": 1,
+        "world": [
+          3103.2607421875,
+          4548.9130859375,
+          -594.7950439453125
+        ],
+        "grid": [
+          285.49998828125,
+          418.50000390625
+        ],
+        "in_bounds": true
+      },
+      {
+        "index": 2,
+        "world": [
+          3103.2607421875,
+          4548.9130859375,
+          -594.7950439453125
+        ],
+        "grid": [
+          285.49998828125,
+          418.50000390625
+        ],
+        "in_bounds": true
+      }
+    ],
+    "coordinate_formula": "grid_x = world_x * 23 / 250; grid_y = world_y * 23 / 250",
+    "world_to_grid": [
+      [
+        0.092,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.092,
+        0.0
+      ]
+    ]
+  },
+  "terrain": {
+    "path": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\output\\latest.npz",
+    "shape": [
+      2277,
+      2968
+    ],
+    "metadata": {
+      "schema_version": 1,
+      "source_kind": "live_process",
+      "client_build": "8A102202FEA9B2498EA95BAE",
+      "source_version": "terrain-lab-aob-recovery/7D590956246142B5",
+      "client_exe_sha256": "dc3b3f1bedbf664a21fb71ff6fd178db5e55f588efc53ead026a87d963468714",
+      "session_id": "2516:134346315125338104",
+      "instance_id": "MapFlotsam:14A7A83E",
+      "area_id": "MapFlotsam",
+      "captured_at": "2026-09-23T11:50:03.207008+00:00",
+      "stage": "manual-live-preview",
+      "identity_status": "validated",
+      "layout_status": "validated",
+      "width": 2968,
+      "height": 2277,
+      "row_stride_bytes": 1484,
+      "cell_encoding": "packed_u4_low_first",
+      "coordinates": {
+        "frame_id": "poe2-terrain:MapFlotsam:14A7A83E",
+        "axis_order": "yx",
+        "origin": [
+          0,
+          0
+        ],
+        "world_to_grid": [
+          [
+            0.092,
+            0,
+            0
+          ],
+          [
+            0,
+            0.092,
+            0
+          ]
+        ]
+      },
+      "cell_semantics": {
+        "status": "validated",
+        "walkable_values": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "blocked_values": [
+          0
+        ]
+      },
+      "completeness": "unverified",
+      "area_hash": "14A7A83E",
+      "area_instance_address": "0x4DC830C3800",
+      "player_metadata": "Metadata/Characters/StrDex/StrDexFourb",
+      "acquisition": {
+        "started_at": "2026-09-23T11:50:03.110783+00:00",
+        "process": {
+          "pid": 2516,
+          "created_filetime": 134346315125338104,
+          "exe_sha256": "dc3b3f1bedbf664a21fb71ff6fd178db5e55f588efc53ead026a87d963468714",
+          "exe_path": "D:\\GAMES\\PathOfExile.exe"
+        },
+        "guard_observations": 3,
+        "matching_buffer_reads": 2,
+        "atomic_snapshot": false
+      },
+      "raw_sha256": "f1c13131bc8e05f6c9391599d6a364c10ac027559205c8b4287ee6a5a1269a87",
+      "coordinate_space": "native_grid_cells",
+      "explored_map_meaning": "classified_cells_not_game_exploration",
+      "production_auto_mode_ready": false,
+      "archive_manifest": {
+        "schema_version": 1,
+        "tool": "manual-live-terrain-capture",
+        "captured_at": "2026-09-23T11:50:03.207008+00:00",
+        "area_id": "MapFlotsam",
+        "area_hash": "14A7A83E",
+        "instance_id": "MapFlotsam:14A7A83E",
+        "width": 2968,
+        "height": 2277,
+        "raw_sha256": "f1c13131bc8e05f6c9391599d6a364c10ac027559205c8b4287ee6a5a1269a87",
+        "run_directory": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\runs\\poe2-20260923-195003-14A7A83E-ab2c77",
+        "preview": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\output\\latest.png",
+        "native_grid": "D:\\ACloud\\poe2-map-research\\experiments\\live-terrain-preview\\output\\latest.npz",
+        "timings_ms": {
+          "session_and_process": 19.08,
+          "descriptor_resolution": 156.417,
+          "guarded_capture_and_export": 1939.453,
+          "latest_publication": 5.543,
+          "total_before_manifest": 2120.494
+        }
+      }
+    },
+    "neighbourhood": {
+      "center_grid": [
+        285,
+        419
+      ],
+      "bounds_xyxy": [
+        282,
+        416,
+        289,
+        423
+      ],
+      "in_bounds": true,
+      "raw_cells": [
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      ],
+      "cell_state": [
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "known_mask": [
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ]
+      ],
+      "wall_layer": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "explored_map": [
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ],
+        [
+          255,
+          255,
+          255,
+          255,
+          255,
+          255,
+          255
+        ]
+      ]
+    }
+  },
+  "cross_checks": {
+    "instance_id_match": true,
+    "area_id_match": true,
+    "area_hash_match": true,
+    "shape_match": true,
+    "terrain_captured_at": "2026-09-23T11:50:03.207008+00:00"
+  },
+  "errors": []
+}

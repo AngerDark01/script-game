@@ -18,6 +18,9 @@ from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization im
 from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.absolute_registrar import (
     AnchoredAbsoluteRegistrar,
 )
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.composition import (
+    Poe2DualLocalizationExperiment,
+)
 from auto_modules.ui.modes.poe2.composition import build_poe2_live_terrain_composition
 
 
@@ -171,6 +174,19 @@ def test_formal_runtime_uses_calibrated_single_frame_registrar(tmp_path):
     assert registrar.config.coarse_angles == tuple(float(value) for value in range(0, 360, 45))
     assert registrar.config.coarse_scales[0] == 0.35
     assert registrar.config.coarse_scales[-1] == 2.45
+
+
+def test_formal_runtime_selects_dual_product_experiment_from_profile(tmp_path):
+    composition = build_poe2_live_terrain_composition(
+        screen_capture=FakeScreenCapture(),
+        recognizer=object(),
+        writable_root=tmp_path,
+    )
+
+    composition.runtime.configure_monitor(Poe2MonitorConfig(tracking_mode="dual"))
+    composition.runtime.configure_snapshot(_snapshot())
+
+    assert isinstance(composition.runtime.experiment, Poe2DualLocalizationExperiment)
 
 
 def test_hybrid_factory_uses_profile_first_frame_quality_gates(tmp_path):

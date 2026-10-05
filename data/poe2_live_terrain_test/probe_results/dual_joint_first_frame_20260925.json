@@ -1,0 +1,266 @@
+{
+  "schema_version": 1,
+  "map_instance": "MapFlotsam:73681455",
+  "profiles": [
+    {
+      "name": "玩家1",
+      "hue_min": 5,
+      "hue_max": 38,
+      "saturation_min": 130,
+      "value_min": 130,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    },
+    {
+      "name": "玩家2",
+      "hue_min": 82,
+      "hue_max": 125,
+      "saturation_min": 110,
+      "value_min": 100,
+      "min_area": 8.0,
+      "max_area": 55.0,
+      "max_dimension": 14,
+      "enabled": true
+    }
+  ],
+  "reports": [
+    {
+      "status": "accepted",
+      "reason": "one transform explains both player markers and memory anchors",
+      "players": {
+        "p1": {
+          "identity": "p1",
+          "candidate_id": "observation-1",
+          "screen_position": [
+            75.0,
+            151.0
+          ],
+          "memory_position": [
+            956.5000117,
+            430.4999844
+          ],
+          "mapped_position": [
+            956.5000117,
+            430.4999844
+          ],
+          "anchor_error": 0.0,
+          "confidence": 0.8004201680672269,
+          "accepted": true
+        },
+        "p2": {
+          "identity": "p2",
+          "candidate_id": "observation-0",
+          "screen_position": [
+            86.0,
+            151.0
+          ],
+          "memory_position": [
+            962.499957,
+            424.4999941
+          ],
+          "mapped_position": [
+            962.499957,
+            424.4999941
+          ],
+          "anchor_error": 0.0,
+          "confidence": 0.8004201680672269,
+          "accepted": true
+        }
+      },
+      "diagnostics": {
+        "identity_count": 2,
+        "candidate_count": 2,
+        "assignment_count": 2,
+        "evaluated_assignment_count": 4,
+        "failed_assignments": [],
+        "max_anchor_error": 12.0,
+        "minimum_pair_confidence": 0.7,
+        "evaluated_variant_count": 4,
+        "best_pair_confidence": 0.8702731092436976,
+        "best_mean_anchor_error": 0.0,
+        "best_assignment": {
+          "p1": "observation-1",
+          "p2": "observation-0"
+        },
+        "registration": {
+          "status": "joint_direct",
+          "joint_shape_coverage": 0.8004201680672269,
+          "joint_angle": 45.00021486032626,
+          "joint_scale": 0.7713850760565069
+        },
+        "joint_initialization": {
+          "angle": 45.00021486032626,
+          "reflect_horizontal": false,
+          "scale": 0.7713850760565069,
+          "screen_midpoint": [
+            80.5,
+            151.0
+          ],
+          "native_midpoint": [
+            959.49998435,
+            427.49998925
+          ],
+          "screen_delta": [
+            11.0,
+            0.0
+          ],
+          "native_delta": [
+            5.999945300000036,
+            -5.999990300000036
+          ],
+          "pair_distance_error": 8.881784197001252e-16,
+          "registration_pair_distance_error": 0.0,
+          "pair_confidence": 1.0,
+          "profile_consistency": 1.0
+        },
+        "assignment_margin": 0.09022419240232782,
+        "assignment_scores": {
+          "observation-1,observation-0": 0.8702731092436976,
+          "observation-0,observation-1": 0.7800489168413698
+        }
+      },
+      "case": "live",
+      "elapsed_ms": 598.65,
+      "candidates": [
+        {
+          "position": [
+            86.0,
+            151.0
+          ],
+          "profile": "玩家2",
+          "profile_index": 1,
+          "confidence": 0.926875
+        },
+        {
+          "position": [
+            75.0,
+            151.0
+          ],
+          "profile": "玩家1",
+          "profile_index": 0,
+          "confidence": 0.915625
+        }
+      ]
+    },
+    {
+      "status": "accepted",
+      "reason": "one transform explains both player markers and memory anchors",
+      "players": {
+        "p1": {
+          "identity": "p1",
+          "candidate_id": "observation-1",
+          "screen_position": [
+            87.0,
+            148.0
+          ],
+          "memory_position": [
+            956.5000117,
+            430.4999844
+          ],
+          "mapped_position": [
+            956.5000117,
+            430.4999844
+          ],
+          "anchor_error": 0.0,
+          "confidence": 0.8357857563272513,
+          "accepted": true
+        },
+        "p2": {
+          "identity": "p2",
+          "candidate_id": "observation-0",
+          "screen_position": [
+            75.0,
+            155.0
+          ],
+          "memory_position": [
+            962.499957,
+            424.4999941
+          ],
+          "mapped_position": [
+            962.499957,
+            424.4999941
+          ],
+          "anchor_error": 0.0,
+          "confidence": 0.8357857563272513,
+          "accepted": true
+        }
+      },
+      "diagnostics": {
+        "identity_count": 2,
+        "candidate_count": 2,
+        "assignment_count": 2,
+        "evaluated_assignment_count": 4,
+        "failed_assignments": [],
+        "max_anchor_error": 12.0,
+        "minimum_pair_confidence": 0.7,
+        "evaluated_variant_count": 4,
+        "best_pair_confidence": 0.8932607416127133,
+        "best_mean_anchor_error": 0.0,
+        "best_assignment": {
+          "p1": "observation-1",
+          "p2": "observation-0"
+        },
+        "registration": {
+          "status": "joint_direct",
+          "joint_shape_coverage": 0.8357857563272513,
+          "joint_angle": 75.25665202385552,
+          "joint_scale": 0.6107806404017486
+        },
+        "joint_initialization": {
+          "angle": 75.25665202385552,
+          "reflect_horizontal": true,
+          "scale": 0.6107806404017486,
+          "screen_midpoint": [
+            81.0,
+            151.5
+          ],
+          "native_midpoint": [
+            959.49998435,
+            427.49998925
+          ],
+          "screen_delta": [
+            -12.0,
+            7.0
+          ],
+          "native_delta": [
+            5.999945300000036,
+            -5.999990300000036
+          ],
+          "pair_distance_error": 8.881784197001252e-16,
+          "registration_pair_distance_error": 0.0,
+          "pair_confidence": 1.0,
+          "profile_consistency": 1.0
+        },
+        "assignment_margin": 0.16331956514212498,
+        "assignment_scores": {
+          "observation-1,observation-0": 0.8932607416127133,
+          "observation-0,observation-1": 0.7299411764705883
+        }
+      },
+      "case": "captured",
+      "elapsed_ms": 579.52,
+      "candidates": [
+        {
+          "position": [
+            75.0,
+            155.0
+          ],
+          "profile": "玩家2",
+          "profile_index": 1,
+          "confidence": 0.9463636363636364
+        },
+        {
+          "position": [
+            87.0,
+            148.0
+          ],
+          "profile": "玩家1",
+          "profile_index": 0,
+          "confidence": 0.9059090909090909
+        }
+      ]
+    }
+  ]
+}

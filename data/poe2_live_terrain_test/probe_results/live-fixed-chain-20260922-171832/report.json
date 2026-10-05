@@ -1,0 +1,366 @@
+{
+  "output": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\probe_results\\live-fixed-chain-20260922-171832",
+  "states": [
+    {
+      "index": 1,
+      "mode": "local_tracking",
+      "source": "anchored_absolute",
+      "confidence": 0.6641622572199253,
+      "position": [
+        295.42896696773676,
+        409.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "status": "anchored_candidate",
+        "reason": "single-frame geometry is consistent with the memory anchor",
+        "search_mode": "full_similarity",
+        "coarse_variant_count": 352,
+        "candidate_count": 2,
+        "best_score": 0.5549808221357493,
+        "best_anchored_score": 0.6641622572199253,
+        "best_forward_coverage": 0.7651991614255765,
+        "best_angle": 221.0,
+        "best_reflection": true,
+        "best_scale": 0.79,
+        "best_anchor_error": 0.6634750022037296,
+        "best_player_on_walkable": true
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 2,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.1839374303817749,
+      "position": [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.2642502784729004,
+        "candidate_margin": 0.03513598442077637,
+        "search_origins": [
+          88,
+          203,
+          280,
+          395
+        ],
+        "elapsed_ms": 11.384299999917857
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 3,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.1839374303817749,
+      "position": [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.2642502784729004,
+        "candidate_margin": 0.03513598442077637,
+        "search_origins": [
+          89,
+          204,
+          281,
+          396
+        ],
+        "elapsed_ms": 9.976299999834737
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 4,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17438817024230957,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3024473190307617,
+        "candidate_margin": 0.04490494728088379,
+        "search_origins": [
+          89,
+          204,
+          281,
+          396
+        ],
+        "elapsed_ms": 8.267000001069391
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 5,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.1839374303817749,
+      "position": [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.2642502784729004,
+        "candidate_margin": 0.03513598442077637,
+        "search_origins": [
+          88,
+          204,
+          280,
+          396
+        ],
+        "elapsed_ms": 12.940900000103284
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 6,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17448675632476807,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3020529747009277,
+        "candidate_margin": 0.044846296310424805,
+        "search_origins": [
+          89,
+          204,
+          281,
+          396
+        ],
+        "elapsed_ms": 10.584699997707503
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 7,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.1838301420211792,
+      "position": [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.264679431915283,
+        "candidate_margin": 0.03618192672729492,
+        "search_origins": [
+          88,
+          204,
+          280,
+          396
+        ],
+        "elapsed_ms": 10.877100001380313
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 8,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17438817024230957,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3024473190307617,
+        "candidate_margin": 0.04490494728088379,
+        "search_origins": [
+          89,
+          204,
+          281,
+          396
+        ],
+        "elapsed_ms": 5.942300002061529
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 9,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17438817024230957,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3024473190307617,
+        "candidate_margin": 0.04490494728088379,
+        "search_origins": [
+          88,
+          204,
+          280,
+          396
+        ],
+        "elapsed_ms": 10.926899998594308
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 10,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.1839374303817749,
+      "position": [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.2642502784729004,
+        "candidate_margin": 0.03513598442077637,
+        "search_origins": [
+          88,
+          204,
+          280,
+          396
+        ],
+        "elapsed_ms": 7.651500000065425
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 11,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17438817024230957,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3024473190307617,
+        "candidate_margin": 0.04490494728088379,
+        "search_origins": [
+          89,
+          204,
+          281,
+          396
+        ],
+        "elapsed_ms": 11.063699999795062
+      },
+      "memory_read_count": 1
+    },
+    {
+      "index": 12,
+      "mode": "local_tracking",
+      "source": "visual_local",
+      "confidence": 0.17438817024230957,
+      "position": [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      "reason": "",
+      "diagnostics": {
+        "search_radius": 96.0,
+        "mean_wall_error_px": 3.3024473190307617,
+        "candidate_margin": 0.04490494728088379,
+        "search_origins": [
+          88,
+          204,
+          280,
+          396
+        ],
+        "elapsed_ms": 10.5249999978696
+      },
+      "memory_read_count": 1
+    }
+  ],
+  "summary": {
+    "instance_id": "MapFlotsam:1E44BF94",
+    "success_count": 12,
+    "visual_local_count": 11,
+    "final_memory_read_count": 1,
+    "sources": [
+      "anchored_absolute",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local",
+      "visual_local"
+    ],
+    "positions": [
+      [
+        295.42896696773676,
+        409.83274639936076
+      ],
+      [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      [
+        296.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ],
+      [
+        295.42896696773676,
+        410.83274639936076
+      ]
+    ]
+  }
+}

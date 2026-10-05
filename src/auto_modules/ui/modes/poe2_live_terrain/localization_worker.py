@@ -54,6 +54,14 @@ class Poe2LocalizationWorker(QObject):
         self._stop_event.set()
         self._retry_event.set()
 
+    def wait(self, timeout_ms: int = 3000) -> bool:
+        """Join the capture thread before its page/runtime is released."""
+        thread = self._thread
+        if thread is None or thread is threading.current_thread():
+            return True
+        thread.join(max(0.0, int(timeout_ms)) / 1000.0)
+        return not thread.is_alive()
+
     def retry_recovery(self) -> None:
         self._retry_event.set()
 

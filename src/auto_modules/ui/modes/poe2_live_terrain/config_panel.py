@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSpinBox,
@@ -137,8 +138,47 @@ class Poe2MonitorConfigPanel(QWidget):
         recognition_form.addRow("图像处理", self.advanced_visual_button)
         root.addWidget(recognition_group)
 
+        marker_group = QGroupBox("2.1 双人颜色配准")
+        marker_layout = QVBoxLayout(marker_group)
+        marker_layout.addWidget(QLabel("双人模式只用颜色确定小地图中的两个候选点，身份由共同几何匹配确认。"))
+        self.dual_marker_controls = []
+        for index in range(2):
+            row = QHBoxLayout()
+            enabled = QCheckBox(f"玩家{index + 1}")
+            name = QLabel("未命名")
+            hue_min = QSpinBox(); hue_min.setRange(0, 179)
+            hue_max = QSpinBox(); hue_max.setRange(0, 179)
+            saturation = QSpinBox(); saturation.setRange(0, 255)
+            value = QSpinBox(); value.setRange(0, 255)
+            for control in (enabled, hue_min, hue_max, saturation, value):
+                if isinstance(control, QCheckBox):
+                    control.toggled.connect(self._dual_marker_changed)
+                else:
+                    control.valueChanged.connect(self._dual_marker_changed)
+            row.addWidget(enabled)
+            row.addWidget(name)
+            row.addWidget(QLabel("色相"))
+            row.addWidget(hue_min)
+            row.addWidget(QLabel("-"))
+            row.addWidget(hue_max)
+            row.addWidget(QLabel("饱和"))
+            row.addWidget(saturation)
+            row.addWidget(QLabel("亮度"))
+            row.addWidget(value)
+            marker_layout.addLayout(row)
+            self.dual_marker_controls.append(
+                {"enabled": enabled, "name": name, "hue_min": hue_min, "hue_max": hue_max,
+                 "saturation_min": saturation, "value_min": value}
+            )
+        root.addWidget(marker_group)
+
         localization_group = QGroupBox("3. 定位与性能")
         localization_form = QFormLayout(localization_group)
+        self.tracking_mode_combo = QComboBox()
+        self.tracking_mode_combo.addItem("单人定位", "single")
+        self.tracking_mode_combo.addItem("双人定位", "dual")
+        self.tracking_mode_combo.currentIndexChanged.connect(self._emit_config_changed)
+        localization_form.addRow("跟踪模式", self.tracking_mode_combo)
         self.first_frame_confidence_spin = QDoubleSpinBox()
         self.anchored_score_spin = QDoubleSpinBox()
         self.anchored_coverage_spin = QDoubleSpinBox()
@@ -197,12 +237,16 @@ class Poe2MonitorConfigPanel(QWidget):
             self.anchored_coverage_spin.setValue(config.first_frame_anchored_coverage)
             self.localization_fps_spin.setValue(config.localization_fps)
             self.preview_fps_spin.setValue(config.preview_fps)
+            tracking_index = self.tracking_mode_combo.findData(config.tracking_mode)
+            if tracking_index >= 0:
+                self.tracking_mode_combo.setCurrentIndex(tracking_index)
             self.capture_size_spin.setValue(config.capture_size)
             self.circle_radius_spin.setValue(config.circle_radius or config.capture_size / 2.0)
             index = self.shape_combo.findData(config.shape.value)
             if index >= 0:
                 self.shape_combo.setCurrentIndex(index)
             self._set_visual_controls(self._complete_recognizer_params(config.recognizer_params))
+            self._set_dual_marker_controls(config.dual_marker_profiles)
             self.binding_label.setText(
                 "未选择区域" if config.binding is None else str(config.binding.rect.as_dict())
             )
@@ -223,10 +267,12 @@ class Poe2MonitorConfigPanel(QWidget):
             preview_fps=self.preview_fps_spin.value(),
             profile_id=self._config.profile_id,
             profile_name=self._config.profile_name,
+            tracking_mode=str(self.tracking_mode_combo.currentData() or "single"),
             selection_mode=self._config.selection_mode,
             capture_size=self.capture_size_spin.value(),
             shape=CaptureShape.coerce(self.shape_combo.currentData()),
             circle_radius=self.circle_radius_spin.value(),
+            dual_marker_profiles=tuple(self._dual_marker_profiles()),
             recognizer_params=self.recognizer_params(),
             stitcher_params=self.stored_stitcher_params(),
         )
@@ -290,6 +336,37 @@ class Poe2MonitorConfigPanel(QWidget):
         self.canny_low_spin.setValue(int(params["edge_low"]))
         self.canny_high_spin.setValue(int(params["edge_high"]))
         self.player_clear_radius_spin.setValue(int(params["player_clear_radius"]))
+
+    def _set_dual_marker_controls(self, profiles) -> None:
+        for index, controls in enumerate(self.dual_marker_controls):
+            payload = dict(profiles[index]) if index < len(profiles) else {}
+            controls["enabled"].setChecked(bool(payload.get("enabled", True)))
+            controls["name"].setText(str(payload.get("name", f"玩家{index + 1}")))
+            controls["hue_min"].setValue(int(payload.get("hue_min", 0)))
+            controls["hue_max"].setValue(int(payload.get("hue_max", 179)))
+            controls["saturation_min"].setValue(int(payload.get("saturation_min", 150)))
+            controls["value_min"].setValue(int(payload.get("value_min", 150)))
+
+    def _dual_marker_profiles(self) -> list[dict]:
+        profiles = []
+        for index, controls in enumerate(self.dual_marker_controls):
+            profiles.append(
+                {
+                    "name": controls["name"].text().strip() or f"玩家{index + 1}",
+                    "hue_min": controls["hue_min"].value(),
+                    "hue_max": controls["hue_max"].value(),
+                    "saturation_min": controls["saturation_min"].value(),
+                    "value_min": controls["value_min"].value(),
+                    "min_area": 8.0,
+                    "max_area": 55.0,
+                    "max_dimension": 14,
+                    "enabled": controls["enabled"].isChecked(),
+                }
+            )
+        return profiles
+
+    def _dual_marker_changed(self, *_args) -> None:
+        self._emit_config_changed()
 
     def _visual_control_changed(self, *_args) -> None:
         if self._loading:
@@ -375,6 +452,7 @@ class Poe2MonitorConfigPanel(QWidget):
             self.shape_combo,
             self.capture_size_spin,
             self.circle_radius_spin,
+            self.tracking_mode_combo,
             self.search_radius_spin,
             self.match_threshold_spin,
             self.sample_interval_spin,
@@ -395,6 +473,8 @@ class Poe2MonitorConfigPanel(QWidget):
             self.player_clear_radius_spin,
             self.color_calibration_button,
             self.advanced_visual_button,
+            *[control for row in self.dual_marker_controls for control in row.values()
+              if hasattr(control, "setEnabled")],
         ):
             widget.setEnabled(bool(enabled))
         self._editable = bool(enabled)

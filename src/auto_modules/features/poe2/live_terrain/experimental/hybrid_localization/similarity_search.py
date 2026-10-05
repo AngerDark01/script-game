@@ -256,6 +256,76 @@ def transform_feature(
     )
 
 
+def transform_local_point(
+    feature_shape: tuple[int, int],
+    point: tuple[float, float],
+    *,
+    angle: float,
+    reflect_horizontal: bool,
+    scale: float,
+    translation: tuple[float, float] = (0.0, 0.0),
+) -> tuple[float, float]:
+    """Map a point through the same transform used by ``transform_feature``.
+
+    The minimap registration stores only the transformed template's top-left
+    corner.  This helper exposes the corresponding point mapping for a second
+    marker without creating a synthetic image or maintaining a second rotation
+    convention in an experiment layer.
+    """
+    if len(feature_shape) != 2:
+        raise ValueError("feature_shape must contain height and width")
+    height, width = (int(feature_shape[0]), int(feature_shape[1]))
+    if height <= 0 or width <= 0:
+        raise ValueError("feature_shape must be positive")
+    if len(point) != 2 or len(translation) != 2:
+        raise ValueError("point and translation must contain two values")
+    scale_value = float(scale)
+    if not math.isfinite(scale_value) or scale_value <= 0.0:
+        raise ValueError("scale must be positive and finite")
+
+    x_value, y_value = float(point[0]), float(point[1])
+    if not math.isfinite(x_value) or not math.isfinite(y_value):
+        raise ValueError("point must contain finite values")
+    if reflect_horizontal:
+        x_value = float(width - 1) - x_value
+
+    center = ((width - 1) / 2.0, (height - 1) / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, float(angle), 1.0)
+    cosine = abs(float(matrix[0, 0]))
+    sine = abs(float(matrix[0, 1]))
+    out_width = max(1, int(math.ceil(height * sine + width * cosine)))
+    out_height = max(1, int(math.ceil(height * cosine + width * sine)))
+    matrix[0, 2] += (out_width - 1) / 2.0 - center[0]
+    matrix[1, 2] += (out_height - 1) / 2.0 - center[1]
+    rotated = matrix @ np.array([x_value, y_value, 1.0], dtype=np.float64)
+    offset = np.asarray(translation, dtype=np.float64)
+    return (
+        float(rotated[0] * scale_value + offset[0]),
+        float(rotated[1] * scale_value + offset[1]),
+    )
+
+
+def inverse_transform_local_point(
+    feature_shape: tuple[int, int],
+    native_point: tuple[float, float],
+    *,
+    angle: float,
+    reflect_horizontal: bool,
+    scale: float,
+    translation: tuple[float, float] = (0.0, 0.0),
+) -> tuple[float, float]:
+    """Invert the exact affine mapping used by transform_local_point."""
+    kwargs = dict(angle=angle, reflect_horizontal=reflect_horizontal,
+                  scale=scale, translation=translation)
+    origin = np.asarray(transform_local_point(feature_shape, (0.0, 0.0), **kwargs))
+    axis_x = np.asarray(transform_local_point(feature_shape, (1.0, 0.0), **kwargs)) - origin
+    axis_y = np.asarray(transform_local_point(feature_shape, (0.0, 1.0), **kwargs)) - origin
+    vector = np.linalg.solve(
+        np.column_stack((axis_x, axis_y)), np.asarray(native_point, dtype=np.float64) - origin,
+    )
+    return float(vector[0]), float(vector[1])
+
+
 def _distance_field(edge: np.ndarray) -> np.ndarray:
     binary = _binary_mask(edge)
     return cv2.distanceTransform(np.where(binary > 0, 0, 255).astype(np.uint8), cv2.DIST_L2, 3)
@@ -647,5 +717,7 @@ __all__ = [
     "search_candidates",
     "terrain_edges",
     "terrain_walkable_mask",
+    "transform_local_point",
+    "inverse_transform_local_point",
     "transform_feature",
 ]

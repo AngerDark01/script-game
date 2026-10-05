@@ -30,3 +30,22 @@ def test_profile_store_copies_and_persists_profile(tmp_path) -> None:
 
     assert copied.profile_name == "副本"
     assert reloaded.get(copied.profile_id).search_radius == 123
+
+
+def test_profile_store_round_trips_dual_marker_profiles_and_accepts_legacy_payload(tmp_path) -> None:
+    source = Poe2MonitorConfig()
+    payload = source.as_dict()
+    payload["dual_marker_profiles"][0]["hue_min"] = 22
+    payload.pop("dual_marker_profiles")
+
+    legacy = Poe2MonitorConfig.from_dict(payload)
+    assert len(legacy.dual_marker_profiles) == 2
+
+    store = Poe2MonitorProfileStore(tmp_path)
+    saved = Poe2MonitorConfig.from_dict({**source.as_dict(), "dual_marker_profiles": [
+        {**source.dual_marker_profiles[0], "hue_min": 22},
+        source.dual_marker_profiles[1],
+    ]})
+    store.save(saved)
+    loaded = store.get(saved.profile_id)
+    assert loaded.dual_marker_profiles[0]["hue_min"] == 22

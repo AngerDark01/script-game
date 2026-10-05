@@ -30,6 +30,12 @@ from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.co
 from auto_modules.features.poe2.live_terrain.experimental.multiframe_localization.composition import (
     build_poe2_multiframe_experiment,
 )
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.composition import (
+    build_poe2_dual_localization_experiment,
+)
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.memory_anchors import (
+    Poe2DualPlayerPositionSource,
+)
 from auto_modules.paths import data_root
 
 
@@ -51,6 +57,8 @@ class Poe2LiveTerrainComposition:
     player_position_source: Any
     hybrid_localization_factory: Any
     multiframe_localization_factory: Any
+    dual_localization_factory: Any = None
+    program_output_factory: Any = None
 
 
 class _ThreadLocalPreviewCapture:
@@ -95,6 +103,7 @@ def build_poe2_live_terrain_composition(
     screen_capture: Any,
     recognizer: Any,
     writable_root: str | Path | None = None,
+    program_output_factory: Any = None,
 ) -> Poe2LiveTerrainComposition:
     """Compose PoE2 capture/localization without coupling generic navigation UI."""
     root = Path(writable_root or data_root()).expanduser().resolve()
@@ -139,6 +148,7 @@ def build_poe2_live_terrain_composition(
         archive=None,
     )
     player_position_source = Poe2PlayerPositionSource()
+    dual_player_position_source = Poe2DualPlayerPositionSource()
 
     def build_hybrid_localization(snapshot, config_provider):
         return build_poe2_hybrid_localization_experiment(
@@ -158,8 +168,23 @@ def build_poe2_live_terrain_composition(
             player_position_source=player_position_source,
         )
 
+    def build_dual_localization(snapshot, config_provider):
+        return build_poe2_dual_localization_experiment(
+            snapshot=snapshot,
+            config_provider=config_provider,
+            preview_capture=capture_preview_frame,
+            recognizer=_dedicated_poe2_recognizer(poe2_recognizer),
+            dual_player_position_source=dual_player_position_source,
+        )
+
+    def build_product_localization(snapshot, config_provider):
+        config = config_provider()
+        if getattr(config, "tracking_mode", "single") == "dual":
+            return build_dual_localization(snapshot, config_provider)
+        return build_hybrid_localization(snapshot, config_provider)
+
     runtime = Poe2HybridProductRuntime(
-        build_hybrid_localization,
+        build_product_localization,
         initial_config=profile_store.active() or config_store.load(),
         logger=get_terrain_logger(),
         failure_recorder=Poe2HybridFailureArchive(
@@ -182,4 +207,6 @@ def build_poe2_live_terrain_composition(
         player_position_source=player_position_source,
         hybrid_localization_factory=build_hybrid_localization,
         multiframe_localization_factory=build_multiframe_localization,
+        dual_localization_factory=build_dual_localization,
+        program_output_factory=program_output_factory,
     )

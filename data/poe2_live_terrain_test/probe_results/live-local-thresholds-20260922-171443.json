@@ -1,0 +1,760 @@
+{
+  "frames": [
+    {
+      "index": 0,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              88,
+              203,
+              280,
+              395
+            ],
+            "elapsed_ms": 11.674699999275617
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              88,
+              203,
+              280,
+              395
+            ],
+            "elapsed_ms": 5.011299999750918
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              88,
+              203,
+              280,
+              395
+            ],
+            "elapsed_ms": 5.948100002569845
+          }
+        }
+      }
+    },
+    {
+      "index": 1,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.584100000414765
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.973200002103113
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.152800001582364
+          }
+        }
+      }
+    },
+    {
+      "index": 2,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.57989999774145
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.580099999264348
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.170099998504156
+          }
+        }
+      }
+    },
+    {
+      "index": 3,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.423800002172356
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.581599999568425
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.017100001277868
+          }
+        }
+      }
+    },
+    {
+      "index": 4,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 12.050699999235803
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.135000000649597
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.826000001543434
+          }
+        }
+      }
+    },
+    {
+      "index": 5,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.749299999792129
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 12.82100000025821
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.583800001768395
+          }
+        }
+      }
+    },
+    {
+      "index": 6,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 9.518700000626268
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.076899998442968
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.931699998764088
+          }
+        }
+      }
+    },
+    {
+      "index": 7,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 9.839100002864143
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.523299999680603
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.861999999382533
+          }
+        }
+      }
+    },
+    {
+      "index": 8,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 13.408299997536233
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.416199999075616
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.607200001686579
+          }
+        }
+      }
+    },
+    {
+      "index": 9,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 12.588199999299832
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.350900000252295
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.726399999839487
+          }
+        }
+      }
+    },
+    {
+      "index": 10,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.08820000081323
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 12.36869999775081
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 10.553000000072643
+          }
+        }
+      }
+    },
+    {
+      "index": 11,
+      "wall_pixels": 1223,
+      "variants": {
+        "4.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.18562030792236328,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 7.949800001370022
+          }
+        },
+        "5.0_0.02": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 8.149799999955576
+          }
+        },
+        "5.0_0.01": {
+          "valid": true,
+          "origin": [
+            185.0,
+            300.0
+          ],
+          "confidence": 0.34849624633789067,
+          "metadata": {
+            "mean_wall_error_px": 3.257518768310547,
+            "candidate_margin": 0.03642439842224121,
+            "search_origins": [
+              89,
+              204,
+              281,
+              396
+            ],
+            "elapsed_ms": 11.29620000210707
+          }
+        }
+      }
+    }
+  ]
+}

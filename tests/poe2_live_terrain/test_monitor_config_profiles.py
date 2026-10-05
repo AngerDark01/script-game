@@ -50,6 +50,19 @@ def test_monitor_config_round_trips_localization_policy() -> None:
     assert Poe2MonitorConfig.from_dict(config.as_dict()) == config
 
 
+def test_monitor_config_round_trips_tracking_mode_and_legacy_defaults_to_single() -> None:
+    config = Poe2MonitorConfig(tracking_mode="dual")
+
+    assert Poe2MonitorConfig.from_dict(config.as_dict()).tracking_mode == "dual"
+    assert Poe2MonitorConfig.from_dict({}).tracking_mode == "single"
+
+
+@pytest.mark.parametrize("tracking_mode", ["", "triple", "DUALITY"])
+def test_monitor_config_rejects_unknown_tracking_mode(tracking_mode: str) -> None:
+    with pytest.raises(ValueError):
+        Poe2MonitorConfig(tracking_mode=tracking_mode)
+
+
 @pytest.mark.parametrize("values", [
     {"first_frame_minimum_confidence": 1.1},
     {"first_frame_anchored_score": -0.1},

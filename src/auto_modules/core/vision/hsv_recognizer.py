@@ -103,13 +103,38 @@ class HSVRecognizer:
     def extract_player(self, img, is_processed=False):
         return extract_player_mask(self, img, is_processed=is_processed)
 
-    def extract_combined(self, img, player_pos=None):
-        return extract_combined_masks(self, img, player_pos=player_pos)
+    def extract_combined(
+        self,
+        img,
+        player_pos=None,
+        *,
+        exclude_player=True,
+        exclude_dynamic=True,
+    ):
+        return extract_combined_masks(
+            self,
+            img,
+            player_pos=player_pos,
+            exclude_player=exclude_player,
+            exclude_dynamic=exclude_dynamic,
+        )
 
-    def extract_combined_with_processed(self, img, player_pos=None):
+    def extract_combined_with_processed(
+        self,
+        img,
+        player_pos=None,
+        *,
+        exclude_player=True,
+        exclude_dynamic=True,
+    ):
         processed = self.preprocess_image(img)
         return processed, extract_combined_masks(
-            self, img, player_pos=player_pos, processed_for_wall=processed
+            self,
+            img,
+            player_pos=player_pos,
+            processed_for_wall=processed,
+            exclude_player=exclude_player,
+            exclude_dynamic=exclude_dynamic,
         )
 
     def get_preprocessed_image(self, img):

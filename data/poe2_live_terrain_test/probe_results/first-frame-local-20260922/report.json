@@ -1,0 +1,47 @@
+{
+  "sample": "D:\\ACloud\\auto_modules\\data\\poe2_live_terrain_test\\samples\\20260922-043532-966126-MapFlotsam-1E44BF94",
+  "terrain_instance": "MapFlotsam:1E44BF94",
+  "anchor_grid": [
+    300.4346025390625,
+    400.98622265625
+  ],
+  "crop_bounds": [
+    170,
+    270,
+    431,
+    531
+  ],
+  "preprocessing": {
+    "source": "wall_mask.png",
+    "top_rows_removed": 25,
+    "player_clear_radius": 22
+  },
+  "candidate": {
+    "angle": 219.0,
+    "reflect_horizontal": true,
+    "scale": 0.85,
+    "top_left": [
+      18,
+      13
+    ],
+    "player_position": [
+      137.488,
+      131.827
+    ],
+    "mean_distance": 1.8513083457946777,
+    "forward_coverage": 0.7838427947598253,
+    "reverse_coverage": 0.38461538461538464,
+    "walkable_coverage": 0.3544158489168672,
+    "player_on_walkable": true,
+    "score": 0.5717152008208163,
+    "edge_pixels": 458,
+    "rank": 1,
+    "global_player_position": [
+      307.48782586742306,
+      401.8272518001846
+    ],
+    "anchor_error": 7.103188674157334
+  },
+  "accepted": false,
+  "reason": "single_frame_candidate_below_existing_score_threshold_but_geometrically_consistent_with_anchor"
+}

@@ -46,6 +46,26 @@ class RecognizerOptimizedTest(unittest.TestCase):
         self.assertGreater(np.count_nonzero(wall_mask[:, 10:14]), 0)
         self.assertEqual(np.count_nonzero(match_mask[46:62, 46:62]), 0)
 
+    def test_full_map_options_preserve_center_walls_for_dual_first_frame(self):
+        recognizer = HSVRecognizer()
+        recognizer.extract_walls = lambda _img, is_processed=False: np.full(
+            (80, 80), 255, dtype=np.uint8
+        )
+        recognizer.extract_fog = lambda _img, is_processed=False: np.zeros(
+            (80, 80), dtype=np.uint8
+        )
+        frame = np.zeros((80, 80, 3), dtype=np.uint8)
+
+        masked, _wall, _fog = recognizer.extract_combined(frame)
+        full, _wall, _fog = recognizer.extract_combined(
+            frame,
+            exclude_player=False,
+            exclude_dynamic=False,
+        )
+
+        self.assertEqual(int(masked[40, 40]), 0)
+        self.assertGreater(int(full[40, 40]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

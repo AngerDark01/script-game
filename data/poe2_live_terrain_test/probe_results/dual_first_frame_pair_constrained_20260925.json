@@ -1,0 +1,98 @@
+[
+  {
+    "angle_seed": 43.8,
+    "reflect": false,
+    "status": "anchored_candidate",
+    "reason": "single-frame geometry is consistent with the memory anchor",
+    "count": 8,
+    "best": {
+      "angle": 50.8,
+      "reflect_horizontal": false,
+      "scale": 0.76,
+      "top_left": [
+        10,
+        0
+      ],
+      "player_position": [
+        135.845,
+        205.129
+      ],
+      "mean_distance": 47.199275970458984,
+      "forward_coverage": 0.08950086058519793,
+      "reverse_coverage": 0.050049554013875126,
+      "walkable_coverage": 0.18060207376506687,
+      "player_on_walkable": false,
+      "score": 0.023017066398440103,
+      "edge_pixels": 581,
+      "rank": 1,
+      "global_player_position": [
+        926.8453915759578,
+        470.1285789358386
+      ],
+      "anchor_error": 49.495657074709754,
+      "anchored_score": 0.25590375950743727,
+      "basin_angle": 43.8,
+      "basin_reflection": false,
+      "basin_scale": 0.84
+    },
+    "mapped_p1": [
+      926.8453915759577,
+      470.1285789358386
+    ],
+    "mapped_p2": [
+      932.0720994403497,
+      463.4349706112564
+    ],
+    "p1_error": 49.49565707470982,
+    "p2_error": 49.41446214386399,
+    "pair_error": 1.0387844987883457
+  },
+  {
+    "angle_seed": 226.2,
+    "reflect": true,
+    "status": "anchored_candidate",
+    "reason": "single-frame geometry is consistent with the memory anchor",
+    "count": 8,
+    "best": {
+      "angle": 233.2,
+      "reflect_horizontal": true,
+      "scale": 0.78,
+      "top_left": [
+        3,
+        0
+      ],
+      "player_position": [
+        130.398,
+        208.896
+      ],
+      "mean_distance": 53.01221466064453,
+      "forward_coverage": 0.06518282988871224,
+      "reverse_coverage": 0.02923686818632309,
+      "walkable_coverage": 0.1730346864586489,
+      "player_on_walkable": false,
+      "score": 0.017110739198653975,
+      "edge_pixels": 629,
+      "rank": 1,
+      "global_player_position": [
+        921.3976860166921,
+        473.8961890675939
+      ],
+      "anchor_error": 55.8157833643235,
+      "anchored_score": 0.20248551888440047,
+      "basin_angle": 226.2,
+      "basin_reflection": true,
+      "basin_scale": 0.86
+    },
+    "mapped_p1": [
+      921.3976860166921,
+      473.8961890675939
+    ],
+    "mapped_p2": [
+      926.7656506109005,
+      467.0293331205861
+    ],
+    "p1_error": 55.8157833643235,
+    "p2_error": 55.54896850477081,
+    "pair_error": 1.0728037970836015
+  }
+]

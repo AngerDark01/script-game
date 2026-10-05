@@ -1,0 +1,46 @@
+{
+  "tool": "poe2-hybrid-localization-failure",
+  "mode": "recovery_required",
+  "source": "failed",
+  "confidence": 0.0,
+  "position": null,
+  "latest_confirmed_position": null,
+  "trajectory": [],
+  "reason": "absolute_registration_failed",
+  "recovery_revision": 1,
+  "memory_read_count": 1,
+  "frame_elapsed_ms": 7316.455399995903,
+  "diagnostics": {
+    "status": "rejected",
+    "reason": "best candidate forward coverage is below threshold",
+    "search_mode": "full_similarity",
+    "attempt_count": 1,
+    "coarse_variant_count": 352,
+    "candidate_count": 24,
+    "minimum_forward_coverage": 0.65,
+    "minimum_forward_coverage_when_anchored": 0.6,
+    "anchor_acceptance_radius": 8.0,
+    "anchor_disambiguation_gap": 2.0,
+    "capture_size": 200,
+    "crop_radius": 150,
+    "refine_crop_radius": 110,
+    "best_score": 0.5189663609905059,
+    "best_anchored_score": 0.633273692666884,
+    "best_forward_coverage": 0.5576036866359447,
+    "best_angle": 219.0,
+    "best_reflection": true,
+    "best_scale": 0.7699999999999999,
+    "best_anchor_error": 1.9043449843185087,
+    "best_player_on_walkable": true
+  },
+  "frame": {
+    "frame_id": 1,
+    "captured_at_ms": 1790098504489,
+    "local_player": [
+      100.0,
+      100.0
+    ]
+  },
+  "last_confirmed_transform": null,
+  "sample_manifest": "sample.json"
+}

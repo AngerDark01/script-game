@@ -1125,3 +1125,498 @@ on a composed workbench service rather than constructing/parsing runtimes.
 ### 2026-09-24 PoE2 首帧门槛调整
 
 PoE2 组合将首帧 `minimum_confidence` 调整为 `0.70`；通用 registrar、形状覆盖率门和其他业务组合保持不变。
+
+## [SYNC] 2026-09-25 - PoE2 双人匹配特征预览策略
+
+### A. SYNC 范围声明
+
+**触发任务：** 排查双人“匹配特征”中的圆环和预览刷新是否仍应用单人人物擦除。
+**直接变更文件：** `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`、`tests/test_poe2_capture_test_page.py`、`docs/POE2_LIVE_TERRAIN_CURRENT_STATE.md`。
+**预计连带影响：** 双人首帧按钮、同页 `refresh_preview()` 定时回调、单人和多帧启动及地图重新捕获；共享 `HSVRecognizer.extract_combined()` 的调用参数不改变其默认契约。
+
+### C. SYNC 结果
+
+**连带重读文件：** `capture_test_page.py` 的按钮、预览回调和状态复位路径；`hsv/combined.py`、`hsv_recognizer.py` 的擦除门控；`marker_candidates.py` 的双人候选检测；页面回归测试。
+**关键发现（verified）：** 双人注册本帧从未执行人物圆形擦除；截图中的圆环是独立地图图标的亮边，人物候选在其右上方。预览定时刷新此前确实退回单人默认提取，可能使显示与双人本帧注册参数不一致；现在页面状态保证双人后续刷新使用无擦除参数，回到其他实验时复位。
+**修订的旧结论：** “双人注册仍在人物附近清空一圈”改为“注册不清空；地图图标亮边形成圆环，且预览刷新曾使用单人默认提取”。
+**CODEBASE.md 更新内容：** PoE2 测试页职责和 F-POE2-DUAL-FIRST-FRAME-PREVIEW 数据流；未改通用 HSV 默认值。
+**覆盖进度更新：** `capture_test_page.py` 和页面测试聚焦复读；共享 HSV 与颜色候选只核对相关函数，保留为局部覆盖，不虚报整文件深度完整。
+**下一轮计划：** 如需过滤图标，先为 PoE2 双人样本建立图标与相连墙体的像素级标注，再验证只移除图标而不损失墙体；不得恢复半径擦除。
+
+## [SYNC] 2026-09-25 - PoE2 双人运动定位实验
+
+### A. SYNC 范围声明
+
+**触发任务：** 在双人首帧注册后实验连续视觉跟踪、局部纠偏与一次性内存恢复。
+**直接变更文件：** `experimental/multiplayer_localization/dual_motion.py`、同包 `__init__.py`、`capture_test_page.py` 和双人运动/页面测试。
+**预计连带影响：** 现有双人首帧结果、通用墙体位移与有界匹配、地图方向展示、测试页启动/停止/换图链路；单人中心链路仅调用停止双人计时器，不改变算法。
+
+### C. SYNC 结果
+
+**连带重读文件：** 双人首帧模型/候选/组合、单人 `VisualLocalTracker`、通用位移/有界 matcher、地图 overlay、测试页的启动/停止/换图及现有页面测试。
+**关键发现（verified）：** 双人运动只需维护一份固定相似变换中的平移；两名人物位置可独立由颜色候选映射。缺失标记不代表共同墙体失效；局部匹配成功时必须把平移修正反变换给身份预测。
+**修订的旧结论：** “位移失败、局部纠偏成功即可直接按原屏幕位置分配身份”改为“必须从纠偏平移恢复屏幕视口位移，否则会把复现的角色误判为跳动”。
+**CODEBASE.md 更新内容：** §2 新增双人包文件职责、§4 双人运动模块和页面职责、§5 运动算法、§6 实验调用链、§9 GUI 阻塞和实机未验风险。
+**覆盖进度更新：** `dual_motion.py` 和新增测试按函数/分支复读并通过；首帧注册、marker detector、地图 matcher、UI 只按本次调用链局部复读，不宣称整文件深度完整。
+**下一轮计划：** 实机双人连续走动保存同一地图的帧/日志，核验两人异步运动、短暂遮挡和恢复频率；再决定是否把实验 worker 化及是否推广至正式页面。
+**验证结果：** 双人运动、首帧、测试页、多帧页面、单人局部跟踪和地图控件聚焦测试 `46 passed`；新增实验模块 Ruff、编译和 diff 检查通过；Serena 对新增运动模块无诊断，UI 新增调用段无诊断。当前无 PoE2 进程，真实连续双人运动尚未验证。
+
+## [SYNC] 2026-09-26 - PoE2 双人运动定位正式页接入
+
+### A. SYNC 范围声明
+
+**触发任务：** 将已经在数据采集测试页验证的双人首帧、纯视觉运动跟踪、局部纠偏和一次性恢复正式接入 PoE2 定位页。
+**直接变更文件：** `monitor_config.py`、双人 `product_session.py`/`composition.py`、`hybrid_product_runtime.py`、PoE2 composition、正式 page、配置 panel、`scalable_map.py` 以及对应测试。
+**边界：** 不改单人中心定位、原绘图模式、设备输入、LAN 或网络同步；双人 memory adapter 仍是 PoE2 业务适配器，通用 tracker 保持独立。
+
+### C. SYNC 结果
+
+**关键调用链：** profile `tracking_mode=dual` → `Poe2HybridProductRuntime` 选择 `build_poe2_dual_localization_experiment` → worker 线程调用 `Poe2DualLocalizationSession.tick()` → 首帧 `Poe2DualMemoryAnchorProvider.read_once()` + 同帧候选/几何注册 → `DualVisualTracker.start()` → 后续视觉位移和候选映射 → 失败达到门槛后 `recovery_required` → worker 等待 UI 重定位 → 下一轮只读一次内存。
+
+**边界检查：** 双人 session 不在 GUI 线程做首帧；普通帧没有内存读取；正式状态适配保留单人字段并增加双人映射；地图组件只增加通用的多 marker overlay，不知道 PoE2 业务身份；双人 evidence builder 显式关闭人物/动态擦除，保留墙体证据。
+
+**验证结果：** 正式 PoE2 相关集合 `300 passed`；正式接入聚焦集合 `78 passed`；compileall、diff check 通过。地图 overlay 同时支持两个 marker 和各自轨迹。实机双人连续运动仍待用户在正式定位页验证，不能由合成测试代替。
+
+## [SYNC] 2026-09-27 - PoE2 多设备跟随实验基础链路
+
+实验层新增 `experimental/multiplayer_follow/`：角色与地图实例身份、位置新鲜度、
+手动/预览/模拟/程序状态、点击目标和安全路线运行时均保持业务中立。点击目标由
+`ScalableMapWidget` 发出显示像素，经 presenter 逆旋转/镜像还原为 canonical map 坐标；
+路线基于 terrain reference 的完整 wall layer，并在原始网格逐段验证，模拟步进再次做碰撞检查。
+测试页仅提供 P1/P2 模拟和 P1 手动/P2 模拟两种实验，不打开 LAN、不连接真实手柄。
+`ProgramFollowOutput` 作为独立的显式授权适配器保留后续真实输出边界。聚焦回归 41 项通过，
+compileall 通过；实机控制和跨设备传输仍保持 opt-in。
+
+## [SYNC] 2026-09-27 - 跟随实验四项审查问题修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 修复角色身份绑定、初始化生命周期、不可达路线重复搜索、移动目标旧路线失效。
+**直接变更文件：** 跟随运行时、PoE2 实验页及对应测试；必要时更新实验断点。
+**预计连带影响：** 双人定位状态到跟随角色的绑定、地图叠加层刷新、A* 路线缓存/失败退避、手动控制优先级；不触碰真实输入或 LAN。
+
+**本轮待验证：** 明确角色身份如何映射为 P1/P2；失败规划何时重新尝试；目标短距离位移如何避免旧路线误停。
+
+### C. SYNC 结果
+
+**直接变更：** `experimental/multiplayer_follow/runtime.py`、`capture_test_page.py`、两份聚焦测试和本断点；通用寻路、视觉识别、正式定位、真实手柄与 LAN 未改。
+**连带复读：** `VectorPathTracker.command()` 的旧终点零向量语义、地图 overlay 刷新、双人定位启动/恢复/换图、测试页初始化与停止路径。
+**关键发现（verified）：** 无路线状态过去每 100 ms 重跑整套降采样 A*；旧终点距新目标介于 1–2 个到达半径时，tracker 可输出零向量但页面仍报告路线可用。字典顺序不保证 P1/P2 身份；初始化清图前没有停双人/跟随计时器。画面刷新和独立跟随计时器还可能重复推进模拟。
+**修复：** 显式选择两名不同且有效的角色；初始化/换图清除绑定并停止计时器；失败路线按角色冷却，显著移动或目标变化立即重试；旧终点离开新目标到达圈即重规划，旧终点仍在到达圈但跟踪向量为零时尝试精确新目标一次，仍不可前进才进入 BLOCKED；画面刷新只复绘缓存结果。
+**边界：** 失败冷却为 1 秒，起点/目标改变超过到达半径提前失效；这是实验调度策略，不下沉通用寻路。仍为纯模拟，不发送真实输入或网络消息。
+**验证：** 新增测试先复现四个缺陷、到达圈内目标小幅移动及双重刷新，再修复；PoE2 实验与地图/适配器相关回归 `321 passed`，compileall 与 diff check 通过。Ruff 对本轮跟随 runtime 和测试无报错；对实验页面其他旧代码仍报告 13 条既有 TRY401/TRY004/UP017 提示，未在本轮跨范围修改。真实 PoE2 双人持续运动与大图首轮规划的 GUI 延迟尚待人工实机验证。
+**覆盖进度：** 跟随 runtime、测试页跟随/生命周期方法和对应新测试按本次调用链完整复读；`PathFinder`、地图 widget、正式双人 session 仅做受影响接口级复读，不宣称全文件深度覆盖。
+## [SYNC] 2026-09-28 — PoE2 未知版本初始化自动探测
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户批准方案 B：每次初始化实时计算客户端指纹；未知 build 仅在只读探测和结构验证全部通过时接受，失败即停止。
+**预计直接变更文件：** `D:/ACloud/poe2-map-research/windows_capture.py`、该研究项目的针对性测试、必要的 PoE2 采集适配器与计划/断点文档。
+**预计连带影响：** 实验采集器 `live_preview.py init` → `resolve_poe2_descriptor` → 地形/人物布局验证 → session 缓存与后续 capture；不得仅扩大指纹白名单，不发送输入或开启 LAN。
+**本轮需查明：** 现有 AOB 与布局验证是否足以安全接受未知指纹；哪些布局字段仍依赖固定偏移；测试与实机只读验证如何区分。
+
+### C. SYNC 结果
+
+**根因与改动：** 旧 `resolve_poe2_descriptor` 在计算指纹后立刻查询静态 `POE2_BUILDS`，未知版本在 AOB/布局验证前报错。外部 producer 现新增 `resolve_build_layout`：已知版本校验元信息并保留快路径；未知版本初始化忽略未验证的 preferred RVA，强制 AOB + 唯一结构匹配，再对 descriptor 元数据/guard 和 4 KiB 内稳定样本校验；动态 contract 仅进 session，不永久白名单。研究仓库旧路由测试路径也兼容 `src/auto_modules` 现有布局。
+**调用链：** 正式页 → `Poe2TerrainService.initialize` → `Poe2CaptureAdapter.initialize` → 外部 `live_preview.py init` → `fingerprint_executable` → `resolve_build_layout` → `resolve_poe2_layout_fast` → descriptor/guard 校验 → session；后续 `capture` 重验进程、构建、布局并双读完整地形。
+**证据：** 研究仓库 `38 passed, 20 subtests passed`；正式 PoE2 地形/采集页/正式页面聚焦回归 `322 passed`；compileall 与本仓库 `git diff --check` 通过。当前真实 PID 39068 的未知指纹 `3440AC1DBDF822DC8A5F25F0` 初始化成功，AOB 槽位 `0x45D4ED8`；同一 session 后续抓图并转换 `MapFlotsam:73DCFC09`，地图 `3382×1863`。该实测是只读采集，未测试双人组件或定位/跟随。
+**覆盖进度：** 研究采集器中的 PE 指纹、AOB、state/layout、descriptor guard、稳定样本、session init/capture 调用链与对应测试已复读；正式适配器/服务/UI 初始化入口经 CodeGraph 和回归检查。未对双人组件内存偏移或游戏画面定位链做本轮版本兼容审计。
+**剩余边界：** 新版本若 AOB、固定偏移或语义变化，则安全拒绝并需要人工适配；真实 UI 端点击与双人运动跟踪仍需用户测试。外部研究目录无 Git 仓库，本轮未在其中提交。
+
+## [SYNC] 2026-09-28 — PoE2 跟随实验目标等待与坐标漂移
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈开始跟随时人物在大地图飘移、无目标直接报错，并要求点击地图后启动、连续点击更新目标。
+**预计直接变更文件：** PoE2 数据采集测试页的跟随生命周期/地图点击处理、必要的跟随实验 runtime 或地图 overlay 契约及对应测试。
+**预计连带影响：** 双人定位与跟随实验的状态共享、canonical/display 坐标变换、角色 marker/路线 overlay、会话重置和停止行为；不触发真实手柄或 LAN。
+**本轮需查明：** 飘移发生在定位数据、地图变换还是跟随输出覆盖；目标未设置的启动顺序与连续点击刷新是否符合现有 runtime 契约。
+
+### C. SYNC 结果
+
+**根因：** 双人定位每帧把真实视觉人物绘在地图上，跟随 overlay 随后又以模拟 runtime 的 follower 位置覆盖同一组人物标记；模拟位置移动被误看成真实人物飘移。启动跟随还在无目标时直接启动 100 ms 计时器，反复产出 `target_not_seeded`，覆盖了等待点击提示。
+**调用链与修复：** `start_follow_experiment` 只装配角色和运行时并显示等待状态；首次有效 `map_widget.pixel_clicked` → `_on_follow_map_click` 逆变换坐标、设置共享目标、启动计时器并计算；后续点击覆盖目标并更新。`_render_follow_overlay` 取 `DualMotionState.players` 作为实心真实人物，模拟位置仅作为虚线圈，路线与目标仍使用同一变换。`stop_follow_experiment` 清除目标/路线并恢复实时定位 overlay。双人定位帧只复绘跟随结果，不额外推进模拟。
+**证据：** 新页面回归先分别复现无目标就启动计时器和预测位置覆盖真实人物两处失败，修复后通过；覆盖首次/连续点击、标记分离和停止恢复。PoE2 相关页面、定位、跟随、组合与主窗口回归 `326 passed`。
+**覆盖进度：** 跟随实验的启动、地图点击、计时、双人视觉刷新、overlay 和停止路径已按本次调用链复读；通用地图 widget 与模拟 runtime 只复核受影响契约，未改动。
+**剩余边界：** 真实游戏界面上的人物位置与鼠标点击频率仍待用户手动验证；本次没有发送真实输入或启用 LAN。
+
+## [SYNC] 2026-09-28 - 双人实时首帧复用与跟随移动链路审查
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈双人首帧按钮可通过，但启动双人实时定位时首帧拒绝；点击地图后跟随人物不移动，要求分别修复定位链路并验证单人/双人跟随移动。
+**直接变更文件：** 待根因确认后确定，预计涉及 `capture_test_page.py`、双人实时 tracker、跟随 runtime/output 适配器及对应测试。
+**预计连带影响：** 首帧注册参数与实时 tracker 的初始状态、地图坐标变换、模拟/程序移动状态、角色控制模式；不得未经显式安全验证发送真实设备输入或开启 LAN。
+**本轮需查明：** 实时启动是否重复采集导致与按钮实验不同；失败阈值/帧内容是否不一致；点击目标后 runtime 是否只绘制而未产生可执行移动命令；单人和双人的移动接口是否有清晰的模拟与真实输出边界。
+
+### C. SYNC 结果
+
+**根因：** 实时启动失败路径清除了已接受的首帧，下一次重试会重新抓取瞬态截图；程序跟随首次点击直接申请 Host lease，但 Host 要求控制器先暂停，且点击回调没有捕获输出异常，因此真实失败表现为“点击后不移动”。默认 UI 模式本身还是模拟模式，容易被误解为真实控制。
+
+**修复：** `_start_dual_motion()` 的构造异常保留已接受首帧；`ProgramGamepadOutput.start()` 在显式程序模式下先暂停对应 controller 再申请 lease；页面捕获 arm/write 异常并显示状态、记录日志，停止时 release 并关闭每个专属 client；模式文案明确区分模拟与真实手柄，新增角色 arm 和周期性 vector 日志；程序角色每个跟随 tick 回写最新视觉位置，达到目标后进入 `ARRIVED` 并释放 lease；后续点击新目标会重新 arm 已释放角色，即使跟随 timer 尚在运行。
+
+**边界：** 默认模拟模式仍无真实输入；真实输入只发生在用户选择单人/双人“程序控制”并点击有效地图目标之后。未开启 LAN，不改单人中心定位、双人视觉 tracker 或绘图模式。
+
+**验证：** `15 passed`（program adapter/runtime）、`21 passed`（capture page，含单控和双控输出）、相关 PoE2/跟随集合 `325 passed`，VirtualGamepadHost C# 合约测试 `57 passed`，compileall/diff check 通过。非管理员探针无法打开管理员工作台的 `AutoModules.VirtualGamepad.v1` 管道；这属于完整性级别边界，仍需从管理员工作台进行一次真实移动验证。页面会明确报告 Host 前置条件，不再静默失败。
+
+**下一步断点：** Host 能连接后，按 `docs/MULTI_DEVICE_FOLLOW_CURRENT_STATE.md` 的六步顺序验证 P1 单人、P2 单人和双人程序控制；重点保留 `program_armed`、`PROGRAM_READY`、`program.state`、`ARRIVED/BLOCKED`、`program.release` 日志。
+## 2026-09-28 双人首帧 PoE2 配置边界修复
+
+- 现象：`P2_7:54BE4D92` 双人首帧识别到 2 个 marker、内存读取成功，但因通用锚定覆盖率 `0.60` 拒绝，最佳形状覆盖率 `0.5175`、anchor 平均误差约 `0.02`。
+- 根因：PoE2 双人数据采集入口和正式组合都实例化了默认 `DualFirstFrameRegistrar`，没有传递 PoE2 已校准的 `first_frame_anchored_coverage`。
+- 修复：新增 `build_poe2_dual_first_frame_registrar()`，两条入口统一从配置读取 PoE2 锚定门槛，且显式保持双人 `player_clear_radius=0`、`top_exclusion_rows=0`，不遮挡人物周边墙体。
+- 验证：双人首帧、采集页、PoE2 composition 聚焦回归 `44 passed`；compileall 和 diff check 通过。
+
+## 2026-09-28 程序移动实验租约时间戳竞态
+
+- 现象：双人实时定位持续正常，但第一次地图点击进入程序控制时 Host 返回 `Start request is stale or predates a local stop`。
+- 根因：`ProgramGamepadOutput` 先调用 `pause`，Host 在当前毫秒记录 local stop；紧接着 `program.acquire` 使用相同毫秒 `requestedAtMs`，被防重放条件误拒绝，尚未发送任何摇杆状态。
+- 修复：通用程序输出适配器在 pause 响应后等待 Host 时钟严格进入下一毫秒，再申请 program lease；增加时间戳竞态回归测试。
+- 验证：程序输出、跟随运行时、采集页聚焦集合 `37 passed`；compileall 和 diff check 通过。现有地图点击跟随链路可作为单角色附近点程序移动实验入口，默认模拟模式仍不发送真实输入。
+## 2026-09-28 PoE2 独立地图点移动实验与输出诊断
+
+- **边界确认**：实机 Host 日志已证明跟随规划产生的 `program.state` 会进入
+  `ReportLoop -> ViGEm SubmitReport`；“人物不移动”不能再按定位/路线失败处理。
+- **实验隔离**：在 PoE2 实验页新增独立地图点移动实验。它只依赖当前双人视觉位置、
+  当前地图和通用 `ProgramFollowOutput`，不启动跟随策略、不启用 LAN。
+- **真实输入门禁**：必须选择角色、点击地图目标，并通过确认框后才申请程序租约；
+  每 50ms 持续写摇杆，遇到到达、阻塞、位置失效或停止立即中性并释放。
+- **可观测性**：`ProgramGamepadOutput.diagnostics()` 读取 Host status/state；跟随
+  每 10 tick 记录输出边界；页面右侧增加最多 500 行会话日志，不压缩截图和大地图。
+- **验证**：Python 相关回归 38 passed（本轮目标集），`compileall`、`git diff --check`
+  通过；Host C# 回归 57 passed。真实游戏移动仍待管理员工作台实测确认。
+
+## [诊断] 2026-09-29 — 独立真实手柄移动实验
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：** `tools/debug/program_input_probe.py`、`src/auto_modules/adapters/virtual_gamepad/program_output.py`、`src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`；必要时追踪 Host 的 program/state/report 路径。
+**本轮想弄清楚：** 游戏窗口前台、管理员完整性级别、控制器槽位与持续摇杆写入，哪一环阻止了游戏内真实位移；实验必须短时自动释放，并用测试前后人物坐标验证。
+
+### C. 本轮发现
+
+**关键发现：** (verified) 非管理员进程读 PoE2 内存、连接管理员 Host 管道均返回 WinError 5；经用户 UAC 确认后管理员只读探针成功连接 Host 并读取当前人物 grid=(529.50,1088.50)。首次真实移动探针在开始写入前检测 `focus_lost`，`ticks=0`，因此没有发送方向帧。
+**修订的旧结论：** Host 连通或路线 ready 并不能证明人物移动；这轮确认失败发生于前台门禁之前，而非移动方向或导航计算。
+**覆盖进度更新：** `tools/debug/program_input_probe.py` 浅读（原探针只发 120ms）；`program_output.py` (partial)（确认 start/write/stop 契约，未复读整个 Host）；`capture_test_page.py` (partial)（确认独立实验停止路径）；新增 `poe2_movement_probe.py` 与安全门禁测试 `7 passed`。
+**下一轮计划：** 用户切回游戏需要时间；在发送前等待 10 秒，再以同一短时前台门禁探针验证位置位移。
+
+## [SYNC] 2026-09-29 — 移动前等待游戏前台
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户明确要求输入前 10 秒等待以便切回 PoE2。
+**直接变更文件：** `tools/debug/poe2_movement_probe.py`、对应安全测试。
+**预计连带影响：** 只影响独立探针的输入时序；保留前台校验、中性释放、最长两秒输出与管理员门禁，不改变正式跟随。
+
+### C. SYNC 结果
+
+**实机结果：** 管理员 P1 独立探针在发送前等待 10.002 秒；PoE2 前台门禁通过后，1.2 秒内写入 24 帧。Host 记录 `ViGEm SubmitReport controller=1` 左摇杆 X 从 9000 增至 32767；同一 `P2_7:54BE4D92` 实例的人物 grid 从 `(529.50,1088.50)` 变为 `(557.02,1055.46)`，位移 43.00 网格。用户画面确认确有移动。`run_bounded_output` 的 finally 中性并释放；其调用正常返回。没有将此误记为已验证路径规划。
+**测试：** 新安全门禁和通用程序输出聚焦回归 7 passed，探针编译通过。
+**CODEBASE 同步待办：** 更新独立诊断脚本职责、函数索引、输出链路和焦点/地图实例风险。
+
+## [诊断] 2026-09-29 — 重启后穿门规划实验
+
+### A. 本轮目标（阅读前声明）
+
+**目标文件：** `experimental/multiplayer_follow/runtime.py`、`capture_test_page.py`、`terrain_reference.py` 及相关测试/地图元数据。
+**本轮想弄清楚：** 重启后当前实例是否仍与存档地形一致、P1 到门后目标有无静态无碰撞路径、视觉位置与摇杆方向是否一致；仅在这些门禁通过后试行有界实机路径。
+
+## [SYNC] 2026-09-29 — 穿门规划器障碍值契约修复
+
+### A. SYNC 范围声明
+
+**触发任务：** 旧地图只读离线复盘中，可走连通区内的起点与门后候选点被 PoE2 跟随运行时误判为无安全路线。
+**直接变更文件：** `experimental/multiplayer_follow/runtime.py`、对应路线回归测试；尚未发送任何真实输入。
+**预计连带影响：** 通用 `PathFinder` 的 0/255 障碍图契约、`line_is_walkable` 原图逐段验算、实验页地图点移动和模拟跟随。
+**待验证根因：** 运行时若把 255 障碍压成 1，规划器的 50 阈值会把墙视作空地，候选直线随后被原图校验拒绝。先补失败回归，再修复并复跑旧图。
+
+### C. SYNC 结果
+
+**根因已证实：** `SimulatedFollowRuntime` 曾把非零墙体压成 1；通用 `PathFinder` 只把大于 50 视作墙，原图几何却把任何非零当墙。门口回归修复前失败，改为 0/255 后通过；另补起点→首节点、末节点→终点的碰撞复核，单独的缺口回归修复前失败、修复后通过。
+**离线复盘：** 9 月 28 日旧实例 `P2_7:54BE4D92` 存档上，旧 P1 约 `(557,1055)` 到候选 `(630,925)` 得到 26 节点路线，起点、全部中间段、终点连接段均通过原图 corner-safe 校验。这不是重启后当前实例的实机穿门证明。
+**聚焦回归：** 跟随运行时 15 passed；此前合并路径/页面/输出组 50 passed，新增连接段回归后合计应为 51，待最终复跑。通用寻路器源码未改；三条旧测试显式禁用 30 像素起点清墙后通过。
+**实机门禁：** 重启后 PoE2 与 Host 在运行，但当前地图存档仍为旧实例。一次管理员只读校验的 UAC 被取消，故没有读取当前人物/地图，也没有发送新输入。默认地图→摇杆轴基尚未双轴标定，不能把旧图路线当作当前可执行路线。
+**下一步：** 获得用户确认的管理员只读访问后刷新当前地图/人物实例；标定短时双轴位移；先短程闭环验证方向，再以当前地图安全落点测试门口。失焦、位置过期、地图实例变化或超时立即中性释放；动态门需要额外交互时停止并如实记录。
+
+## [SYNC] 2026-10-01 — 门后路径实验输入门禁
+
+### A. SYNC 范围声明
+
+**直接变更文件：** adapters/windows/window_finder.py、adapters/windows/__init__.py、ui/modes/poe2_live_terrain/capture_test_page.py、相关 CODEBASE 记录。
+**目标：** 让实验页在真实门后路线测试前自动找到 PoE2 PID/HWND，同时不抢焦点、不移动鼠标，并阻止过期视觉状态继续输出。
+
+### C. SYNC 结果
+
+- 新增只读窗口查询：按进程枚举可见顶层窗口，读取 HWND、标题、类名、矩形和 PID；提供前台 PID 检查，不调用 SetForegroundWindow、SetCursorPos 或鼠标输入 API。
+- 程序移动点击确认后等待 10 秒，用户切回 PoE2 后才申请 Host lease；每 50ms tick 检查 PoE2 前台、视觉定位年龄不超过 700ms、总运行时间不超过 30 秒。
+- 失焦、窗口缺失、定位帧过期或超时均立即发送中性并释放；规划器仍只输出路线和向量，窗口门禁属于输入适配边界。
+- 聚焦回归：44 passed；compileall 通过。当前尚未发送门后实机输入；仍需用重启后的当前实例重新获取地图并完成双轴方向标定后再测试。
+
+## [SYNC] 2026-10-01 — PoE2 路线输入映射与实验页布局
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈真实路线移动后卡在墙前，并要求 PoE 实验页将控制/日志移到侧栏，避免截图和大地图被压缩。
+**直接变更文件：** `src/auto_modules/features/poe2/live_terrain/movement.py`、`src/auto_modules/features/poe2/live_terrain/__init__.py`、`src/auto_modules/ui/main_window.py`、`tools/debug/poe2_route_probe.py`、`src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`、`tests/poe2_live_terrain/test_movement_basis.py`。
+**预计连带影响：** PoE 实验页真实手柄输出、独立路线探针、采集页 Qt 布局和相关回归；通用 `ProgramGamepadOutput` 默认基底与绘图模式不变。
+**本轮疑问：** native 地图路线已通过原图碰撞校验但实机向墙偏移，需核对游戏等距摄像机的 map-space 到 left-stick 变换是否缺少约 45° 投影。
+
+### C. SYNC 结果
+
+**根因确认：** (verified) 当前地图 `P2_7:54BE4D92` 的 native 坐标与数组原点一致；路线碰撞检查没有发现墙体穿越。此前固定摇杆 `(1,0)` 的实测位移为 native `(+27.52,-33.04)`，说明 PoE2 左摇杆与 native 地图不是简单 Y 翻转，而是约 45° 的等距投影。路线探针按旧基底输出时会斜向撞墙，日志中的 `route.finished` 只移动 `19.55` 网格且未到目标，不能算穿门成功。
+**实现：** 新增 PoE2 适配层常量 `POE2_MAP_TO_STICK_BASIS=(0.5,-0.5,0.5,0.5)`；正式 PoE2 实验页的程序输出工厂和独立 `poe2_route_probe.py` 使用该基底，通用 `ProgramGamepadOutput` 默认值、绘图模式及其他游戏不变。采集页重排为主视觉区（截图/预处理/特征 + 大地图）和可滚动侧栏（控制、状态、跟随/移动实验、日志），不改识别、地图和定位链路。
+**验证：** PoE2 页面、采集页、程序输出、跟随运行时和新基底测试 `49 passed`；`compileall`、`git diff --check` 通过；离屏布局检查在 1600x900 下得到主地图约 `1186x562`、预览单格约 `391x220`、侧栏宽 `360`。新基底尚未在游戏内做第二个正交方向实测，因此门后路线仍需重新执行短程验证，不能把本轮改动报告为实机穿门通过。
+**下一步：** 重新启动 PoE2 后先用独立短程实验验证 native X/Y 两个方向的位移符号，再用当前实例刷新地图执行门后路线；若仍卡墙，记录每 tick 的 before/after native 坐标和输出向量，继续校准适配层，而不是修改通用寻路器。
+
+## [SYNC] 2026-10-01 — 首帧旋转注册进入路线输入
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户明确指出路线卡墙的坐标根因是“获取的大地图方向与游戏小地图方向不一致”，不能只旋转展示地图。
+**直接变更文件：** `src/auto_modules/core/localization/displacement.py`、`src/auto_modules/features/poe2/live_terrain/movement.py`、`src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_follow/program_output.py`、`src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py` 及对应测试。
+
+### C. SYNC 结果
+
+**历史结论（已修订）：** 路线仍在 native wall map 上规划，点击目标也已由显示坐标逆变换回 native；当时曾认为真实输入需要继续应用首帧 registration 的旋转/镜像。实机 Host 轴值复盘证明这是二次变换，会把正确路线转向错误墙体。
+**当前实现：** `inverse_transform_local_displacement()` 和 `native_map_vector_to_local()` 保留为通用几何能力，但 PoE2 程序跟随和地图点移动改用 `native_route_vector_for_program_output()` 原样传递 reference/native 向量，再由 `ProgramGamepadOutput` 唯一应用 PoE2 等距基底；缺少 map transform 仍 fail-closed。
+**验证：** 旧旋转/镜像/缩放几何回归保留，新增加二次变换回归共 `43 passed`，compileall 通过；尚未发送新的实机输入，因此门后路线尚未宣称通过。
+
+## [SYNC] 2026-10-01 — Qt 实时定位崩溃取证与边界稳定化
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户反馈点击双人实时/移动实验后页面容易报错退出、卡死，要求检查日志和完整链路。
+**证据范围：** `data/logs/poe2_live_terrain.log`、Windows Application Error 事件、双人实时页面和 Qt 图像转换边界。
+**安全边界：** 本轮未发送新的真实手柄输入，未启动 LAN；只做离线回归和原生崩溃证据核对。
+
+### C. SYNC 结果
+
+- 实机日志确认首帧接受、双人实时约 600 帧持续 tracking，`memory_reads=1`，无 recovery 风暴、Host lease 错误或 Python traceback。
+- Windows 事件确认故障模块为 `Qt6Gui.dll`，异常码 `0xc0000005`；不能把它误判为定位算法失败。
+- `frame_pixmap()` 的非连续 NumPy 视图已可稳定复现 `BufferError`；现已在 Qt 边界做 `uint8 + ascontiguousarray + QImage.copy()`，防止 Python 异常和 Qt 借用失效内存。
+- `ScalableMapWidget.focus_on_point()` 跳过未变化的滚动目标；双人帧路径复用 `extract_combined_with_processed()` 的预处理结果，并记录分段耗时，降低主线程重复计算和重绘压力。
+
+### V. 验证与未决项
+
+聚焦回归 `37 passed`，compileall 和 `git diff --check` 通过。Qt6Gui 原生访问冲突尚未在离线压力测试中复现，下一次实机测试必须保存 `dual_motion.timing` 日志并对照 Application Error 时间；若仍发生崩溃，继续检查 Qt 对象关闭顺序和线程归属，而不是调整定位阈值。
+
+## [SYNC] 2026-10-01 — 地图点击目标即时反馈与坐标链路日志
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户要求点击定位地图后立即看到点击位置，并能通过详细日志核对显示坐标、native 坐标及旋转/镜像/比例变换。
+**直接变更文件：** `ui/widgets/scalable_map.py`、`ui/modes/poe2_live_terrain/capture_test_page.py` 及对应 Qt 回归。
+**安全边界：** 本轮只处理显示和记录；点击未启动跟随时不创建 runtime，不发送手柄，不启动 LAN。
+
+### B. 影响分析与重读范围
+
+- `ScalableMapWidget.pixel_clicked` 发出的是未缩放原图 pixmap 坐标；PoE2 页面先逆 `SimilarityTransform2D` 回 native，再做边界判断。
+- 原 `set_overlay()` 会整体替换 marker 状态，点击发生在两帧之间时会丢掉人物/路线；新增 `set_target()` 只改目标标记。
+- 双人实时和跟随 overlay 均显式带入页面的点击目标状态，停止跟随后清除，避免把模拟目标冒充人物位置。
+
+### C. SYNC 结果
+
+- 页面保存 `source_pixmap -> native -> display` 三份点击坐标，并计算 display 正向回投的 round-trip error。
+- `map_click.received/transformed/accepted/rejected/cleared` 日志包含模式、角度、镜像、比例、平移、source size、地图边界和拒绝原因，便于分析坐标漂移和方向错误。
+- 离线 Qt 回归覆盖“跟随未启动也即时显示”“只更新目标不覆盖人物 marker”“停止清理目标”。聚焦 `3 passed`，PoE2 页面/采集/地图集合 `31 passed`；未发送真实输入或启动 LAN。
+
+## [SYNC] 2026-10-01 — 实机点击/程序移动日志复盘
+
+### A. 证据
+
+当前运行实例 `P2_7:54BE4D92` 的双人首帧在 21:01:29 `accepted`：角度 `221°`、水平镜像、比例 `0.863`，两个 anchor error 约 `0.457`，pair confidence `0.819`。21:01—21:02 两次地图目标点击均完成逆/正变换闭环（round-trip `0.0000`），两次程序移动均找到 PoE2 窗口、成功申请 controller 1、发送非零左摇杆，随后 neutral/release，无 Host 或 Python 错误。双人 tracker 长时间 `tracking`，仅 frame 1351/1352 短暂 degraded 后恢复。
+
+### B. 未决根因边界
+
+日志尚不能证明人物实际移动量：程序移动只记录 tick 1/8/16，停止时没有记录 reason；双人 tick 只记录身份和 quality，没有记录 native 位置前后值。因此“输入已发送”和“游戏人物实际到达/撞墙/被失焦停止”目前不能区分。另有性能证据：30 FPS（33ms）目标下 timing 平均约 66.6ms，186/187 个样本超过 33ms，峰值 298.4ms；这会造成实时画面约 15 FPS，但不是首帧匹配失败。
+
+### C. 下一次最小取证
+
+在不改算法的前提下，先补充 `program_probe.stop` reason、每次输出的 target/current native/distance 和双人 tracker 的 player native before/after delta，再用一个近距离目标复测；只有拿到位置变化或明确停止原因后，才判断是输入方向、路径规划、游戏窗口接收还是性能背压。
+
+## [SYNC] 2026-10-01 — Xbox 路线向量与移动诊断闭环
+
+### A. 范围声明
+
+**触发任务：** 用户指出手柄移动与鼠标点击不是同一模型，要求核对寻路、避障、移动输入，并确保地图转换后的坐标贯穿路线链路。
+**直接变更文件：** `tools/debug/poe2_route_probe.py`、`adapters/virtual_gamepad/program_output.py`、`features/poe2/live_terrain/experimental/multiplayer_follow/runtime.py`、`ui/modes/poe2_live_terrain/capture_test_page.py`。
+**安全边界：** 本轮未发送新的真实输入；只修复离线路线探针错误并增加已有输入链的只读诊断。
+
+### B. 关键发现与结果
+
+- 页面点击、墙体、A*、碰撞、到达判断使用同一 oriented reference/native 坐标；旧版本曾在输入前再次经首帧 registration 逆变换到局部小地图方向，现已确认这是二次变换错误。观察 DTO 显式标记 `coordinate_space=reference_native`。
+- 路线探针原来把非零段 `vector` 计算缩进到 `distance < 1e-6` 的 `continue` 分支；已修复，非零路径段现在会实际生成局部方向向量。
+- `ProgramGamepadOutput.diagnostics()` 增加 `basis`、`last_command.input_vector`、`basis_vector`、`axes`、`ttl_ms`；follow runtime 增加 route 点数/端点；页面每 5 tick 写入 current/target/distance/native/input vector，并在停止时写 `program_probe.stop` reason/ticks。
+- 离线移动/跟随/Host/页面聚焦回归 `45 passed`，compileall 通过。真实人物位移、穿门避障和长距离方向仍需用户在当前实例用新日志复测后确认。
+
+## [SYNC] 2026-10-01 — Native 路线到 Xbox 输出的单一边界
+
+### 影响分析
+
+- `capture_test_page.py` 的地图点击、墙体、A*、碰撞和到达判断继续使用
+  `reference/native` 坐标；registration 只负责 source/display 与 native 的转换。
+- `ProgramFollowOutput` 与 `poe2_route_probe.py` 不再调用 registration 逆变换，改用
+  `native_route_vector_for_program_output()`；该接口只做二维 finite 校验。
+- `ProgramGamepadOutput` 保持唯一的 `reference/native -> stick` 适配边界，避免重复
+ 旋转/镜像，也不改变通用 gamepad 默认基底。
+
+### 结果
+
+新增回归覆盖 angle `221°`、horizontal reflection 和 scale `0.863` 的错误组合，确认
+direct native basis 与旧二次变换输出不同；相关聚焦测试 `43 passed`。本轮没有真实设备
+输入或网络副作用。旧文档中“输入前逆 registration”的结论已由本节修订。
+
+## [SYNC] 2026-10-01 — 移动实验全链路日志
+
+移动实验边界现在分别记录点击转换、地图实例/墙体上下文、A* 尝试与接受倍率、路线长度
+和逐段碰撞、native→input→Host 轴值、视觉帧年龄、租约最终状态，以及 native 初始/最终
+位置和位移。路线 overlay 与这些日志共用同一 reference/native → display 变换；日志增强
+不改变寻路、输入或 Host 协议。聚焦回归 `48 passed`，未发送真实输入。
+
+## [SYNC] 2026-10-02 — 首帧证据拆分与安全闭环
+
+本轮把双人首帧接受分数拆成 anchor identity、pair geometry、shape evidence 和 profile
+consistency 四个独立证据；没有改变单人定位或双人“禁用人物 mask”的契约。通用 routing
+新增可选 clearance cost map 与 A* soft traversal cost；PoE2 实验跟随组合显式启用安全
+膨胀/靠墙惩罚，`VectorPathTracker` 仅对不可变墙图缓存路线校验。实验 runtime 增加无进度
+watchdog 和左右交替侧向恢复 waypoint，恢复失败才进入 BLOCKED/cooldown。验证为 PoE2
+实验集与 PathFinder `308 passed`，全仓 `872 passed, 2 skipped`，另有环境缺少
+`pydirectinput` 的既有 distribution 测试失败；未发送真实手柄或网络输入。
+
+页面 `program_probe.motion` 与 `follow_experiment.motion` 现在同时写入 clearance 参数、
+无进度 tick、恢复次数和恢复目标，便于把“路线贴墙”“摇杆未产生位移”“恢复方向无路”分开。
+
+## [SYNC] 2026-10-02 — 双人候选去重与视觉新鲜度边界
+
+双人定位的候选适配层增加了几何非极大值抑制，负责清除同一 marker 的轮廓/核心重复，
+而身份配对、方向和 native 锚点仍由双人注册器负责，未把 PoE2 颜色规则下沉到通用视觉层。
+程序移动页保留视觉帧的真实采集时间，避免 UI 控制循环把旧位置变成新鲜位置；输入停止策略仍
+由 runtime 的 TTL 和输出适配器共同负责。路线候选在通用 PathFinder 输出之后由 PoE2 组合层按
+长度与清距暴露评分选择，通用寻路默认参数不变。形状缓存持有参考数组，修复跨实例距离场串用，
+属于通用实验注册器的生命周期修复。
+
+PoE2 跟随 runtime 现在使用有界局部重规划：目标在刷新带内移动时复用已验证路线，只有目标
+位移、路线偏离、碰撞失效或 stalled recovery 才重新调用多尺度 A*。这些阈值和诊断字段留在
+PoE2 业务组合层，通用 PathFinder 仍只负责给定起终点的障碍搜索。
+## [SYNC] 2026-10-02 — 双人实时 latest-frame 与导航闭环诊断
+
+- routing/pathfinder 坐标网格改为 ceil，避免非整除 native 地图边界被截断。
+- PoE2 实验跟随 runtime 增加 command/native observed displacement alignment 诊断；方向失配连续三帧触发现有侧向恢复，不把业务概念下沉到 core routing。
+- 新增 `Poe2DualMotionWorker` 作为 UI composition 层 adapter：worker 只负责注入的 capture/recognizer/tracker，latest-only channel 丢弃旧帧，内存读取仍只在首帧/恢复边界发生。
+- 聚焦回归 `64 passed`，compileall 通过；真实手柄与双人 90% 真值仍未验证。
+
+## [SYNC] 2026-10-02 — 运动闭环的状态边界与快照协同
+
+- 新增实验层运动 DTO 和只读 `MotionSnapshot`；recognition/localization、复杂度、序贯反馈、路线
+  和 output adapter 通过显式接口连接，未把 PoE2 或 Xbox 术语下沉到通用 routing。
+- 复杂度迟滞和输入校准均按 role 建立独立状态；视觉采集时间贯穿 runtime，过期帧不会被控制 timer
+  伪装成新鲜观测。`ProgramFollowOutput` 只负责 lease/output side effect，并使用 command duration。
+- 现有 A*/角色碰撞半径/局部控制/卡墙恢复保持原边界，闭环只组合这些能力；真实输入仍是显式实验门禁。
+
+## [SYNC] 2026-10-02 — 路线安全策略与闭环时序复盘
+
+- `SimulatedFollowRuntime` 继续把 A* 拓扑、角色膨胀碰撞和局部控制分层；新增的 relaxed clearance
+  只是 PoE2 实验组合在严格候选为空时的显式策略，不下沉到通用 PathFinder，也不覆盖碰撞校验。
+- 该策略只对 `footprint_radius>0` 生效，记录严格/回退候选数量和选择模式，避免把业务参数偷偷改变为
+  通用默认值。
+- `ClosedLoopMotionController` 的命令持续时间是控制器契约，UI timer 只承担调度；避免界面调度抖动改变
+  输出语义。页面日志保持坐标、清距、视觉年龄和 Host 诊断的边界。
+
+## [SYNC] 2026-10-02 — 实测窄段回放与适配器关闭安全
+
+- PoE2 组合层的 relaxed clearance 继续只在显式角色 footprint 存在时启用；本次真实地图回放确认
+  `radius=2`、最低清距 `2.739` 的路线由膨胀碰撞图保证实体安全，未改变通用 PathFinder 默认策略。
+- `SquareScreenCapture` 属于平台资源适配器；关闭操作现在先断开资源引用、再捕获释放异常，避免
+  mss 的线程本地 bitmap 在 Qt/worker 跨线程销毁时把资源清理异常升级为工作台退出。
+- `Poe2DualMotionWorker` 在 UI 停止路径提供有界等待接口，避免 latest-frame worker 仍持有截图对象时
+  页面 QObject 已经销毁；超时仅记录告警，保持主线程可恢复。
+
+## [SYNC] 2026-10-02 — 路线探针离线边界
+
+路线调试工具新增纯离线入口，使用保存的 native wall layer 和显式 native 起终点验证
+`SimulatedFollowRuntime` 的组合策略，不穿透进程、Host 或窗口控制边界。实机探针与页面统一显式
+提供角色 footprint 和窄段安全余量；通用 PathFinder 默认策略未改变，`relaxed_clearance` 仍只在
+PoE2 实验组合层启用。
+
+## [SYNC] 2026-10-02 — PoE2 实验清距策略放宽
+
+PoE2 业务组合将首选 `minimum_clearance` 调整为 `4.0`，角色半径为 `2.0` 时的回退硬下限为
+`max(footprint_radius, 2.0)`。这是实验层对地图墙体厚度误差的容错策略；碰撞膨胀图仍负责实体
+碰撞安全，通用 PathFinder 的默认清距契约未改变。
+
+## [SYNC] 2026-10-02 — PoE2 中心线窄通道策略
+
+PoE2 实验组合关闭 `inflate_collision`，以 native 墙体中心线作为硬碰撞边界；通用 runtime 的默认
+膨胀能力保留。短视窗 `LocalMotionController` 和既有侧向恢复负责实际移动时的贴墙修正，避免把
+业务地图中的窄门误判为不可通行。
+
+## [SYNC] 2026-10-02 — 双人实时崩溃防护
+
+- 双人实时 worker 的 capture、recognizer、Qt 渲染边界保持分离：线程本地 capture 只在所属线程释放，
+  recognizer 为线程副本，Qt 图像由命名 contiguous buffer 脱离 NumPy 后再进入 `QImage.copy()`。
+- UI 停止路径采用 stop + 有界 join；超时的 worker 进入退休集合，直到 finished 后才释放 Python 引用，
+  不把业务策略或游戏输入逻辑下沉到通用层。
+- 该修复只改变 PoE2 UI composition 的生命周期适配，不改变通用截图、定位和路由契约。
+
+## [SYNC] 2026-10-02 — 局部恢复不可升级为全局不可达
+
+- PoE2 实验跟随 runtime 的恢复策略仍保持在业务组合层：路径规划只接收 native wall map 和起终点，
+  不知道门、角色或游戏规则。
+- 卡墙状态先重算当前位置到目标的安全路线，再使用多组有限的侧向/前向候选；候选选择只消费已有
+  `PathFinder`、几何碰撞校验和 `LocalMotionController`，没有复制底层路径算法。
+- 只有局部路线和恢复候选全部失败才发布 `stalled_no_escape`，并通过 typed diagnostics 把候选数量、
+  选择下标和规划结果交给 UI/日志。
+- 单人定位 worker 的 stop/wait/retirement 属于 UI composition 的资源生命周期边界；runtime 和通用
+  screenshot contract 未引入页面状态或 PoE2 术语。
+
+## [SYNC] 2026-10-02 — 墙边 native 栅格边界恢复
+
+- `(verified)` 本次真实停止点 `(575.748,1178.894)` 在 native wall layer 四舍五入后落到墙格
+  `(576,1179)`，相邻 `(576,1180)` 是可行走；目标距离 `42.5996`，因此不是 arrival radius。
+- `(verified)` 这是 PoE2 feature 组合中的连续坐标→raster 起点量化问题，不修改通用
+  `core.routing.geometry.line_is_walkable()` 或 `PathFinder` 的硬碰撞契约。
+- `SimulatedFollowRuntime._wall_start_recovery_command()` 只消费现有局部安全路线能力：在半径 12
+  native 内找可行走起点，确认该点到真实目标有安全路线，再输出有限恢复脉冲；实际人物位置不被改写。
+- 运行观察新增 `observed_position_metrics`，把原始人物栅格与路线使用的恢复起点分开记录，便于区分
+  “人物真实位置”和“规划器临时起点”。新回归覆盖首次规划失败、连续同格帧和恢复后 `route_ready`。
+- 离线路线探针不再绕过 runtime 直接调用 `_plan_safe_route()`；它通过同一 `tick()` 生成恢复向量，
+  同时展示 `route_walkable`（含原始墙边观测段）与 `planning_route_walkable`（从临时起点开始）。
+- 相同观测栅格/目标会复用已验证的恢复路线，只重算短脉冲方向；人物离开边界或目标超出刷新带时
+  才重新执行局部 A*，避免墙边状态把 CPU 压满。
+## 2026-10-02 — 接触证据下沉与 PoE2 局部适配
+
+- 通用层新增 `core/routing/contact_evidence.py`：只处理命令向量、观测位移、方向一致性和连续无进展，不知道 PoE2、屏幕颜色或手柄传输。
+- PoE2 实验层新增 `minimap_contact_adapter.py`：只把现有 wall mask 和人物屏幕点解释成前方墙体/左右清空度，保持人物 marker 层独立，禁止中心 mask。
+- `multiplayer_follow.runtime` 通过 `update_local_contact()` 接收适配证据；局部脱困和重定位状态由业务运行时组合，不下沉游戏政策。
+- `capture_test_page` 只负责把双人 worker 的同帧结果接到适配器，并在重定位请求时停止输入、调用既有恢复入口；程序输出适配器仍只负责 lease/axes/neutralize。
+
+## 2026-10-02 — 墙角接触恢复优先级
+
+- 实机无进展时，业务 runtime 不再让缓存的墙边微脉冲覆盖通用接触证据状态；
+  `_contact_recovery_command()` 只在 PoE2 组合层把小地图左右空闲度转换为局部起点选择。
+- 起点搜索仍复用通用路线规划和碰撞检查，人物真实观测位置不被改写，也不把人物膨胀规则下沉到
+  `core.routing`；两次局部恢复失败后继续发布通用的安全停止/重定位信号。
+
+## 2026-10-02 — 接触证据区分移动与方向校准
+
+- `ContactMonitor` 只用命令幅度和实际位移判断“无进展”；命令与位移的夹角仍是观测诊断，避免把
+  手柄延迟或 map→stick 基底误差混入墙体碰撞语义。
+- PoE2 组合层保留方向错配的校准计数，但在小地图已有墙证据且人物有明显位移时不把它升级成
+  墙体恢复；恢复仍只由连续无位移证据驱动，保持通用层与游戏策略边界。
+
+## 2026-10-05 — 跟随输出的启动切窗边界
+
+- 6 秒切窗等待属于 PoE2 UI 组合层的生命周期策略，不下沉到通用 runtime 或虚拟手柄适配器。
+- `Poe2CaptureTestPage` 统一负责 `前台检查 → 启动延迟 → runtime 决策 → 输出 arm/write` 的顺序；地图点击只提交目标意图，不能直接取得输出所有权。
+- 纯模拟会话不创建程序输出，因此不被切窗等待拖慢；停止/清图清除组合层延迟状态，保持 controller、device、feature instance 的状态隔离。
+
+## 2026-10-05 — 手动领队与程序跟随器的观测边界
+
+- 实时跟随组合层将手动领队作为目标观测源处理：它的可见坐标直接更新目标，不经过程序输出的 command-odometry innovation gate。
+- `CommandRoleTracker` 的预测、视觉拒绝和重定位计数继续限定在程序控制角色；通用 tracker 本身不引入“领队”业务概念，边界由 PoE2 组合层按 `ControlMode`/角色选择实现。
+## [SYNC] 2026-10-03 — 接触恢复门与双人重定位续跑
+
+- 通用 `SimulatedFollowRuntime` 只新增 `contact_required_samples` 参数，并在每个角色实例化独立 `ContactMonitor`；默认仍为 2，PoE2 页面组合传 4。接触证据模块继续只处理命令/位移，不知道游戏、地图 UI 或内存。
+- PoE2 页面组合拥有 recovery policy：接触恢复两次无可信位移后保存目标、角色和控制器，释放输入，强制调用已有双人首帧内存锚点/几何注册入口；成功后等待新鲜视觉 tracking 帧，再恢复原目标。重定位上下文和内存读取策略留在 UI/实验组合层，没有下沉到 core。
+- 新增调用链：`_tick_program_move_probe()` → `stop_program_move_probe()` → `_start_dual_motion(recovery=True)` → `run_dual_first_frame_experiment(force_memory_read=True)` → `DualFirstFrameExperiment.read_anchors/register()`；worker/sync 新帧 → `_maybe_resume_program_probe_after_relocalization()` → `_start_program_move_probe_at()`。
+- 失败边界：首帧拒绝、恢复 worker 异常、角色不可见或帧过期都 fail closed；10 秒冷却阻止高频内存读取。真实 Host 输出只有在原有显式确认和前台门禁成功后才重新申请。

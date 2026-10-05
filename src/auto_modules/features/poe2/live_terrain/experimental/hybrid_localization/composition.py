@@ -52,14 +52,40 @@ class _Poe2EvidenceBuilder:
             return dict(config)
         return dict(vars(config))
 
-    def build(self, raw: Any, config: Any) -> CaptureEvidence:
-        marker = getattr(getattr(config, "binding", None), "player_marker_position", None)
+    def build(
+        self,
+        raw: Any,
+        config: Any,
+        *,
+        exclude_player: bool = True,
+        exclude_dynamic: bool = True,
+    ) -> CaptureEvidence:
+        marker = (
+            getattr(getattr(config, "binding", None), "player_marker_position", None)
+            if exclude_player else None
+        )
         combined_with_processed = getattr(self.recognizer, "extract_combined_with_processed", None)
         if callable(combined_with_processed):
-            processed, combined = combined_with_processed(raw, player_pos=marker)
+            try:
+                processed, combined = combined_with_processed(
+                    raw,
+                    player_pos=marker,
+                    exclude_player=exclude_player,
+                    exclude_dynamic=exclude_dynamic,
+                )
+            except TypeError:
+                processed, combined = combined_with_processed(raw, player_pos=marker)
         else:
             processed = self.recognizer.preprocess_image(raw)
-            combined = self.recognizer.extract_combined(raw, player_pos=marker)
+            try:
+                combined = self.recognizer.extract_combined(
+                    raw,
+                    player_pos=marker,
+                    exclude_player=exclude_player,
+                    exclude_dynamic=exclude_dynamic,
+                )
+            except TypeError:
+                combined = self.recognizer.extract_combined(raw, player_pos=marker)
         if isinstance(combined, tuple):
             feature = combined[0]
             wall_mask = combined[1] if len(combined) > 1 else feature

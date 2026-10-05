@@ -110,8 +110,18 @@ class SquareScreenCapture:
 
     def close(self):
         """关闭捕获器，释放资源"""
-        if self.sct:
-            self.sct.close()
+        # mss stores a thread-local bitmap.  A capture object can be
+        # destroyed from a different thread during Qt shutdown, in which
+        # case ``close()`` may raise ``AttributeError: ... bmp``.  Release
+        # the reference first and make destruction idempotent so a transient
+        # capture teardown issue cannot terminate the workbench.
+        capture = getattr(self, "sct", None)
+        self.sct = None
+        if capture is not None:
+            try:
+                capture.close()
+            except Exception:
+                pass
 
     def __del__(self):
         """析构函数"""

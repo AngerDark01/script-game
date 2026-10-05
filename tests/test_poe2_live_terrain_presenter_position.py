@@ -12,7 +12,9 @@ from auto_modules.features.poe2.live_terrain.contracts import CaptureMetadata, T
 from auto_modules.features.poe2.live_terrain.player_position import PlayerPositionSample
 from auto_modules.ui.modes.poe2_live_terrain.presenter import (
     build_localization_presentation,
+    frame_pixmap,
     localization_display_point,
+    localization_source_point,
     present_snapshot,
 )
 from auto_modules.ui.modes.poe2_live_terrain.presenter import present_localization_overlay
@@ -68,6 +70,24 @@ def test_localization_overlay_applies_registered_arbitrary_direction():
     assert rotated.size() != base.size()
 
 
+def test_frame_pixmap_detaches_non_contiguous_numpy_views():
+    QApplication.instance() or QApplication([])
+    source = np.zeros((24, 32, 3), dtype=np.uint8)
+    flipped = np.fliplr(source)
+
+    pixmap = frame_pixmap(flipped)
+
+    assert not pixmap.isNull()
+    assert (pixmap.width(), pixmap.height()) == (32, 24)
+
+
+def test_frame_pixmap_rejects_unsupported_channel_count():
+    QApplication.instance() or QApplication([])
+    pixmap = frame_pixmap(np.zeros((24, 32, 1), dtype=np.uint8))
+
+    assert pixmap.isNull()
+
+
 def test_localization_display_point_matches_overlay_rotation_and_flip():
     transform = SimilarityTransform2D(
         angle_degrees=45.0,
@@ -85,6 +105,20 @@ def test_localization_display_point_matches_overlay_rotation_and_flip():
     assert point[0] > 0.0
     assert point[1] > 0.0
     assert point != (10.0, 10.0)
+
+
+def test_localization_source_point_is_inverse_for_rotated_reflected_map():
+    transform = SimilarityTransform2D(
+        angle_degrees=37.0,
+        reflect_horizontal=True,
+        scale=1.0,
+        translation=(0.0, 0.0),
+    )
+    source = (6.25, 13.5)
+    display = localization_display_point(source, source_size=(20, 20), transform=transform)
+    restored = localization_source_point(display, source_size=(20, 20), transform=transform)
+
+    assert np.allclose(restored, source, atol=1e-6)
 
 
 def test_presentation_uses_registration_only_when_versions_match():

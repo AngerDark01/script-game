@@ -22,5 +22,5 @@ def walkable_snap_grid_radius(walkable_snap_radius: int, downsample_factor: int)
     """Convert map-space snap radius to grid-space radius."""
     return max(
         1,
-        int(round(int(walkable_snap_radius) / max(1, int(downsample_factor)))),
+        round(int(walkable_snap_radius) / max(1, int(downsample_factor))),
     )

@@ -1,0 +1,56 @@
+{
+  "status": "rejected",
+  "reason": "best candidate forward coverage is below threshold",
+  "feature_pixels": 2422,
+  "candidate_count": 22,
+  "best": {
+    "angle": 213.0,
+    "reflect_horizontal": true,
+    "scale": 0.29000000000000004,
+    "top_left": [
+      114,
+      105
+    ],
+    "player_position": [
+      155.625,
+      176.278
+    ],
+    "mean_distance": 3.183136463165283,
+    "forward_coverage": 0.5868263473053892,
+    "reverse_coverage": 0.21653084982537835,
+    "walkable_coverage": 0.36808868930676397,
+    "player_on_walkable": true,
+    "score": 0.46016199903562843,
+    "edge_pixels": 167,
+    "rank": 1,
+    "global_player_position": [
+      946.6248136851009,
+      441.27809017228117
+    ],
+    "anchor_error": 14.61802081390619,
+    "anchored_score": 0.6922852805494821,
+    "basin_angle": 225.0,
+    "basin_reflection": true,
+    "basin_scale": 0.45
+  },
+  "transform": {
+    "angle": 213.0,
+    "reflect": true,
+    "scale": 0.29000000000000004,
+    "top_left": [
+      905,
+      370
+    ]
+  },
+  "mapped_p1": [
+    946.6248136851009,
+    441.27809017228117
+  ],
+  "mapped_p2": [
+    949.3794085437125,
+    439.5711992908848
+  ],
+  "p1_error": 14.61802081390619,
+  "p2_error": 19.98226634364506,
+  "pair_error": 5.381769266327535
+}

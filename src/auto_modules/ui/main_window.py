@@ -1,5 +1,7 @@
 import sys
 from auto_modules.paths import data_root
+from auto_modules.adapters.virtual_gamepad import ProgramGamepadOutput
+from auto_modules.features.poe2.live_terrain import POE2_MAP_TO_STICK_BASIS
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QStackedWidget, QApplication
@@ -196,6 +198,7 @@ class MainWindow(QMainWindow):
         poe2_live_terrain = build_poe2_live_terrain_composition(
             screen_capture=self.app_context.screen_capture,
             recognizer=self.app_context.recognizer,
+            program_output_factory=lambda controller: self._create_poe2_program_output(controller),
         )
         self.poe2_terrain_page = Poe2LiveTerrainPage(
             service=poe2_live_terrain.service,
@@ -228,6 +231,7 @@ class MainWindow(QMainWindow):
                 "multiframe_localization_factory",
                 None,
             ),
+            program_output_factory=getattr(poe2_live_terrain, "program_output_factory", None),
             parent=self,
         )
         self.stacked_widget.addWidget(self.poe2_terrain_page)
@@ -241,6 +245,27 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.stacked_widget)
 
         self.switch_mode(0) # 默认进入绘图模式
+
+    def _create_poe2_program_output(self, controller: int):
+        """Create one explicitly leased output for the PoE2 lab follow test."""
+        client = self.gamepad_host_manager.create_client()
+        try:
+            client.connect(timeout=1.0)
+            return ProgramGamepadOutput(
+                client,
+                controller=controller,
+                basis=POE2_MAP_TO_STICK_BASIS,
+                # PoE2's follow loop refreshes the stick at roughly 50--100ms.
+                # Reach a usable direction within one control period while
+                # keeping the Host lease alive across a late visual frame.
+                slew_rate=420_000.0,
+                ttl_ms=220,
+            )
+        except Exception:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+            raise
 
     def switch_mode(self, index):
         """切换UI模式"""
