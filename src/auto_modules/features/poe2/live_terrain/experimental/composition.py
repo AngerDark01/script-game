@@ -8,6 +8,7 @@ from typing import Any
 from .application import ExperimentRuntime
 from .diagnostics import EventRecorder
 from .multiplayer import DualMotionController
+from .probes import DualTargetProbe, MoveProbe
 from .recovery import RecoveryController
 
 
@@ -17,6 +18,8 @@ class Poe2ExperimentComposition:
     motion: DualMotionController
     recovery: RecoveryController
     diagnostics: EventRecorder
+    move_probe: MoveProbe
+    dual_target_probe: DualTargetProbe
 
 
 def build_experiment_composition(*, capture: Any = None, tracker: Any = None) -> Poe2ExperimentComposition:
@@ -25,4 +28,6 @@ def build_experiment_composition(*, capture: Any = None, tracker: Any = None) ->
         motion=DualMotionController(capture=capture, tracker=tracker),
         recovery=RecoveryController(),
         diagnostics=EventRecorder(),
+        move_probe=MoveProbe(),
+        dual_target_probe=DualTargetProbe(),
     )

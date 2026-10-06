@@ -9457,3 +9457,9 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - B4：新增 `experimental/diagnostics/events.py`，提供有界事件记录和耗时测量。
 - C2 预备：新增 `experimental/composition.py` 与最小 `replay.py`，为后续完整装配和离线回放建立入口。
 - 验证：实验新模块 + 页面回归 `108 passed`，`compileall` 和 `git diff --check` 通过；下一步继续把页面内算法实现迁移到这些控制器，不能停留在 façade。
+# 2026-10-06 — 物理拆分回归修复与 A5 断点
+
+- 发现：`dual_motion_mixin.py` 搬移方法体后遗漏 `QTimer`、`terrain_pixmap`、`prepare_localization_map` 导入，导致双人实时启动及 worker 重启路径失败。
+- 修复：补齐三项显式导入，保持页面 façade 行为不变。
+- 验证：`tests/test_poe2_capture_test_page.py` `89 passed`。
+- 当前边界：页面探针逻辑仍直接编排 runtime、窗口和输出，下一步从 A5 开始接入 `experimental/probes` 控制器，并更新测试与文档。
