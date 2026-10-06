@@ -572,3 +572,35 @@ def test_dual_first_frame_experiment_wires_observation_to_registrar():
     )
 
     assert result.accepted
+
+
+def test_dual_first_frame_experiment_bounds_registration_candidates():
+    frame, reference, anchors, _candidates, _registration = _fixture()
+    observation = ObservationFrame(
+        captured_at_ms=100,
+        candidates=tuple(
+            ObservationCandidate((10 + index * 3, 12 + index), 0.9 - index * 0.01)
+            for index in range(6)
+        ),
+    )
+    seen = []
+
+    class _Registrar:
+        def register(self, frame, *, reference, anchors, candidates):
+            del frame, reference, anchors
+            seen.append(tuple(candidates))
+            return "registration"
+
+    experiment = DualFirstFrameExperiment(
+        type("_Provider", (), {"read_once": lambda _self, _instance: anchors})(),
+        _Registrar(),
+    )
+
+    assert experiment.register(
+        frame,
+        reference=reference,
+        anchors=experiment.read_anchors("Area:1"),
+        observation=observation,
+    ) == "registration"
+    assert len(seen) == 1
+    assert len(seen[0]) == 4

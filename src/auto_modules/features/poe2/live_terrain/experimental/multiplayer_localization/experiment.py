@@ -44,7 +44,11 @@ class DualFirstFrameExperiment:
         anchors: Mapping[str, PositionAnchor],
         observation: Any,
     ) -> DualFirstFrameResult:
-        candidates = marker_candidates_from_observation(observation, max_candidates=6)
+        # First-frame registration is a bounded one-shot operation. Keep one
+        # candidate per configured role plus a small ambiguity reserve; the
+        # live worker has a separate, larger candidate budget because it does
+        # not run the expensive absolute assignment search.
+        candidates = marker_candidates_from_observation(observation, max_candidates=4)
         return self.registrar.register(
             frame,
             reference=reference,

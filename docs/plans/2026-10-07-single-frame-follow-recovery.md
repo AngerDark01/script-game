@@ -30,6 +30,13 @@ Implementation:
 
 - Replace the fixed `capture_attempts = 3` loop with one capture.
 - Remove the inter-frame sleep and consensus list selection.
+- Production monitor configurations must submit this one-shot task to
+  `Poe2DualFirstFrameWorker`; only minimal test configurations without a
+  localization cadence may retain the synchronous hook.
+- Keep the first-frame candidate budget separate from the live budget. The
+  one-shot experiment uses at most four candidates (two roles plus a bounded
+  ambiguity reserve); the live worker may keep its existing six-candidate
+  tracking budget.
 - Preserve the existing diagnostics shape, but report `capture_attempts=1`, `selected_attempt=1`, and the per-stage timings.
 - Keep failure handling unchanged: an empty/invalid/single-candidate frame is a failed first-frame result, not a reason to silently resample.
 

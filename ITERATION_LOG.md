@@ -9974,3 +9974,9 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` `python -m compileall -q src` 与 `git diff --check` 通过。
 - `(boundary)` 本轮只完成离线/页面回归，没有真实游戏窗口或手柄输入验证。
 - `(next)` 用户实机测试时重点查看首帧是否只采一帧、有效 FPS、candidate/total timing，以及异常帧是否保持预测而不立即停止。
+
+## [第 2026-10-07-25 轮] 2026-10-07 — 首帧后台化与候选预算隔离
+
+- `(implemented)` 生产配置点击首帧时复用 `Poe2DualFirstFrameWorker`，不再在 Qt GUI 线程同步执行重型注册；无定位 FPS 的最小测试配置保持同步兼容。
+- `(implemented)` 首帧注册候选上限独立为 4，实时 worker 候选预算仍保持 6，避免把首帧搜索边界和实时跟踪混用。
+- `(verified)` 首帧/双人页面专项 13 passed；候选预算回归 1 passed。

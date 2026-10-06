@@ -1152,7 +1152,13 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     def run_dual_first_frame_experiment(
         self, *, render_map: bool = True, force_memory_read: bool = False,
     ) -> None:
-        """Run one dual registration synchronously for the manual lab button."""
+        """Run one dual registration for the manual lab button.
+
+        Production monitor configurations use the same one-shot worker as
+        recovery so the expensive registration never blocks the Qt event
+        loop. Minimal test configurations without a localization cadence keep
+        the synchronous hook for deterministic unit tests.
+        """
         if self._snapshot is None:
             self._show_error(RuntimeError("请先获取当前地图"))
             return
@@ -1163,6 +1169,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._dual_initial_candidates = ()
         if self.preview_provider is None or self.recognizer is None:
             self._show_error(RuntimeError("双人首帧实验需要截图和识别后端"))
+            return
+        if hasattr(self.monitor_config, "localization_fps") and self._start_dual_first_frame_async(
+            recovery=False,
+        ):
             return
         snapshot = self._snapshot
         self.dual_first_frame_status_label.setText("双人首帧：正在读取人物锚点")
@@ -1236,8 +1246,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._dual_first_frame_started_at = time.perf_counter()
         self.start_dual_motion_button.setEnabled(False)
         self.stop_dual_motion_button.setEnabled(False)
-        self.dual_first_frame_status_label.setText("双人首帧：后台恢复定位中")
-        self.dual_motion_status_label.setText("双人实时：后台恢复定位中，界面保持响应")
+        phase = "恢复定位" if recovery else "首帧定位"
+        self.dual_first_frame_status_label.setText(f"双人首帧：后台{phase}中")
+        self.dual_motion_status_label.setText(
+            f"双人实时：后台{phase}中，界面保持响应"
+        )
         self._logger.info(
             "step=dual_first_frame.worker_started generation=%s recovery=%s",
             generation, recovery,
@@ -1287,7 +1300,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                         "follow_prediction_continues=True",
                     )
                     self._schedule_live_follow_recovery_retry("first_frame_rejected")
-                self.start_dual_motion_button.setEnabled(self._snapshot is not None)
+                    self.start_dual_motion_button.setEnabled(self._snapshot is not None)
+            else:
+                self.dual_first_frame_button.setEnabled(True)
+                self.start_dual_motion_button.setEnabled(bool(bundle.result.accepted))
+                self.stop_dual_motion_button.setEnabled(False)
         except Exception as exc:
             self._logger.exception("step=dual_first_frame.worker_apply_failed error=%s", exc)
             if self._follow_recovery_pending:
@@ -1349,6 +1366,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         else:
             self.dual_motion_status_label.setText(f"双人实时：后台恢复失败 | {error}")
             self.start_dual_motion_button.setEnabled(self._snapshot is not None)
+            self.dual_first_frame_button.setEnabled(self._snapshot is not None)
         self._logger.error(
             "step=dual_first_frame.worker_failed_timing generation=%s elapsed_ms=%.1f",
             generation, elapsed_ms,
