@@ -407,8 +407,9 @@ class DualVisualTracker:
                 "wall_shift": shift,
                 "wall_prediction_hold": wall_prediction_hold,
                 "visible_identities": tuple(accepted),
-                "prediction_active": not bool(accepted),
-                "prediction_reason": "marker_observation_gap" if not accepted else "",
+                "prediction_active": any(not item.visible for item in observations.values()),
+                "prediction_reason": "marker_observation_gap"
+                if any(not item.visible for item in observations.values()) else "",
                 "prediction_age_ms": {
                     identity: int(item.age_ms)
                     for identity, item in observations.items()

@@ -9986,3 +9986,8 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` 页面、worker、双人首帧、双人 tracker、离线 replay 合计 162 passed。
 - `(verified)` compileall 与 diff check 通过。
 - `(boundary)` 尚未发送真实输入或启动游戏窗口；下一步仅做用户授权的实机观察和日志核对。
+
+## [第 2026-10-07-27 轮] 2026-10-07 — 完善部分角色失配诊断
+
+- `(fixed)` `prediction_active` 改为按角色可见性计算，单角色失配时也能明确标记预测保持。
+- `(verified)` tracker/replay 27 passed；compileall 与 diff check 通过。

@@ -91,6 +91,7 @@
 - 生产配置的手动首帧入口已改为复用 `Poe2DualFirstFrameWorker`；测试/最小配置仍保留同步钩子。首帧实验候选预算独立限制为 4，实时 worker 仍为 6。
 - 后续专项回归（页面、worker、首帧、tracker、replay）共 `162 passed`；compileall 与 diff check 通过。
 - 当前实现仍未做实机输入验证；需要用户下一轮启动程序后观察后台首帧状态、首帧耗时和实时 timing 日志。
+- 部分角色可见、另一角色预测保持时，`prediction_active` 现在也会正确标记为 true；tracker/replay 回归 27 passed。
 - 未跟踪的 `data/poe2_live_terrain_test/occlusion_diagnostics/` 是既有运行 evidence，本轮未删除或纳入代码提交。
 - 仍未进行真实游戏窗口/手柄测试；下一步需在用户明确测试时观察首帧耗时、worker timing 和异常帧 prediction diagnostics。
 
