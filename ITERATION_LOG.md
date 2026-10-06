@@ -9470,3 +9470,11 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 组合：`Poe2ExperimentComposition` 统一装配三个探针；页面仍保留既有路径 runtime 和输出逻辑，避免重复实现移动算法。
 - 验证：探针与页面聚焦回归 `92 passed`。
 - 下一步：进入 B2 适配器边界，把窗口、截图、内存和 gamepad 副作用从页面 mixin 迁移到 ports/adapters。
+
+# 2026-10-06 — B2 适配器边界与 C2/C3 离线运行时
+
+- 新增：`experimental/adapters` 的 `AdapterBundle`、capture/memory/window/gamepad 协议及 `StaticMemory`、`StaticWindow`、`RecordingGamepad` 无副作用 fake。
+- 装配：`build_experiment_composition` 接受显式 adapter bundle；双人 motion controller 使用注入的 capture port。
+- 回放：`ReplayManifest`、`ReplaySource.at()` 和 `HeadlessExperiment` 支持无 Qt 的开始、帧摄入、恢复、停止事件序列。
+- 验证：实验模块、页面回归、编译和差异检查通过，当前 `114 passed`。
+- 下一步：补齐 C1 页面 façade 的剩余跟随编排，并进行 C4 全链路人工审查；禁止真实输入测试。

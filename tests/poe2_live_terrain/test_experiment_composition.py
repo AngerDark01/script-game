@@ -9,3 +9,4 @@ def test_composition_assembles_independent_runtime_components():
     assert composition.motion.running is False
     assert composition.recovery.state.active is False
     assert composition.diagnostics.events == []
+    assert composition.adapters.capture is None

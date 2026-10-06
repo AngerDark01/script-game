@@ -25,12 +25,12 @@
 | A4 | 提取跟随控制器和目标源 | 已完成（首轮） | `6690a6e` |
 | A5 | 提取移动探针与双人同目标实验 | 已完成（首轮） | 待提交 |
 | B1 | 统一实验生命周期和会话上下文 | 已完成（首轮） | `6690a6e` |
-| B2 | 统一目标源、运动决策和输出边界 | 已完成（首轮） | `6690a6e` |
+| B2 | 统一目标源、运动决策和输出边界 | 已完成 | 待提交 |
 | B3 | 统一定位、局部跟踪和重定位接口 | 已完成（首轮） | `6690a6e` |
 | B4 | 统一日志、快照和性能统计 | 已完成（首轮） | `6690a6e` |
 | C1 | 移除页面内算法实现 | 进行中 | — |
-| C2 | 建立 composition 和离线 replay | 预备完成 | `6690a6e` |
-| C3 | 让实验核心脱离 Qt 运行 | 未开始 | — |
+| C2 | 建立 composition 和离线 replay | 已完成（首轮） | 待提交 |
+| C3 | 让实验核心脱离 Qt 运行 | 已完成（首轮） | 待提交 |
 | C4 | 完整人工链路审查、回归和实机边界审查 | 未开始 | — |
 | C5 | 评估可迁移到正式底层的通用能力 | 未开始 | — |
 
@@ -49,6 +49,8 @@
 - `tests/test_poe2_capture_test_page.py` 当前 `89 passed`；下一步必须提交该拆分检查点，再开始 A5 的探针控制器接入。
 - 未解决边界：探针页面仍直接拥有路径 runtime、窗口查询和 gamepad 输出；A5/B2 需要把这些调用通过显式 adapter/port 收口。
 - A5 首轮：`MoveProbe`、`DualTargetProbe`、`FollowProbe` 已成为目标生命周期控制器；页面点击和启动/停止 façade 已接入，三种目标源仍共享原有运动 runtime。
+- B2：新增 `experimental/adapters` 的 capture/memory/window/gamepad 端口和无副作用 fake；composition 接受 `AdapterBundle`，页面仍通过兼容 façade 装配。
+- C2/C3 首轮：`ReplayManifest`、可索引 `ReplaySource` 和 `HeadlessExperiment` 已建立；生命周期、帧摄入、恢复和停止可在无 Qt 环境回放。
 
 ## 迁移原则
 
