@@ -9430,3 +9430,12 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 验证：页面及双人跟随/运动聚焦测试 `172 passed`；尚未发送真实输入。后续实机观察单 episode 去重、退避和前台帧过滤。
 - 性能边界：前台窗口查询增加 250ms 缓存，worker drain 与 follow tick 共享结果，启动/停止清空缓存。
 - 追加验证：同一聚焦测试仍为 `172 passed`，`compileall` 与 `git diff --check` 通过。
+
+## 2026-10-06 — PoE2 实验代码 A0→C5 模块化任务启动
+
+- 用户确认采用 A→B→C 渐进迁移路线，先兼容提取，再控制器组合，最后建立可脱离 Qt 的实验运行时。
+- 已创建总任务断点：`docs/POE2_EXPERIMENT_REFACTOR_TASK.md`。
+- 已创建实施计划：`docs/plans/2026-10-06-poe2-experiment-modularization-plan.md`。
+- 已创建模块盘点：`docs/plans/2026-10-06-poe2-experiment-module-inventory.md`。
+- A0 当前完成：页面约 6227 行、职责组、共享状态和副作用边界已盘点；待补齐逐符号调用路径、A1 失败测试和 A0 提交。
+- 约束：实验代码不并入正式底层；每阶段更新文档、测试和 Git 检查点；不得发送真实输入。
