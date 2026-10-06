@@ -87,6 +87,8 @@ class Poe2DualMotionWorker(QObject):
         self.dropped_results = 0
         self.failed_frames = 0
         self.consecutive_failures = 0
+        self.processing_ema_ms = 0.0
+        self.adaptive_interval_ms = 1000.0 / self.fps
 
     @property
     def is_running(self) -> bool:
@@ -240,8 +242,23 @@ class Poe2DualMotionWorker(QObject):
                     continue
                 self.completed_frames += 1
                 self.consecutive_failures = 0
+                processing_ms = (time.perf_counter() - started) * 1000.0
+                self.processing_ema_ms = (
+                    processing_ms if self.processing_ema_ms <= 0.0
+                    else self.processing_ema_ms * 0.8 + processing_ms * 0.2
+                )
+                # Keep the latest-frame queue responsive under load.  When
+                # recognition is slower than the requested cadence, back off
+                # capture rather than building stale work and repeatedly
+                # dropping results.  The cadence never falls below 10Hz.
+                self.adaptive_interval_ms = max(
+                    1000.0 / self.fps,
+                    min(100.0, self.processing_ema_ms * 1.15),
+                )
                 self._offer(result)
-                self._stop_event.wait(max(0.0, started + interval - time.perf_counter()))
+                self._stop_event.wait(
+                    max(0.0, started + self.adaptive_interval_ms / 1000.0 - time.perf_counter())
+                )
         except Exception as exc:
             if not self._stop_event.is_set():
                 self.failed.emit(self.generation, exc)

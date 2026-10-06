@@ -8,16 +8,26 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMessageBox
 
+from auto_modules.adapters.windows import find_process_window, is_process_foreground
 from auto_modules.core.routing.geometry import point_distance
 from auto_modules.core.localization.displacement import inverse_transform_local_displacement
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow import (
-    ControlMode, FollowState, PositionSample, ProgramFollowOutput, RoleId,
+    ClosedLoopMotionController,
+    ControlMode,
+    FollowState,
+    MapIdentity,
+    PositionSample,
+    ProgramFollowOutput,
+    RoleId,
+    SimulatedFollowRuntime,
 )
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization import (
     inspect_minimap_contact,
 )
 from auto_modules.features.poe2.live_terrain.movement import native_route_vector_for_program_output
+from auto_modules.features.poe2.live_terrain.player_position import find_process_id
 from auto_modules.ui.modes.poe2_live_terrain.presenter import localization_display_point
 
 
@@ -253,12 +263,12 @@ class Poe2ProbeMixin:
             ):
                 self.stop_program_move_probe(reason="PoE2 已失去前台，已停止真实输入")
                 return
-            if (
-                self._program_probe_started_at_ms is not None
-                and now_ms - self._program_probe_started_at_ms > 30_000
-            ):
-                self.stop_program_move_probe(reason="程序移动实验超过 30 秒，已停止")
-                return
+            # A map run has no total-duration policy.  A long route remains
+            # active until it reaches its target or an explicit operational
+            # boundary occurs (foreground loss, map/relocalization failure,
+            # user stop, or page shutdown).  Frame freshness and Host command
+            # TTLs below are per-observation safety contracts; they are not a
+            # wall-clock limit on completing the map.
             state = self._latest_dual_state
             if state is None:
                 self.stop_program_move_probe(reason="人物位置暂时不可用，已停止")
@@ -679,9 +689,15 @@ class Poe2ProbeMixin:
             self._dual_target_recovery = None
             self.dual_target_status_label.setText("双人同目标：地图实例变化，已安全停止")
             return
-        if getattr(state, "recovery_requested", False) or state.status != "tracking":
+        if getattr(state, "recovery_requested", False) or not self._recovery_frame_usable(
+            state, required_identities=(p1, p2),
+        ):
             return
-        if captured_at_ms is None or int(time.time() * 1000) - int(captured_at_ms) > 1_000:
+        # Keep the recovery hand-off on the same freshness contract as the
+        # actual start method.  Consuming a 301–700ms frame here would clear
+        # the saved context, only for start_dual_target_experiment() to reject
+        # that same frame and leave the experiment idle.
+        if captured_at_ms is None or int(time.time() * 1000) - int(captured_at_ms) > self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS:
             return
         if state.players.get(p1) is None or state.players.get(p2) is None:
             return
@@ -715,11 +731,26 @@ class Poe2ProbeMixin:
                 "follow_session_preserved=True",
             )
             return
-        if getattr(state, "recovery_requested", False) or getattr(state, "status", None) != "tracking":
-            return
-        if captured_at_ms is None or int(time.time() * 1000) - int(captured_at_ms) > (
-            self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS if live_mode else 1_000
+        required_identities = (
+            (self._dual_recovery_follow_p1, self._dual_recovery_follow_p2)
+            if live_mode else ()
+        )
+        if getattr(state, "recovery_requested", False) or not self._recovery_frame_usable(
+            state, required_identities=required_identities,
         ):
+            return
+        recovery_frame_age_limit = (
+            self._FOLLOW_START_MAX_FRAME_AGE_MS
+            if live_mode else self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS
+        )
+        if captured_at_ms is None or int(time.time() * 1000) - int(captured_at_ms) > recovery_frame_age_limit:
+            self._logger.debug(
+                "step=live_role_follow.recovery_waiting reason=frame_not_fresh "
+                "frame_age_ms=%s max_age_ms=%s live=%s",
+                None if captured_at_ms is None else int(time.time() * 1000) - int(captured_at_ms),
+                recovery_frame_age_limit,
+                live_mode,
+            )
             return
         if live_mode and (
             self._dual_recovery_follow_p1 == self._dual_recovery_follow_p2
@@ -749,6 +780,18 @@ class Poe2ProbeMixin:
                     captured_at_ms,
                     self._follow_session_id,
                 )
+                # Tracker re-anchoring is synchronous, while output ownership
+                # is normally acquired by the periodic follow tick. Run one
+                # guarded tick now so recovery cannot finish with a ready
+                # tracker and an idle program output.
+                self._logger.info(
+                    "step=live_role_follow.recovery_resume_tick session_id=%s "
+                    "output_before=%s",
+                    self._follow_session_id,
+                    None if self._follow_program_output is None
+                    else self._follow_program_output.snapshot(),
+                )
+                self._tick_follow_experiment()
             return
         # Click mode restores its saved point; live mode uses only this fresh
         # frame's selected leader position after rebuilding the runtime.
@@ -786,6 +829,30 @@ class Poe2ProbeMixin:
         if not live_mode:
             self._on_follow_map_click(*target)
 
+    @staticmethod
+    def _recovery_frame_usable(
+        state: Any, *, required_identities: tuple[str, ...] = (),
+    ) -> bool:
+        """Accept a fresh wall-trusted degraded frame during recovery.
+
+        A marker can be temporarily hidden or overlap another marker while the
+        wall registration is already valid.  The tracker keeps a bounded,
+        timestamped estimate for that identity, so requiring the literal
+        ``tracking`` state here would leave the saved session suspended until a
+        later frame happens to show every marker at once.
+        """
+        status = str(getattr(state, "status", ""))
+        if status == "tracking":
+            return True
+        if status != "degraded":
+            return False
+        diagnostics = getattr(state, "diagnostics", {}) or {}
+        if not bool(diagnostics.get("wall_trusted", False)):
+            return False
+        players = getattr(state, "players", {}) or {}
+        return all(identity is not None and players.get(identity) is not None
+                   for identity in required_identities)
+
     def _maybe_resume_program_probe_after_relocalization(self) -> None:
         """Resume the saved target after a fresh dual visual frame arrives."""
         target = self._program_probe_recovery_target
@@ -795,7 +862,9 @@ class Poe2ProbeMixin:
         captured_at_ms = self._latest_dual_captured_at_ms
         if target is None or identity is None or controller is None or state is None:
             return
-        if getattr(state, "recovery_requested", False) or getattr(state, "status", None) != "tracking":
+        if getattr(state, "recovery_requested", False) or not self._recovery_frame_usable(
+            state, required_identities=(identity,),
+        ):
             return
         if captured_at_ms is None or int(time.time() * 1000) - int(captured_at_ms) > 1_000:
             return

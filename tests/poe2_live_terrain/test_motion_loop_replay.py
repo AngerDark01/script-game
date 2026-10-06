@@ -87,7 +87,7 @@ def test_replay_wall_route_never_emits_a_colliding_route():
     assert observation.diagnostics["plan_candidate_route_count"] >= 1
 
 
-def test_replay_stale_visual_frame_fails_closed_before_output():
+def test_replay_stale_visual_frame_keeps_bounded_prediction_output():
     identity = MapIdentity("area", "replay-stale")
     role = RoleId("local-device", "p1")
     runtime = SimulatedFollowRuntime(
@@ -104,6 +104,6 @@ def test_replay_stale_visual_frame_fails_closed_before_output():
 
     observation = runtime.tick(now_ms=700)[role.key]
 
-    assert observation.vector == (0.0, 0.0)
+    assert observation.vector != (0.0, 0.0)
+    assert observation.state is FollowState.PROGRAM_READY
     assert observation.diagnostics["motion_loop_state"] == "unknown"
-

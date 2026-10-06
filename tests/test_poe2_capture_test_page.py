@@ -48,6 +48,8 @@ from auto_modules.features.poe2.live_terrain.stitching_session import (
 from auto_modules.ui.modes.poe2_live_terrain.capture_test_page import (
     Poe2CaptureTestPage,
 )
+import auto_modules.ui.modes.poe2_live_terrain.capture_test_page as capture_test_page_module
+import auto_modules.ui.modes.poe2_live_terrain.probe_mixin as probe_mixin_module
 from auto_modules.ui.modes.poe2_live_terrain.presenter import (
     localization_display_point,
     localization_source_point,
@@ -344,8 +346,51 @@ def test_capture_monitor_button_reuses_one_window_and_shutdown_closes_it(tmp_pat
 
     assert page.capture_monitor_window is first
     page.shutdown()
+
     assert not first.preview_timer.isActive()
     assert not first.isVisible()
+
+
+def test_capture_test_page_close_detaches_logger_handler(tmp_path):
+    _app()
+    page = Poe2CaptureTestPage(
+        FakeService(),
+        archive=FakeArchive(tmp_path),
+        monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
+        preview_provider=None,
+    )
+    handler = page._log_handler
+    logger = page._logger
+
+    assert handler in logger.handlers
+    page.close()
+
+    assert handler not in logger.handlers
+
+
+def test_capture_test_page_suspend_releases_follow_outputs(tmp_path):
+    _app()
+    page, outputs, _transform = _dual_target_page(tmp_path)
+    page.start_dual_target_experiment()
+    page._on_follow_map_click(20, 20)
+
+    page.suspend()
+
+    assert page._dual_target_runtime is None
+    assert not page._dual_target_timer.isActive()
+    assert all(output.calls[-1] == "stop" for output in outputs.values())
+
+
+def test_capture_test_page_shutdown_releases_follow_outputs(tmp_path):
+    page, outputs, _transform = _dual_target_page(tmp_path)
+    page.start_dual_target_experiment()
+    page._on_follow_map_click(20, 20)
+
+    page.shutdown()
+
+    assert page._dual_target_runtime is None
+    assert not page._dual_target_timer.isActive()
+    assert all(output.calls[-1] == "stop" for output in outputs.values())
 
 
 def test_hybrid_controls_require_map_and_drive_one_session(tmp_path):
@@ -684,6 +729,15 @@ def test_follow_requires_explicit_role_assignment_not_dictionary_order(tmp_path)
     assert page.follow_p2_combo.currentData() is None
 
 
+def test_invalid_follow_start_does_not_arm_target_probe(tmp_path):
+    page, _outputs, _transform = _dual_target_page(tmp_path)
+    page._latest_dual_state = None
+
+    page.start_follow_experiment()
+
+    assert page._experiment_composition.follow_probe.armed is False
+
+
 def test_dual_frame_redraw_does_not_advance_follow_simulation_twice(tmp_path):
     _app()
     page = Poe2CaptureTestPage(
@@ -747,6 +801,96 @@ def test_program_probe_relocalization_resumes_saved_target_on_fresh_dual_frame(t
     assert page._program_probe_recovery_target is None
     assert page.program_probe_role_combo.currentData() == "role-a"
     assert page.program_probe_controller_combo.currentData() == 1
+
+
+def test_program_probe_relocalization_accepts_wall_trusted_degraded_frame(tmp_path):
+    _app()
+    page = Poe2CaptureTestPage(
+        FakeService(), archive=FakeArchive(tmp_path),
+        monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
+        preview_provider=None,
+    )
+    transform = SimilarityTransform2D(0, False, 1.0, (0.0, 0.0))
+    now = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "degraded", "markers_partial_grace", {"role-a": (7.0, 8.0)}, transform,
+        wall_quality=1.0,
+        diagnostics={"wall_trusted": True},
+    )
+    page._latest_dual_captured_at_ms = now
+    page._sync_follow_role_choices(page._latest_dual_state.players)
+    page._program_probe_recovery_target = (24.0, 25.0)
+    page._program_probe_recovery_identity = "role-a"
+    page._program_probe_recovery_controller = 1
+    resumed = []
+    page._start_program_move_probe_at = lambda point, **kwargs: resumed.append((point, kwargs))
+
+    page._maybe_resume_program_probe_after_relocalization()
+
+    assert resumed == [((24.0, 25.0), {"_confirmed": True})]
+
+
+def test_program_probe_has_no_total_map_duration_limit(tmp_path, monkeypatch):
+    """A long map run stays active; only explicit operational boundaries stop it."""
+    _app()
+    page = Poe2CaptureTestPage(
+        FakeService(), archive=FakeArchive(tmp_path),
+        monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
+        preview_provider=None,
+    )
+    role = RoleId("local-device", "role-a")
+    now_ms = int(time.time() * 1000)
+
+    class _Output:
+        def __init__(self):
+            self.applied = 0
+
+        def apply(self, _observation, *, elapsed_ms):
+            self.applied += 1
+
+        def release_all(self):
+            raise AssertionError("a long route must not be stopped by elapsed time")
+
+    observation = SimpleNamespace(
+        position=(1.0, 1.0), target_position=(20.0, 20.0), vector=(1.0, 0.0),
+        route=(), diagnostics={}, distance=20.0, reason="moving",
+        state=SimpleNamespace(value="following"),
+    )
+
+    class _Runtime:
+        map_identity = SimpleNamespace(map_id="Area", map_version="hash")
+
+        def update_follower_position(self, _sample):
+            return None
+
+        def refresh_simulated_target(self, *, now_ms):
+            return None
+
+        def tick(self, *, now_ms):
+            return {role.key: observation}
+
+    output = _Output()
+    page._program_probe_output = output
+    page._program_probe_runtime = _Runtime()
+    page._program_probe_role = role
+    page._program_probe_game_pid = 123
+    page._program_probe_started_at_ms = now_ms - 24 * 60 * 60 * 1000
+    # A legacy/injected duration value must not reintroduce a map-run ceiling.
+    page._program_probe_max_duration_ms = 1
+    page._program_probe_ticks = 1
+    page._latest_dual_state = SimpleNamespace(
+        players={"role-a": (1.0, 1.0)}, recovery_requested=False,
+    )
+    page._latest_dual_captured_at_ms = now_ms
+    page._native_route_vector_for_input = lambda vector: vector
+    page._update_program_probe_local_contact = lambda *_args, **_kwargs: None
+    page._render_program_probe_overlay = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(probe_mixin_module, "is_process_foreground", lambda _pid: True)
+
+    page._tick_program_move_probe()
+
+    assert output.applied == 1
+    assert page._program_probe_output is output
 
 
 def test_follow_waits_for_first_click_and_keeps_real_players_visible(tmp_path):
@@ -1376,6 +1520,7 @@ def test_live_role_follow_tracks_fresh_leader_and_only_controls_follower(
 
     page.start_follow_experiment()
     _complete_live_follow_cold_start(page)
+    captured_at_ms = int(page._latest_dual_captured_at_ms)
     page._tick_follow_experiment()
     runtime = page._follow_runtime
     assert runtime is not None
@@ -1384,11 +1529,11 @@ def test_live_role_follow_tracks_fresh_leader_and_only_controls_follower(
     assert set(outputs) == {controller}
     assert outputs[controller].calls[0] == "start"
     assert runtime.remote.position.role.actor_id == leader_identity
-    assert runtime.remote.position.captured_at_ms == captured_at_ms + 1
+    assert runtime.remote.position.captured_at_ms == captured_at_ms
     assert page._last_follow_observations[f"local-device:{leader_identity}"].state is FollowState.MANUAL
 
     page._tick_follow_experiment()
-    assert runtime.remote.position.captured_at_ms == captured_at_ms + 1
+    assert runtime.remote.position.captured_at_ms == captured_at_ms
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {leader_identity: (80.0, 10.0), follower_identity: (70.0, 10.0)}, transform,
     )
@@ -1433,6 +1578,7 @@ def test_live_follow_accepts_large_manual_leader_visual_move_without_reanchor(tm
 
     page.start_follow_experiment()
     _complete_live_follow_cold_start(page)
+    base = int(page._latest_dual_captured_at_ms)
     assert page._follow_runtime is not None
     assert outputs[2].calls and outputs[2].calls[0] == "start"
 
@@ -1683,7 +1829,7 @@ def test_preview_rescales_when_panel_grows_without_new_frame(tmp_path):
     page.close()
 
 
-def test_live_role_follow_releases_on_stale_frame_and_recovers_on_new_frame(tmp_path):
+def test_live_role_follow_holds_prediction_on_stale_frame_and_recovers_on_new_frame(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
     page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
@@ -1701,17 +1847,18 @@ def test_live_role_follow_releases_on_stale_frame_and_recovers_on_new_frame(tmp_
     release_calls = []
     original_release_all = page._follow_program_output.release_all
     page._follow_program_output.release_all = lambda: (release_calls.append(True), original_release_all())[1]
-    page._tick_follow_experiment()
-    assert outputs[2].calls[-1] == "stop"
-    assert len(release_calls) == 1
     stale_target_time = page._follow_runtime.remote.position.captured_at_ms
     page._tick_follow_experiment()
-    assert page._follow_runtime.remote.position.captured_at_ms == stale_target_time
-    assert len(release_calls) == 1
+    assert outputs[2].calls[-1] != "stop"
+    assert len(release_calls) == 0
+    assert page._follow_runtime.remote.position.captured_at_ms > stale_target_time
+    page._tick_follow_experiment()
+    assert page._follow_runtime.remote.position.captured_at_ms > stale_target_time
+    assert len(release_calls) == 0
 
     page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._tick_follow_experiment()
-    assert outputs[2].calls[-2] == "start"
+    assert outputs[2].calls[-1][0] == "write"
     target = page._follow_runtime.remote.position
     page._on_follow_map_click(20, 20)
     assert page._follow_runtime.remote.position == target
@@ -1746,7 +1893,58 @@ def test_live_follow_stale_frame_requests_one_recovery_after_stall(tmp_path):
     assert page._follow_stale_recovery_requested is True
 
 
-def test_live_follow_releases_on_markerless_warmup_frame(tmp_path):
+def test_live_follow_keeps_prediction_when_capture_timestamp_is_missing(tmp_path):
+    page, outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page.start_follow_experiment()
+    _complete_live_follow_cold_start(page)
+
+    page._latest_dual_captured_at_ms = None
+    page._tick_follow_experiment()
+
+    assert page._follow_runtime is not None
+    assert outputs[2].calls[-1] != "stop"
+    assert page._last_follow_observations["local-device:role-b"].position is not None
+    page.stop_follow_experiment()
+
+
+def test_shutdown_cancels_follow_recovery_callbacks_and_releases_output(tmp_path, monkeypatch):
+    page, outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page.start_follow_experiment()
+    _complete_live_follow_cold_start(page)
+
+    callbacks = []
+    monkeypatch.setattr(
+        capture_test_page_module.QTimer,
+        "singleShot",
+        staticmethod(lambda _delay, callback: callbacks.append(callback)),
+    )
+    page._follow_recovery_pending = True
+    page._schedule_live_follow_recovery_retry("test_shutdown")
+    page.shutdown()
+    for callback in callbacks:
+        callback()
+
+    assert page._closing is True
+    assert page._follow_runtime is None
+    assert not page._follow_timer.isActive()
+    assert outputs[2].calls[-1] == "stop"
+
+
+def test_live_role_follow_releases_on_markerless_warmup_frame(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
     page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
@@ -1856,6 +2054,42 @@ def test_overwritten_recovery_revision_is_handled_before_follow_resume(tmp_path)
     page._dual_motion_worker = _Worker()
     page._dual_last_ui_render_at = time.perf_counter()
     page._maybe_resume_dual_follow_after_relocalization = lambda: calls.append("resume")
+    page.stop_dual_motion = lambda **_kwargs: calls.append("stop")
+    page._start_dual_motion = lambda *, recovery: calls.append(("restart", recovery))
+
+    page._drain_dual_motion_worker()
+    page._drain_dual_motion_worker()
+    assert calls == ["stop", ("restart", True)]
+
+
+def test_persistent_recovery_state_recovers_when_edge_flag_was_overwritten(tmp_path):
+    page, _outputs, transform = _dual_target_page(tmp_path)
+    calls = []
+    state = DualMotionState(
+        "recovery_required", "markers_missing", {}, transform,
+        recovery_requested=False, recovery_revision=4,
+    )
+    result = SimpleNamespace(
+        state=state, captured_at_ms=int(time.time() * 1000), raw=None, combined=None,
+        candidates=(), capture_ms=0, recognition_ms=0, tracking_ms=0,
+    )
+
+    class _Worker:
+        dropped_results = 0
+        completed_frames = 1
+
+        def __init__(self):
+            self.latest = result
+
+        def take_latest(self):
+            latest, self.latest = self.latest, None
+            return latest
+
+        def take_pending_recovery_revision(self):
+            return 0
+
+    page._dual_motion_worker = _Worker()
+    page._dual_last_ui_render_at = time.perf_counter()
     page.stop_dual_motion = lambda **_kwargs: calls.append("stop")
     page._start_dual_motion = lambda *, recovery: calls.append(("restart", recovery))
 
@@ -2019,6 +2253,9 @@ def test_live_follow_rebases_continuous_visual_step_when_speed_prediction_is_hig
     page._latest_dual_captured_at_ms = initial
     page.start_follow_experiment()
     _complete_live_follow_cold_start(page)
+    # The helper may advance the synthetic capture clock to keep the frame
+    # fresh under a busy Qt suite; use that accepted sync timestamp below.
+    initial = int(page._latest_dual_captured_at_ms)
     assert page._follow_last_visual_positions == {
         "local-device:role-a": (25.0, 8.0),
         "local-device:role-b": (5.0, 8.0),
@@ -2138,6 +2375,132 @@ def test_live_role_follow_relocalization_reanchors_in_place(tmp_path):
     page.stop_follow_experiment()
 
 
+def test_live_role_follow_relocalization_accepts_wall_trusted_degraded_frame(tmp_path):
+    """A bounded marker estimate must be enough to resume after re-anchor."""
+    page, outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    initial = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = initial
+    page.start_follow_experiment()
+    _complete_live_follow_cold_start(page)
+    runtime = page._follow_runtime
+    page._save_dual_follow_recovery_context()
+    page._follow_recovery_pending = True
+    now = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "degraded", "markers_partial_grace",
+        {"role-a": (25.0, 8.0), "role-b": (6.0, 9.0)}, transform,
+        wall_quality=1.0,
+        diagnostics={"wall_trusted": True, "role_observations": {
+            "role-a": {"visible": True, "available": True, "age_ms": 0,
+                       "uncertainty_native": 0.5},
+            "role-b": {"visible": False, "available": True, "age_ms": 180,
+                       "uncertainty_native": 2.0},
+        }},
+    )
+    page._latest_dual_captured_at_ms = now
+
+    page._maybe_resume_dual_follow_after_relocalization()
+
+    assert page._follow_recovery_pending is False
+    assert page._follow_runtime is runtime
+    assert outputs[2].calls.count("start") == 1
+    page.stop_follow_experiment()
+
+
+def test_live_role_follow_rebuilds_from_wall_trusted_degraded_recovery_frame(tmp_path):
+    """A degraded first recovery frame must not strand a rebuilt session."""
+    page, _outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    initial = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = initial
+    page.start_follow_experiment()
+    page._save_dual_follow_recovery_context()
+    page.stop_follow_experiment(_preserve_recovery=True)
+    now = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "degraded", "markers_partial_grace",
+        {"role-a": (26.0, 9.0), "role-b": (6.0, 9.0)}, transform,
+        wall_quality=1.0,
+        diagnostics={"wall_trusted": True},
+    )
+    page._latest_dual_captured_at_ms = now
+
+    page._maybe_resume_dual_follow_after_relocalization()
+
+    assert page._follow_runtime is not None
+    assert page._follow_sync_phase == "cold_start" or page._follow_sync_phase == "recovery_sync"
+    page.stop_follow_experiment()
+
+
+def test_live_role_follow_keeps_recovery_context_until_frame_is_fresh_enough(tmp_path):
+    """A stale recovery frame must wait instead of consuming the resume context."""
+    page, _outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    initial = int(time.time() * 1000)
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = initial
+    page.start_follow_experiment()
+    page._save_dual_follow_recovery_context()
+    page.stop_follow_experiment(_preserve_recovery=True)
+
+    stale = int(time.time() * 1000) - page._FOLLOW_START_MAX_FRAME_AGE_MS - 1
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (26.0, 9.0), "role-b": (6.0, 9.0)}, transform,
+    )
+    page._latest_dual_captured_at_ms = stale
+    page._maybe_resume_dual_follow_after_relocalization()
+
+    assert page._follow_runtime is None
+    assert page._dual_recovery_follow_live is True
+
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page._maybe_resume_dual_follow_after_relocalization()
+    assert page._follow_runtime is not None
+    page.stop_follow_experiment()
+
+
+def test_click_follow_recovery_uses_runtime_frame_ttl(tmp_path):
+    """A click-follow recovery frame must satisfy the same 700ms runtime TTL."""
+    page, _outputs, transform = _dual_target_page(tmp_path)
+    page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("both"))
+    page.start_follow_experiment()
+    page._on_follow_map_click(20, 20)
+    page._save_dual_follow_recovery_context()
+    page.stop_follow_experiment(_preserve_recovery=True)
+
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (26.0, 9.0), "role-b": (6.0, 9.0)}, transform,
+    )
+    stale = int(time.time() * 1000) - page._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS - 1
+    page._latest_dual_captured_at_ms = stale
+    page._maybe_resume_dual_follow_after_relocalization()
+
+    assert page._follow_runtime is None
+    assert page._dual_recovery_follow_target_source == (20.0, 20.0)
+
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page._maybe_resume_dual_follow_after_relocalization()
+    assert page._follow_runtime is not None
+    page.stop_follow_experiment()
+
+
 def _dual_target_page(tmp_path):
     _app()
     outputs = {}
@@ -2183,7 +2546,10 @@ def _complete_live_follow_cold_start(page):
     """Deliver one post-arm visual frame for the live-follow state machine."""
     baseline = page._follow_sync_baseline_captured_at_ms
     assert baseline is not None
-    page._latest_dual_captured_at_ms = int(baseline) + 1
+    # The production gate measures age against the wall clock.  A synthetic
+    # ``baseline + 1`` frame becomes stale when the test suite is busy before
+    # the helper runs, so use a strictly newer *current* capture timestamp.
+    page._latest_dual_captured_at_ms = max(int(baseline) + 1, int(time.time() * 1000))
     page._tick_follow_experiment()
 
 
@@ -2283,6 +2649,9 @@ def test_live_follow_does_not_count_the_same_rejected_visual_frame_twice(tmp_pat
     page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
     page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
     page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("p1_leads"))
+    # Disable the startup pulse grace window; this test exercises the steady
+    # innovation rejection counter rather than command-latency handling.
+    page._follow_visual_phase_grace_ms = 0
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (5.0, 8.0)}, transform,
     )
@@ -2297,7 +2666,9 @@ def test_live_follow_does_not_count_the_same_rejected_visual_frame_twice(tmp_pat
     page._request_live_follow_reanchor = reasons.append
     baseline = page._follow_sync_baseline_captured_at_ms
     assert baseline is not None
-    rejected_capture = int(baseline) + 1_001
+    # Use a fresh capture clock for the synthetic jump.  The rejection test
+    # is about innovation, not about the independent 700ms frame-age gate.
+    rejected_capture = int(time.time() * 1000)
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {"role-a": (25.0, 8.0), "role-b": (120.0, 120.0)}, transform,
     )
@@ -2457,17 +2828,72 @@ def test_dual_target_experiment_waits_for_click_then_controls_both(tmp_path):
         observation.target_position for observation in page._dual_target_observations.values()
     } == {(25.0, 25.0)}
     page.stop_dual_target_experiment()
+
+
+def test_dual_target_start_is_idempotent_and_releases_previous_outputs(tmp_path):
+    page, outputs, _transform = _dual_target_page(tmp_path)
+
+    page.start_dual_target_experiment()
+    page._on_follow_map_click(20, 20)
+    first_outputs = dict(outputs)
+    assert page._dual_target_runtime is not None
+
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page.start_dual_target_experiment()
+
+    assert first_outputs[1].calls[-1] == "stop"
+    assert first_outputs[2].calls[-1] == "stop"
+    assert page._dual_target_runtime is not None
+    assert page._experiment_composition.dual_target_probe.armed
+    page.stop_dual_target_experiment()
+
+
+def test_dual_target_failed_bind_does_not_leave_probe_armed(tmp_path):
+    page, _outputs, _transform = _dual_target_page(tmp_path)
+
+    def fail_bind(_controller):
+        raise RuntimeError("host unavailable")
+
+    page.program_output_factory = fail_bind
+    page.start_dual_target_experiment()
+
+    assert page._dual_target_runtime is None
+    assert page._dual_target_output is None
+    assert not page._experiment_composition.dual_target_probe.armed
+
+
+def test_dual_target_recovery_does_not_consume_frame_start_rejects(tmp_path, monkeypatch):
+    page, outputs, transform = _dual_target_page(tmp_path)
+    page.start_dual_target_experiment()
+    page._on_follow_map_click(25, 25)
+    page._save_dual_target_recovery_context()
+    page.stop_dual_target_experiment(_preserve_recovery=True)
+
+    page._latest_dual_state = DualMotionState(
+        "tracking", "visual", {"role-a": (6.0, 6.0), "role-b": (9.0, 9.0)}, transform,
+    )
+    # The frame is fresh enough for the shared 700ms runtime/start gate, but
+    # old enough to expose the former 1000ms recovery/start mismatch.
+    monkeypatch.setattr(time, "time", lambda: 100.0)
+    page._latest_dual_captured_at_ms = 99_500
+    page._maybe_resume_dual_target_after_relocalization()
+
+    assert page._dual_target_runtime is not None
+    assert page._dual_target_recovery is None
+    page.stop_dual_target_experiment()
     assert all(output.calls[-1] == "stop" for output in outputs.values())
 
 
 def test_dual_target_experiment_releases_arrived_role_independently(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.start_dual_target_experiment()
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._on_follow_map_click(25, 25)
 
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {"role-a": (25.0, 25.0), "role-b": (8.0, 8.0)}, transform,
     )
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._tick_dual_target_experiment()
 
     assert page._dual_target_observations["local-device:role-a"].state is FollowState.ARRIVED
@@ -2501,6 +2927,7 @@ def test_dual_target_experiment_requires_real_visual_capture_timestamp(tmp_path)
 def test_dual_target_experiment_pauses_on_stale_frame_and_resumes_on_fresh_frame(tmp_path):
     page, outputs, _transform = _dual_target_page(tmp_path)
     page.start_dual_target_experiment()
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._on_follow_map_click(25, 25)
     page._latest_dual_captured_at_ms = int(time.time() * 1000) - 2_000
 
@@ -2546,6 +2973,8 @@ def test_dual_target_experiment_replays_target_after_fresh_relocalization(tmp_pa
 
     assert page._dual_target_recovery is None
     assert page._dual_target_runtime is not None
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
+    page._on_follow_map_click(25, 25)
     assert len(page._dual_target_observations) == 2
     assert all(outputs[controller].calls[0] == "start" for controller in (1, 2))
     page.stop_dual_target_experiment()
@@ -2554,6 +2983,7 @@ def test_dual_target_experiment_replays_target_after_fresh_relocalization(tmp_pa
 def test_dual_target_experiment_rearms_arrived_role_on_new_click(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.start_dual_target_experiment()
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._on_follow_map_click(20, 20)
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {"role-a": (20.0, 20.0), "role-b": (8.0, 8.0)}, transform,
@@ -2620,6 +3050,7 @@ def test_dual_target_experiment_stops_both_on_runtime_failure(tmp_path):
 def test_dual_target_experiment_releases_only_stale_role(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.start_dual_target_experiment()
+    page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._on_follow_map_click(25, 25)
     role_a = page._dual_target_roles[0]
     runtime = page._dual_target_runtime
@@ -2637,8 +3068,12 @@ def test_dual_target_experiment_releases_only_stale_role(tmp_path):
 
     page._tick_dual_target_experiment()
 
-    assert page._dual_target_observations[role_a.key].state is FollowState.WAITING_POSITION
-    assert outputs[1].calls[-1] == "stop"
+    # A stale native sample is held as bounded command prediction; the target
+    # controller remains armed until a newer position arrives.
+    assert page._dual_target_observations[role_a.key].state is FollowState.PROGRAM_READY
+    assert page._dual_target_observations[role_a.key].vector != (0.0, 0.0)
+    assert outputs[1].calls[-1][0] == "write"
+    assert outputs[1].calls[-1][1] != (0.0, 0.0)
     assert outputs[2].calls[-1] != "stop"
     page.stop_dual_target_experiment()
 

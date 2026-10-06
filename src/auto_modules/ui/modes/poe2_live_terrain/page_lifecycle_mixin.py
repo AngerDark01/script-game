@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtWidgets import QLabel
+
 from auto_modules.ui.widgets.aspect_preview import AspectPreviewLabel
 from .presenter import frame_pixmap
 
@@ -188,4 +190,3 @@ class Poe2PageLifecycleMixin:
         self.localization_control_dialog.set_ready(
             has_snapshot and self.multiframe_localization_factory is not None
         )
-

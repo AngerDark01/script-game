@@ -171,7 +171,7 @@ def test_optional_closed_loop_shares_one_snapshot_and_publishes_policy_diagnosti
     assert observation.diagnostics["motion_loop_state"] == "open"
 
 
-def test_closed_loop_receives_visual_frame_age_and_stops_on_stale_frame():
+def test_closed_loop_uses_prediction_during_stale_frame_gap():
     identity = MapIdentity("area", "instance-1")
     role = RoleId("local-device", "p2")
     runtime = SimulatedFollowRuntime(
@@ -188,8 +188,8 @@ def test_closed_loop_receives_visual_frame_age_and_stops_on_stale_frame():
 
     observation = runtime.tick(now_ms=700)[role.key]
 
-    assert observation.vector == (0.0, 0.0)
-    assert observation.diagnostics["motion_loop_state"] == "unknown"
+    assert observation.vector != (0.0, 0.0)
+    assert observation.state is FollowState.PREVIEWING
 
 
 def test_closed_loop_command_duration_is_not_replaced_by_slow_tick_interval():
@@ -305,15 +305,15 @@ def test_manual_mode_releases_route_without_touching_other_followers():
     assert result[p2.key].route
 
 
-def test_stale_target_and_map_mismatch_fail_closed():
+def test_stale_target_is_held_and_map_mismatch_still_fails_closed():
     identity, runtime = _runtime()
     follower = RoleId("local-device", "p2")
     runtime.add_follower(follower, _position(follower, identity, (5, 5), now=250), mode=ControlMode.PROGRAM)
     runtime.set_simulated_target((50, 50), now_ms=100)
 
     stale = runtime.tick(now_ms=301)[follower.key]
-    assert stale.reason == "target_position_stale"
-    assert stale.vector == (0.0, 0.0)
+    assert stale.reason == "route_ready"
+    assert stale.vector != (0.0, 0.0)
 
     with pytest.raises(ValueError, match="map identity"):
         runtime.update_follower_position(
@@ -472,6 +472,36 @@ def test_wall_edge_position_recovers_on_first_plan_attempt():
     assert repeated.vector != (0.0, 0.0)
     assert repeated.diagnostics["planning_route_walkable"] is True
     assert repeated.diagnostics["observed_position_metrics"]["collision"] == 255
+
+
+def test_failed_route_cooldown_keeps_motion_alive_with_probe():
+    identity = MapIdentity("area", "instance-1")
+    walls = np.full((32, 32), 255, dtype=np.uint8)
+    role = RoleId("local-device", "p2")
+    runtime = SimulatedFollowRuntime(
+        wall_map=walls,
+        map_identity=identity,
+        arrival_radius=2.0,
+        speed_units_per_second=20.0,
+        downsample_factor=1,
+        inflate_collision=False,
+    )
+    current = (5.0, 5.0)
+    runtime.add_follower(role, _position(role, identity, current), mode=ControlMode.PROGRAM)
+    runtime.set_simulated_target((24.0, 24.0), now_ms=100)
+
+    first = runtime.tick(now_ms=100)[role.key]
+    assert first.reason == "no_safe_route_probe"
+    assert first.vector != (0.0, 0.0)
+
+    # The failed-plan cooldown must not convert the next control tick into a
+    # terminal BLOCKED/zero-output state.  A bounded exploratory pulse keeps
+    # the actor moving until a newer observation makes replanning possible.
+    second = runtime.tick(now_ms=150)[role.key]
+    assert second.reason == "no_safe_route_probe"
+    assert second.state is FollowState.PROGRAM_READY
+    assert second.vector != (0.0, 0.0)
+    assert second.diagnostics["local_controller"]["policy"] == "bounded_cooldown_probe"
 
 
 def test_local_contact_recovery_preempts_repeated_wall_start_pulse():
@@ -724,8 +754,9 @@ def test_route_is_rejected_when_coarse_path_cuts_through_wall():
 
     observation = runtime.tick(now_ms=120)[follower.key]
 
-    assert observation.state is FollowState.BLOCKED
-    assert observation.vector == (0.0, 0.0)
+    assert observation.state is FollowState.PREVIEWING
+    assert observation.reason == "no_safe_route_probe"
+    assert observation.vector != (0.0, 0.0)
 
 
 def test_route_uses_real_wall_values_and_passes_through_opening():
@@ -802,7 +833,9 @@ def test_route_inflates_walls_by_actor_footprint_before_planning():
     body_runtime.set_simulated_target((80, 50), now_ms=100)
     blocked = body_runtime.tick(now_ms=120)[role.key]
 
-    assert blocked.state is FollowState.BLOCKED
+    assert blocked.state is FollowState.PREVIEWING
+    assert blocked.reason == "no_safe_route_probe"
+    assert blocked.vector != (0.0, 0.0)
     assert blocked.diagnostics["route_footprint_radius"] == 3.0
 
 
@@ -1089,6 +1122,36 @@ def test_program_output_uses_closed_loop_command_duration_when_present():
     assert output.calls == [((0.5, 0.0), 160)]
 
 
+def test_program_output_rearms_once_when_host_session_expires():
+    _identity, _runtime_instance = _runtime()
+    role = RoleId("local-device", "p2")
+
+    class FakeOutput:
+        def __init__(self):
+            self.calls = []
+            self.expired = True
+        def start(self):
+            self.calls.append(("start",))
+        def rearm(self):
+            self.calls.append(("rearm",))
+            self.expired = False
+        def write(self, vector, *, elapsed_ms):
+            if self.expired:
+                raise RuntimeError("invalid_argument: Program session expired or was revoked")
+            self.calls.append(("write", vector, elapsed_ms))
+        def stop(self):
+            self.calls.append(("stop",))
+
+    output = FakeOutput()
+    adapter = ProgramFollowOutput({role: output})
+    adapter.arm(role)
+    adapter.apply(FollowObservation(
+        FollowState.PROGRAM_READY, role,
+        RoleId("simulated-device", "remote-leader"), vector=(1.0, 0.0),
+    ))
+    assert output.calls == [("start",), ("rearm",), ("write", (1.0, 0.0), 20)]
+
+
 def test_program_output_applies_registered_vector_transform_before_write():
     _identity, _runtime_instance = _runtime()
     role = RoleId("local-device", "p2")
@@ -1155,15 +1218,18 @@ def test_unreachable_route_is_not_replanned_every_tick_but_retries_after_target_
     attempts = []
     monkeypatch.setattr(runtime, "_plan_safe_route", lambda start, end: attempts.append((start, end)) or None)
 
-    assert runtime.tick(now_ms=100)[role.key].state is FollowState.BLOCKED
+    assert runtime.tick(now_ms=100)[role.key].state is FollowState.PREVIEWING
     runtime.refresh_simulated_target(now_ms=200)
-    assert runtime.tick(now_ms=200)[role.key].state is FollowState.BLOCKED
+    cooldown = runtime.tick(now_ms=200)[role.key]
+    assert cooldown.state is FollowState.PREVIEWING
+    assert cooldown.reason == "no_safe_route_probe"
+    assert cooldown.vector != (0.0, 0.0)
     assert len(attempts) == 1
     runtime.set_simulated_target((35, 35), now_ms=220)
-    assert runtime.tick(now_ms=220)[role.key].state is FollowState.BLOCKED
+    assert runtime.tick(now_ms=220)[role.key].state is FollowState.PREVIEWING
     assert len(attempts) == 2
     runtime.refresh_simulated_target(now_ms=1500)
-    assert runtime.tick(now_ms=1500)[role.key].state is FollowState.BLOCKED
+    assert runtime.tick(now_ms=1500)[role.key].state is FollowState.PREVIEWING
     assert len(attempts) == 3
 
 

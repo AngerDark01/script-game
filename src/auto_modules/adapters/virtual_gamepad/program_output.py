@@ -233,6 +233,17 @@ class ProgramGamepadOutput:
                 {"controller": self.controller, "token": token},
             )
 
+    def rearm(self, *, requested_at_ms=None):
+        """Reacquire a lease whose Host token expired or was revoked.
+
+        The old token is intentionally discarded without a release request:
+        the Host has already invalidated it.  The next ``start`` performs the
+        normal pause/fresh-acquire handshake.
+        """
+        self.token = None
+        self.limiter.reset()
+        self.start(requested_at_ms=requested_at_ms)
+
     def diagnostics(self) -> dict:
         """Return a read-only snapshot of the Host boundary for diagnostics.
 

@@ -43,6 +43,7 @@ class ProgramFollowOutput:
         if vector_transform is not None and not callable(vector_transform):
             raise TypeError("vector_transform must be callable or None")
         self._vector_transform = vector_transform
+        self._rearm_counts: dict[str, int] = {}
 
     def arm(self, role: RoleId) -> None:
         binding = self._require(role)
@@ -65,7 +66,25 @@ class ProgramFollowOutput:
                 # UI timer is only a scheduling cadence and can be different
                 # from the pulse that was selected by the controller.
                 elapsed_ms = max(1, min(300, int(round(command_duration))))
-            return binding.output.write(vector, elapsed_ms=elapsed_ms)
+            try:
+                return binding.output.write(vector, elapsed_ms=elapsed_ms)
+            except Exception as exc:
+                message = str(exc).lower()
+                session_expired = (
+                    "session expired" in message
+                    or "session" in message and "revoked" in message
+                    or "explicit start is required" in message
+                )
+                if not session_expired:
+                    raise
+                rearm = getattr(binding.output, "rearm", None)
+                if not callable(rearm) or self._rearm_counts.get(observation.follower.key, 0) >= 1:
+                    raise
+                self._rearm_counts[observation.follower.key] = (
+                    self._rearm_counts.get(observation.follower.key, 0) + 1
+                )
+                rearm()
+                return binding.output.write(vector, elapsed_ms=elapsed_ms)
         # Send a neutral frame before a hard stop releases the lease, so a
         # stale stick value cannot survive a localization or map failure.
         binding.output.write((0.0, 0.0), elapsed_ms=elapsed_ms)
@@ -77,6 +96,7 @@ class ProgramFollowOutput:
         if role.key in self._armed:
             binding.output.stop()
             self._armed.discard(role.key)
+        self._rearm_counts.pop(role.key, None)
 
     def release_all(self) -> None:
         for key in tuple(self._armed):

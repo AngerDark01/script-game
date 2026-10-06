@@ -834,7 +834,7 @@ class Poe2LiveTerrainPage(QWidget):
     def hideEvent(self, event) -> None:
         self.stop_monitoring()
         if self.capture_test_page is not None:
-            self.capture_test_page.stop_preview()
+            self.capture_test_page.suspend()
         super().hideEvent(event)
 
     def _busy(self, busy: bool) -> None:
@@ -884,6 +884,8 @@ class Poe2LiveTerrainPage(QWidget):
                 int(self._localization_worker is not None)
                 + sum(worker.is_running for worker in self._retired_localization_workers),
             )
+            if self.capture_test_page is not None:
+                self.capture_test_page.suspend()
             return
         if self.capture_test_page is not None:
             self.capture_test_page.shutdown()

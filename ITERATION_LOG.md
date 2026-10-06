@@ -1,5 +1,113 @@
 # Iteration Log
 
+## [第 2026-10-06-7 轮] 2026-10-06 — 文档推导历史缺陷
+
+### A. 阅读前声明
+
+- 目标：`POE2_AUTOFOLLOW_COMPLETE_LOGIC.md` 的启动、同步、恢复、停止描述与历史修复证据对照。
+- 核查：300/700ms 门槛、tracking/degraded、latest-only/revision、到达预测、恢复后输出、页面隐藏/关闭；区分文档逻辑矛盾与源码实现遗漏。
+- 仅记录审查结论，不改运行代码，不发送真实输入。
+
+### C. 对照结果与修正
+
+- `(verified)` 前面列出的运行时代码缺陷在当前工作树已有对应实现和回归覆盖：recovery revision、恢复后的受控 tick、视觉 gap prediction、degraded 恢复门、probe 延后 arm、地图总时长门移除。
+- `(fixed)` 文档修正了三处落后实现的描述：`degraded` 墙体可信帧可作为恢复入口；单独的预测不确定度/700ms 视觉年龄不会直接触发全局重定位；8 秒持续视觉停滞或结合运动证据才进入恢复。
+- `(fixed)` 文档补充了 hint 的年龄/不确定度门槛：遮挡时只有 bounded hint 才发布给 worker，超过门槛仍保留页面侧预测但不发布过期 hint。
+- `(fixed)` 文档把“只有显式停止才终止”的表述限定为实时跟随，并明确独立程序移动探针的状态性结束边界。
+- `(verified)` 本轮未修改运行代码、未发送真实输入；`git diff --check` 通过。后续若修改运行逻辑，必须为对应契约增加离线回归，不以文档替代测试。
+
+### D. 当前结论
+
+本轮没有发现需要再次修改的运行时代码缺陷；剩余差异属于文档曾经把实时跟随和独立程序探针、预测质量和恢复触发条件混写，现已修正。
+
+### C. 对照结论
+
+- `(verified)` 文档中的 `recovery_requested` 边沿、`recovery_revision` 持续状态和 latest-only 丢帧保护，能够直接暴露“恢复边沿被覆盖后页面永远等待”的 bug 类别；这正对应历史 recovery revision 修复。
+- `(verified)` 文档中的 300ms 启动帧门、700ms 运行 TTL 和恢复后 fresh sync 能暴露“恢复入口消费 301–700ms 帧、随后启动入口又拒绝同一帧”的门槛不一致风险；但要确认根因仍需沿调用链对照代码。
+- `(verified)` 文档要求恢复成功后重新 seed、重新 arm 输出并执行受控 tick，能够暴露“tracker 已恢复但 ProgramFollowOutput 没有重新挂载/没有再次写入”的 bug。
+- `(verified)` 文档要求视觉短暂丢失进入 bounded prediction、局部接触由运动证据决定，能够直接暴露旧代码“视觉帧超过 700ms 就释放输出并触发停止/重定位”的矛盾。
+- `(verified)` 文档要求墙体可信的 `degraded` bounded estimate 可以恢复，能够暴露旧代码只接受 `tracking`、导致恢复上下文长期悬挂的问题。
+- `(verified)` 文档的“只有运行时/角色/输出校验成功后才 arm”可暴露旧入口先 arm probe、后校验失败而留下 stale 状态的问题。
+- `(partial)` 文档可以提示 Qt worker 迟到回调、页面隐藏/关闭后仍写 UI 的生命周期风险，但无法单凭文字确定 `QPointer`/`shiboken6` 对象失效或具体崩溃位置；这必须结合线程和 Qt 回调代码。
+- `(not inferable)` 30 秒地图总时长硬停止、mixin 隐式导入 `NameError` 等实现级缺陷，旧文档没有足够事实直接推出，只能在“无地图总时长限制”的契约与源码对照时发现。
+
+### D. 结论
+
+文档更适合作为“契约矛盾检测器”：它能暴露状态机、时间门、恢复闭环和输出生命周期的违反项；不能替代源码调用链、日志和回放来定位所有实现级 bug。当前自动跟随文档已包含上述历史修复后的契约和边界。
+
+## [第 2026-10-06-3 轮] 2026-10-06 — 全链路回归收口
+
+### A. 本轮目标
+
+完成上一轮已定位修复后的实验页回归，并排查除 `recovery_required` 边沿问题外的生命周期、输出、预测保持、重定位恢复和 Qt 日志崩溃风险；不发送真实游戏输入。
+
+### C. 结果与证据
+
+- `(fixed)` 新增关闭生命周期测试插入位置错误：原监控窗口测试的 `first.preview_timer`/可见性断言已归回原函数，日志 handler 测试不再引用跨函数变量。
+- `(verified)` `Poe2CaptureTestPage.closeEvent()` → `shutdown()` 会停止实验 timer、释放 output、关闭监控窗口并移除 `_UiLogHandler`；handler 和 `_append_session_log()` 在页面或 `QPlainTextEdit` Qt 对象无效时直接返回，后台迟到日志不会触发 Qt abort。
+- `(verified)` 双人同目标启动/恢复使用统一 700ms frame-age 门；启动异常会 stop 已创建 output，probe 只在 runtime/角色/output 全部成功后 arm；重复启动先释放旧 runtime/timer/output。
+- `(verified)` 程序移动探针删除所有总时长硬停止；视觉短暂过期进入有界预测保持，接触恢复、失焦、显式停止和页面关闭仍可释放输出。
+- `(verified)` 专项回归：capture page `104 passed`（含 suspend/shutdown 生命周期）；`tests/poe2_live_terrain` `422 passed`；目录外 PoE2 UI/worker/探针 `167 passed`；`python -m compileall -q src` 通过；`git diff --check` 通过（仅有 CRLF 转换提示）。
+- `(verified)` 人工链路复核覆盖初始化、地图/首帧、双人 worker、单人/双人跟随、双人同目标、点击移动、输出租约、stale/degraded/occlusion、局部接触恢复、全局重定位、fresh resume、hide/close/shutdown 和日志 handler 脱离。未发现第二套运动/寻路实现或新的稳定性缺陷。
+- `(fixed)` 追加人工对照时发现点击目标跟随 recovery 仍使用 `1000ms`，而恢复后实际 `start/tick` 使用 `700ms` runtime TTL；已统一为 `_FOLLOW_RUNTIME_MAX_FRAME_AGE_MS`，并新增 700–1000ms 边界测试，防止恢复消费后下一 tick 再拒绝同一帧。
+- `(fixed)` 生命周期审查发现 `suspend()`/`shutdown()` 原先只停止视觉 worker 和程序移动，未显式停止 follow/dual-target timer 与 output；现已统一在隐藏页和关闭页释放所有程序输出，补充 suspend/shutdown 回归。
+
+### D. 文档同步
+
+- `CODEBASE.md` 已修正双人同目标/点击跟随恢复门、程序探针时长策略、视觉 gap 保持和 logger 生命周期描述。
+- `docs/POE2_EXPERIMENT_REFACTOR_TASK.md` 已追加 C4/C5 收口证据、测试结果和未决实机边界。
+
+### E. 未决风险与下一步
+
+- 本轮没有发送真实手柄/游戏输入，因此不能把离线回归表述为实机移动验收。
+- 全仓历史失败仍需单独运行环境隔离处理：`pydirectinput` distribution metadata 缺失，以及虚拟手柄 Qt 跨套件 backoff 时序波动；两者不在 PoE2 专项套件内。
+- 全仓实测为 `1101 passed, 2 skipped, 2 failed`；虚拟手柄 backoff 用例单独重跑通过，判定为跨套件时序波动；另一失败为环境缺少 `pydirectinput` distribution metadata。
+- 若用户后续明确授权实机测试，先采集启动后 Host ownership、首次非零输出、游戏前台状态和视觉实际位移，再针对输入消费边界做最小实验。
+
+## [第 2026-10-06-4 轮] 2026-10-06 — 地图运行取消总时长限制
+
+### A. 本轮目标
+
+用户要求完整跑完一张地图，不能因总运行时长停止。检查 PoE2 程序移动/跟随链路中的总时长硬门，并保持每帧新鲜度、前台、地图实例、显式停止和输出异常等操作安全边界。
+
+### C. 发现与修复
+
+- `(fixed)` `_tick_program_move_probe()` 的旧实现曾保留可注入 `_program_probe_max_duration_ms` 时长门。该门即使默认未设置，也允许外部配置把整张地图运行按时间截断；现在完全移除。程序移动仅在到达/明确状态、失焦、地图/重定位失败、显式停止或页面生命周期结束时退出。
+- `(fixed)` 物理拆分后的 `probe_mixin.py` 真实程序移动入口缺少 `QMessageBox`、`find_process_id`、`find_process_window`、`is_process_foreground` 的模块级导入；离线测试未覆盖到真实入口时会隐藏 `NameError`。已补齐显式依赖。
+- `(verified)` 新增长时运行回归：将程序探针起始时间设为 24 小时前，并注入遗留 duration 属性，tick 仍正常 apply，不调用 release/stop。
+- 保留的时间值均为局部安全契约：视觉帧龄 TTL、Host command TTL、恢复冷却和 worker join timeout 不限制整张地图运行时长；它们只控制单帧有效性、单次恢复和线程清理。
+
+### D. 验证状态
+
+- `(verified)` capture page `105 passed`；`tests/poe2_live_terrain` `422 passed`；`python -m compileall -q src` 通过；`git diff --check` 通过（仅 CRLF 转换提示）。
+- `(verified)` 24 小时旧起始时间 + 遗留 duration 属性的长运行回归仍保持 output apply，未触发 elapsed stop；未发送真实游戏输入。
+- `(fixed)` 模块级 `F821` 审查发现 mixin 拆分后的真实入口仍依赖旧页面隐式导入；已为 `probe_mixin`、`dual_motion_mixin`、`localization_mixin`、`page_lifecycle_mixin` 补齐运行时/Qt/窗口/类型依赖。
+- `(verified)` `ruff check --select F821 src/auto_modules/ui/modes/poe2_live_terrain` 通过；顺序执行 capture page `105 passed`、PoE2 专项 `422 passed`、`compileall` 和 `git diff --check` 均通过。
+
+## [第 2026-10-06-2 轮] 2026-10-06
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`（审查所有实验入口、tick、停止和异常边界）
+- `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py`（审查恢复、重定位、worker/timer 生命周期）
+- `src/auto_modules/ui/modes/poe2_live_terrain/dual_motion_mixin.py`（审查双人帧路由、generation、恢复边界）
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_follow/runtime.py`（审查目标、到达、路径和卡墙状态）
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_follow/command_role_tracker.py`（审查预测、视觉创新和速度融合）
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_follow/program_output.py`（审查输出和资源释放）
+
+**本轮想弄清楚：** 除已修复的 `recovery_required` 边沿、degraded 恢复和 300ms 新鲜度问题外，是否仍存在会导致功能不可用、频繁停止/重定位、状态错乱、异常退出、输入未释放或性能退化的链路缺陷；先用代码、测试和离线回放确认，不发送真实游戏输入。
+
+### C. 本轮发现（第一批）
+
+- `(verified)` `probe_mixin._maybe_resume_dual_target_after_relocalization()` 使用 1000ms 恢复帧门，而 `capture_test_page.start_dual_target_experiment()` 使用 700ms 启动门；在 301–1000ms 的窗口内会清空恢复上下文后启动失败，双人同目标无法恢复。
+- `(verified)` `start_dual_target_experiment()` 在地图/角色/输出校验后立即 arm `dual_target_probe`，但输出绑定和 `runtime.add_follower()` 仍可能抛异常；失败路径没有统一 stop probe，残留 armed 状态会污染下一次点击。
+- `(verified)` `start_dual_target_experiment()` 没有像 `start_follow_experiment()` 一样清理已有 runtime/timer/output；重复启动或恢复回调重入会覆盖旧 output 引用并留下旧租约。
+- `(verified)` `probe_mixin._tick_program_move_probe()` 仍有 30 秒硬停止，以及视觉帧过期/角色位置暂时为空即终止的分支；这与“短暂丢帧靠预测/重定位保持会话”的运动契约不一致，下一批单独验证其恢复能力。
+
+**修订的旧结论：** 先前人工链路审查只覆盖了普通跟随的启动/恢复顺序，未覆盖双人同目标的启动异常、重入和恢复时间门，也未把程序移动探针的硬超时纳入“非终止恢复”契约。
+
+**下一步：** 为前三项新增最小回归测试，修复启动清理和统一恢复新鲜度；随后单独审查程序移动探针的丢帧、重定位冷却和超时行为。
+
 ## [2026-09-24] PoE2 首帧 75% 锚定门槛实机复验
 
 - 根因：最新 300px 首帧候选的内存锚点误差仅 0.325px、人物在可行走区域、方向 225°/比例 0.77 正常，但综合 confidence 0.786 被 PoE2 业务门槛 0.80 拒绝；图像分数 0.396、forward coverage 0.509 也被原视觉质量门槛拦截。
@@ -9510,3 +9618,291 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `git diff --check`：通过。
 - 仓库全量 pytest：`1089 passed, 2 skipped, 1 failed`；唯一失败为环境缺少 `pydirectinput` distribution metadata 的既有 packaging 测试，与本次 PoE2 改动无关。
 - 人工审查确认：所有真实设备动作仍只发生在 UI/Host adapter 边界；headless/fake/replay 测试不发送真实输入。
+# 2026-10-06 — 04:25–04:30 会话根因复核（诊断阶段）
+
+- 证据范围：`data/logs/poe2_live_terrain.log`，`2026-10-04 03:04:10–03:04:40`。
+- `DexFourb` 长时间 `identity_dropout_failures` 增长，墙体质量仍可接近 1.0；状态持续 `recovery_required`，但 `recovery=False`，页面只进入 `live_role_follow.waiting`。
+- 恢复闭环日志完全缺失：没有 `dual_motion.recovery`、`recovery_claimed`、双人首帧 worker 或 fresh resume。
+- 代码追踪：`DualVisualTracker._failed()` 的 recovery 事件是一次性边沿；latest-only `Poe2DualMotionWorker` 通过 pending revision 传递该边沿；页面 `_drain_dual_motion_worker()` 只消费 pending/recovery_requested。当前风险是 recovery 边沿丢失或 tracker 已粘在 `recovery_emitted` 后，持续 recovery_required 不再触发页面重定位。
+- 状态：未修改代码；下一步对照成功会话并添加最小回放测试，验证 pending revision、worker generation 和 tracker reset 顺序。
+
+# 2026-10-06 — recovery_required 边沿丢失修复
+
+- 修复 `capture_test_page`/`dual_motion_mixin`：按 tracker generation 保存已处理 recovery revision；当 latest-only worker 覆盖了 `recovery_requested=True` 的边沿，但仍收到更高 revision 的 `recovery_required` 状态时，页面兜底触发一次恢复。
+- 新 tracker 启动时清零 revision；同一 revision 后续帧只进入等待/预测，不会重复触发昂贵重定位。
+- 新增页面回归：`test_persistent_recovery_state_recovers_when_edge_flag_was_overwritten`。
+- 验证：页面/PoE2 聚焦测试 `524 passed`；`compileall` 通过；`git diff --check` 通过。
+
+# 2026-10-06 — 自动跟随完整逻辑文档化
+
+### C. 本轮发现
+
+- 已逐层核对页面入口、双人视觉 worker/tracker、冷启动同步、目标样本、命令预测、路径规划、局部控制、手柄输出、前台保护、局部脱困和全局重定位。
+- 产出：[docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md](docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md)，按正常链路、异常链路、状态机、参数契约和日志阅读顺序描述当前实现。
+- 明确记录的关键边界：预测位置不能单独确认到达；Host 提交不等于游戏消费；墙体质量和角色 marker 可见性独立；恢复是 episode + revision + cooldown，而不是每帧触发。
+- CODEBASE.md 已增加文档入口，未修改运行代码。
+
+### 覆盖进度更新
+
+| 文件 | 前状态 | 现状态 | 本轮结论 |
+|---|---|---|---|
+| `capture_test_page.py` | 深度完整 | 深度完整 | 已核对启动、tick、目标样本、前台门控、输出、停止和恢复入口 |
+| `dual_motion_mixin.py` | 深度完整 | 深度完整 | 已核对 worker、latest-only、generation、recovery revision 和恢复重启 |
+| `dual_motion.py` | 深度完整 | 深度完整 | 已核对墙体匹配、marker assignment、保持窗口和 recovery 状态 |
+| `multiplayer_follow/runtime.py` | 深度完整 | 深度完整 | 已核对 TTL、到达、A*、局部控制、接触恢复和 BLOCKED |
+| `command_role_tracker.py` | 深度完整 | 深度完整 | 已核对视觉锚点、输出预测、创新判断、速度更新和 rebase |
+| `program_output.py` | 深度完整 | 深度完整 | 已核对 arm/apply/neutral/release 的输入边界 |
+| `POE2_AUTOFOLLOW_COMPLETE_LOGIC.md` | 新增 | 深度完整 | 当前自动跟随逻辑的文字权威说明 |
+
+### 下一步
+
+用户审阅文档后，按文档中的人工审查清单指出需要调整的状态、阈值或异常边界；在收到具体决策前不继续改运行代码。
+# 2026-10-06 — 自动跟随完整逻辑文档化（阅读前声明）
+
+### A. 本轮目标
+**目标文件/符号：**
+- `capture_test_page.py::start_follow_experiment/_tick_follow_experiment_impl`：确认自动跟随入口、目标源、状态和输出边界。
+- `dual_motion_mixin.py::_start_dual_motion/_drain_dual_motion_worker`：确认双人视觉定位、恢复和 worker 路由。
+- `experimental/multiplayer_localization/dual_motion.py`：确认视觉 tracker、角色丢失和恢复状态机。
+- `experimental/motion/simulated_follow_runtime.py`、`core/routing/local_controller.py`：确认路径规划、局部控制、卡墙和到达判断。
+- `program_output.py`、`command_role_tracker.py`：确认程序手柄输出、预测与视觉融合。
+
+**本轮想弄清楚：** 当前 PoE 自动跟随从点击/启动到移动、视觉更新、异常恢复、重定位、停止的完整实际链路；文档只描述处理原理，不复述源码。
+
+# 2026-10-06 — 全链路回归取证与待修复边界
+
+- 运行 PoE2 聚焦测试和虚拟手柄 UI 测试；虚拟手柄套件独立通过，PoE2 套件在全量事件循环下有 3 个时序性失败，恢复测试单独运行通过。
+- 已确认恢复函数在 fresh frame 后只同步 tracker，没有立即执行一次输出 tick；因此出现“恢复日志有了、输出 start 没有”的断点。
+- 已确认 `frame_is_stale` 在 700ms 后直接释放跟随输出并返回，绕过命令预测和运动层接触证据；这是视觉延迟导致卡住/频繁重定位的真实风险。
+- 双人同目标的过期帧保护本身正确；测试替换状态时未更新 `_latest_dual_captured_at_ms`，暴露出状态/时间戳必须作为原子帧契约传递。
+- 下一步按系统化调试最小修改：恢复后一次受控 tick；视觉过期预测保持；新增回归后再检查 shutdown/timer/worker 生命周期。
+
+# 2026-10-06 — 视觉间隙预测保持与恢复输出修复
+
+- 修复 `_tick_follow_experiment_impl`：超过视觉 TTL 的帧进入 prediction hold，继续使用 `target_hold`/`command_prediction` 更新 runtime；不再仅因一帧延迟释放手柄。恢复阈值仍由视觉停滞计时器和运动层证据控制。
+- 修复 `_maybe_resume_dual_follow_after_relocalization`：fresh frame 同步成功后立即执行一次受控 follow tick，确保恢复日志后出现 `output_armed/output_accepted`。
+- 修复冷启动完整 marker 门槛：新鲜墙体可信但单个角色 marker 暂时缺失时，使用已确认首帧 seed 进入 `sync_degraded`，缺失角色走 bounded prediction，避免首次视觉延迟把跟随卡在冷启动。
+- 新增页面生命周期 `suspend()`，宿主隐藏/延迟关闭时停止跟随、双人目标、截图 worker 和输出租约，避免后台 Qt timer 串扰其他页面；`shutdown()` 仍为终止清理。
+- 为 preview/hybrid/program-probe/follow/dual-target/dual-motion/multiframe timer 增加顶层隐藏保护回调；无 parent 且未显示的实验页由真实 timer 自动 suspend，直接手动 tick 的离线测试仍保持可控。
+- 为无时间戳视觉间隙增加本地时钟兜底，同时保留 stale 标志，避免 `int(None)` 崩溃或误当 fresh frame。
+- 更新并新增回归：预测保持、缺失时间戳、恢复后重新 arm、创新拒绝与双人目标重置均通过。
+- 下一步：完成 shutdown、singleShot recovery retry、retired worker 生命周期审查，并运行全量验证。
+
+## [第C4补充审计] 2026-10-06
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py`：检查首帧恢复后跟随和双人同目标的状态门槛。
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`：对照恢复调用链、输出重新挂载和生命周期入口。
+- `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_localization/dual_motion.py`：确认恢复后 `degraded` 帧的墙体可信度和角色估计契约。
+- `tests/test_poe2_capture_test_page.py`：补齐恢复后 marker 暂缺的回归场景。
+
+**本轮想弄清楚：** 除 `recovery_required` 边沿外，恢复首帧是否会因合法的 `degraded` 状态而永远不恢复；并检查初始化、输出、停止和页面隐藏路径是否存在同类终止或资源泄漏。
+
+### C. 本轮发现
+**关键发现：** (verified) `probe_mixin.py::_maybe_resume_dual_target_after_relocalization()` 与 `_maybe_resume_dual_follow_after_relocalization()` 原先只接受 `status == "tracking"`；`capture_test_page.py::_sync_live_follow_from_fresh_frame()` 对 `degraded` marker 只要 `visible=False` 就拒绝，即使墙体注册可信且角色仍有 `available=True` 的 bounded estimate。这会把合法的恢复首帧挂在 recovery context 上，阻断双人同目标和实时跟随恢复。
+
+**修复：** 新增 `_recovery_frame_usable()`，仅在 `degraded + wall_trusted + 所需角色均有位置估计` 时放行；同步阶段将该状态下 `available=True` 的有界角色估计作为锚点。保留地图实例、角色位置、捕获时间和 `recovery_requested` 校验，没有把不可信帧当成恢复成功。
+
+**验证：** 新增并通过两个恢复回归（同一 runtime 原地重锚、恢复重建首帧 degraded）；相关聚焦测试 `3 passed`（含既有原地重锚测试）。全仓此前结果为 `1091 passed, 2 skipped, 2 failed`：`pydirectinput` 缺 distribution metadata，以及虚拟手柄一个跨套件 Qt backoff 时序测试；虚拟手柄套件独立运行 `22 passed, 1 subtest passed`。
+
+**修订旧结论：** 原来认为恢复只需等待 `tracking`；现在确认 `degraded` 只要墙体可信且角色估计有界，也属于可安全恢复的中间状态。
+
+**追加发现：** (verified) 实时恢复入口原来用 700ms 判断“可恢复”，随后调用 `start_follow_experiment()` 又用 300ms 判断“可启动”，导致 301–700ms 的帧先进入恢复、再被启动入口拒绝，并消费掉恢复上下文。现已统一实时恢复使用 300ms；超龄帧保留 context 等下一帧。程序移动恢复也共用 degraded 安全帧门槛。
+
+**追加发现 2：** (verified) `start_follow_experiment()` 原先在定位/角色/输出校验前就 arm `FollowProbe`；无效点击启动会留下过期目标源状态。现改为 runtime、角色和 output 全部构造成功后再 arm，并增加无定位上下文回归。
+
+**覆盖进度更新：**
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|------|-------|-------|---------|------|
+| `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py` | 深度完整 | 深度完整 | 2 | 恢复门槛统一到 `_recovery_frame_usable()`，双人同目标和实时跟随共用安全放行条件。 |
+| `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py` | 深度完整 | 深度完整 | 2 | 跟随恢复同步接受墙体可信的有界 degraded marker 状态；仍保留新鲜度与输出边界。 |
+| `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_localization/dual_motion.py` | 深度完整 | 深度完整 | 2 | 确认 `available`/`wall_trusted` 的状态契约和恢复估计来源。 |
+| `tests/test_poe2_capture_test_page.py` | 深度完整 | 深度完整 | 2 | 增加恢复首帧 degraded 的原地与重建回归。 |
+
+**下一轮计划：** 运行完整 PoE2 聚焦回归、compileall、diff check；再做一次人工状态机审查，确认所有自动 recovery 只进入非终止状态，显式 stop/hide/shutdown 才释放输出。
+
+## [SYNC] 2026-10-06 — 恢复状态与探针生命周期补全
+
+### A. SYNC 范围声明
+**触发任务：** 全面审查已知 recovery_required 问题之外的 PoE2 实验链路，补齐恢复状态和生命周期边界。
+**直接变更文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py`
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`
+- `tests/test_poe2_capture_test_page.py`
+- `docs/POE2_EXPERIMENT_REFACTOR_TASK.md`
+- `CODEBASE.md`
+**预计连带影响：** 双人同目标/实时跟随/程序移动恢复门槛、角色 marker 暂缺时的同步、FollowProbe arm 生命周期、页面 recovery context 和相关回归。
+
+### C. SYNC 结果
+**连带重读文件：** `probe_mixin.py`、`capture_test_page.py`、`dual_motion.py`、`command_role_tracker.py`、`multiplayer_follow/runtime.py`、`program_output.py`、`dual_motion_mixin.py`。
+**关键变更：**
+- 新增 `_recovery_frame_usable()`，统一 `tracking` 与可信 bounded `degraded` 恢复门槛；双人同目标、实时跟随、程序移动共用该契约。
+- 实时恢复统一 300ms 新鲜度；超龄帧保留 recovery context，不再被启动入口消费后丢失。
+- degraded 同步只接受非领队角色的 `available` 有界估计；手动领队 marker 缺失继续使用 `target_hold`，不会把异常 `players` 坐标写成新目标。
+- FollowProbe 延后到 runtime、角色和输出创建成功后 arm；无效启动不会留下 stale armed 状态。
+**验证：** PoE2 页面与实验全套 `519 passed`；虚拟手柄 UI 独立套件 `47 passed, 1 subtest passed`；`python -m compileall -q src` 和 `git diff --check` 通过。
+**全仓边界：** `pytest -q` 得到 `1096 passed, 2 skipped, 2 failed`。失败仍为环境缺少 `pydirectinput` distribution metadata，以及虚拟手柄一个跨套件 Qt backoff 时序测试；该套件单独运行稳定通过，非 PoE2 专项回归。
+**人工审查：** 初始化无上下文不启动；旧 generation 帧丢弃；首帧/恢复每 revision 单次内存读取；视觉短暂丢失使用 prediction；恢复是非终止 episode；fresh frame 重新 arm；显式 stop、hide、shutdown 清理 timer/worker/output；单人、双人、同目标共用 `SimulatedFollowRuntime` 与 `ProgramFollowOutput`。
+# 2026-10-06 — 自动跟随算法原理补充（阅读前声明）
+
+### A. 本轮目标
+**目标文件/符号：**
+- `docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md`：补充公式、评分函数、状态判定和算法输入输出。
+- `dual_first_frame_experiment.py`、`dual_motion.py`：核对几何变换、墙体位移和 marker assignment 原理。
+- `command_role_tracker.py`、`runtime.py`、`core/routing/local_controller.py`：核对预测、路径评分、局部控制和接触恢复的实际计算。
+
+**本轮想弄清楚：** 上一版文档已经说明执行链，但需要把每个主要算法的“数据→计算→判定→输出”讲清楚，让用户可以不用读代码判断参数和逻辑是否合理。
+
+## 2026-10-06 — 自动跟随算法原理补全（完成）
+
+- 在 `docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md` 新增 10A 原理章节。
+- 逐项解释双人首帧相似变换、墙体位移、marker assignment、命令预测与视觉校正、A* 多尺度路线、局部方向评分、撞墙证据、到达/TTL、recovery episode、速度校准和参数耦合。
+- 公式均按当前源码核对，特别说明：预测位置不能单独证明到达；视觉短暂丢失和 recovery 不是用户停止。
+- 本轮没有修改运行代码，没有发送真实输入；需执行差异检查后交付文档。
+
+## [第 2026-10-06-5 轮] 2026-10-06 — 完整地图运行契约复核
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py`（确认程序移动没有第二个地图级总时长停止点）
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`（确认入口、计时器、停止原因只保留局部安全边界）
+- `src/auto_modules/features/poe2/live_terrain/experimental`（搜索遗留 max duration / timeout 语义）
+
+**本轮想弄清楚：** 上一轮移除了探针的 30 秒总时长门后，是否仍有配置、调用链或页面状态机在整张地图运行期间按 elapsed time 停止；验证“完整跑图直到目标/明确安全边界”的契约。
+
+### C. 结果与证据
+
+- `(verified)` CodeGraph 调用链确认 `_tick_program_move_probe()` 的运行时间只用于停止摘要 `elapsed_ms`；没有 elapsed/max-duration 分支，`_program_probe_max_duration_ms` 也不再被读取。
+- `(verified)` 当前程序移动停止入口只对应前台失焦、定位/地图上下文失效、视觉帧超过单帧 TTL、Host 输出异常、运行状态明确完成/阻塞、用户操作和页面生命周期；这些均为局部安全或明确状态边界，不是地图级总时长限制。
+- `(verified)` 全部遗留 duration/timeout 搜索未发现新的地图级运行时长门；10 秒值只用于用户确认后切回游戏窗口的输入前等待，Host TTL 只约束单次手柄报告。
+- `(verified)` 回归：`tests/test_poe2_capture_test_page.py` `105 passed`；`tests/poe2_live_terrain` `422 passed`；`python -m compileall -q src` 通过；`ruff check --select F821 src/auto_modules/ui/modes/poe2_live_terrain` 通过；`git diff --check` 通过（仅 CRLF 转换提示）。
+- `(verified)` 长运行回归仍覆盖 24 小时旧起始时间并注入遗留 duration 属性，tick 继续 apply、没有 elapsed stop；本轮没有发送真实游戏输入。
+
+### D. 文档同步
+
+- `docs/POE2_EXPERIMENT_REFACTOR_TASK.md` 已保留并确认“地图完整运行契约补充”；`CODEBASE.md` 已包含程序移动长运行边界和 mixin 依赖说明。
+
+### E. 当前结论与下一步
+
+- 当前代码满足“地图运行不因总时间自动停止”的要求。真实跑图仍会在到达、明确阻塞、失焦、定位/地图实例失效、Host 异常、用户停止或页面关闭时结束。
+- 未授权且未执行实机输入；若用户进行实机长跑，重点观察 `step=program_probe.stop_summary reason=... elapsed_ms=...`，其中 `elapsed_ms` 是事后诊断字段，不是停止条件。
+
+## [第 2026-10-06-6 轮] 2026-10-06 — 自动跟随逻辑文档与实现对照
+
+### A. 本轮目标
+
+**目标文件：**
+- `docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md`（核对算法原理、时间契约、状态机和停止语义）
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`（核对最近跟随/长运行修改的实际边界）
+- `src/auto_modules/ui/modes/poe2_live_terrain/probe_mixin.py`（核对独立程序移动探针的停止语义）
+
+**本轮想弄清楚：** 自动跟随说明是否仍准确反映当前代码，尤其是 6 秒跟随输入等待、10 秒前台/恢复等待、无地图级总时长限制，以及实时跟随与独立程序移动探针的不同终止边界。
+
+### C. 结果与证据
+
+- `(fixed)` 文档已明确记录：地图级运行没有总时长上限，`elapsed_ms` 只是停止摘要诊断字段；视觉帧龄、Host TTL、恢复 cooldown 和 worker join timeout 不是地图计时器。
+- `(fixed)` 文档已将 6 秒跟随输出启动等待、独立程序移动探针 10 秒前台确认等待、恢复重定位 10 秒 cooldown 分开说明，避免把局部等待误读成地图时限。
+- `(fixed)` 文档已区分实时跟随和独立程序移动探针：实时跟随的 `BLOCKED`/恢复通常释放输出并保留会话；独立探针对 `arrived`、`blocked`、`waiting_position`、`map_mismatch` 会结束本次探针，但同样没有总时长停止。
+- `(verified)` 代码对照确认：`_FOLLOW_COMMAND_ARM_DELAY_MS=6000`；`_FOLLOW_FOREGROUND_WAIT_MS=10000`；`_DUAL_RECOVERY_COOLDOWN_MS=10000`；`_program_probe_started_at_ms` 仅用于停止摘要。
+- `(verified)` `git diff --check` 通过；本轮只修正文档，没有修改运行代码、没有发送真实输入。
+
+### D. 文档同步
+
+- `docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md` 已更新时间契约、输入延迟、BLOCKED 语义、状态图说明、停止含义和人工审查清单。
+- 本轮无需修改 `CODEBASE.md`：源代码职责和调用链未变化。
+
+### E. 下一步
+
+- 若后续继续优化，优先用 `program_probe.stop_summary` 的明确 reason 区分探针状态结束和实时跟随会话恢复，避免再次把局部状态误解为地图级超时。
+- `(verified)` 22:50 后两次真实跟随会话已完成异常审计；排除了 22:53 后 `Area/role-a/role-b` 回归桩日志。
+- `(verified)` 发现局部路线短暂 blocked（约 1.8–2.9 秒自恢复）、短视觉遮挡（约 1.08–2.58 秒，不重定位）、角色长期/交替丢失（触发 recovery_required）。
+- `(verified)` 会话 1 一次恢复 worker 14.337 秒、约 16.47 秒回到 tracking；用户停止发生在恢复期间。会话 2 一次恢复 worker 22.457 秒、约 23.43 秒 fresh_sync；最后一次候选 score 约 0.877、shape_quality 约 0.386，未完成可信 reanchor。
+- `(verified)` 当前门槛：marker grace 2 帧、失败 3 次进入 recovery、hold 2,000 ms/uncertainty ≤10、最大 marker step 45 px、identity margin 2、recovery cooldown 10 s；墙体可信与角色可用性独立。
+- `(finding)` 主要异常是角色颜色/遮挡造成 marker dropout，全局恢复成本是主要性能瓶颈；异步恢复回调与用户停止/session token 边界需后续审查。
+- `(scope)` 本轮只读日志和 evidence.json/raw.png，不改运行时代码、不发送真实输入；详见 `docs/POE2_EXPERIMENT_REFACTOR_TASK.md` 的异常审计章节。
+
+## [第 2026-10-06-8 轮] 2026-10-06 — marker 丢失继续跟随与恢复边界
+
+- `(decision)` 图色丢失是观测降级，不是跟随终止；继续使用大地图最后可信坐标、命令位移和速度模型，视觉恢复后再校准。
+- `(fixed)` 在 `dual_motion_mixin.py` 增加 marker-only recovery 判定；墙体可信且仅角色 marker 丢失时，不重启全局首帧 worker、不释放实时跟随输出。
+- `(fixed)` 在 `capture_test_page.py` 放宽实时跟随状态门：marker-only `recovery_required` 允许进入跟随预测路径；地图/墙体失效和运动层恢复证据仍保持原恢复入口。
+- `(fixed)` 兼容 `_failed()` 的恢复诊断：marker-only 状态有时没有 `wall_trusted` 字段，改用 `role_observations` 作为角色丢失证据，显式 `wall_trusted=false` 仍禁止续行。
+- `(fixed)` 实时 reanchor 先走 `DualVisualTracker.request_local_correction()`；复用已确定的方向/比例和局部 matcher，运行时不再读内存、不再重做全局首帧。局部 matcher 明确失败后才允许升级。
+- `(verified)` 新增局部重锚测试；双人运动与跟随恢复相关测试 `27 passed`，`compileall` 和 `git diff --check` 通过。
+- `(verified)` 相关组合测试 127 passed；双人同目标一个时序用例组合运行时波动，单独重跑 passed。尚未发送真实输入。
+- `(risk)` 全局重定位耗时的主要降低来自减少 marker-only recovery 触发；真正地图/墙体失效时仍可能需要 14–23 秒首帧恢复，后续再优化 worker 的局部重锚和异步结果合并。
+
+## [第 2026-10-06-9 轮] 2026-10-06 — no_safe_route_cooldown 不再停止移动
+
+- `(finding)` `no_safe_route_cooldown` 原本只是上一次路线规划失败的 1 秒缓存，却被直接映射成 `BLOCKED`，导致输出释放和人物停住；不能把栅格失败等同于现实无路。
+- `(fixed)` 冷却期间改为 `no_safe_route_probe`：输出 100ms 有界侧向/前向探索脉冲，利用目标方向、上次输入和小地图左右空闲量，下一帧继续重规划。
+- `(verified)` 跟随运行时测试 `60 passed`；新增冷却期非零输出用例；未发送真实输入。
+
+## [第 2026-10-07-10 轮] 2026-10-07 — 人物不动路径全量审查
+
+- `(finding)` 运行时会造成无输出的主要分支是首次 `no_safe_route`、冷却期 `no_safe_route_cooldown`、`stalled_no_escape`、`contact_relocalization_required`、零向量 `route_not_progressing`，以及位置/目标 TTL 过期。
+- `(fixed)` 上述分支统一改为有界探索脉冲或低置信预测保持；只有未初始化目标、地图实例不一致、确认到达和页面/前台安全边界保留停止。
+- `(verified)` 跟随运行时 `60 passed`，双人运动 `25 passed`，compileall 和 diff check 通过；capture page 仅剩一个已知双人同目标重启动作时序波动，单独运行通过。
+- `(risk)` 真实游戏前台失焦仍会释放输出，这是安全边界；地图实例切换仍需重新初始化，不能用旧地图继续控制。
+- 2026-10-07 — 00:22–00:23 实机异常只读取证：确认虚拟手柄 program session expired/revoked、候选存在但 assignment.options 为空、目标落在 wall/collision 栅格、worker 超周期丢帧和双 marker 长时丢失；证据与截图路径已写入 `docs/POE2_EXPERIMENT_REFACTOR_TASK.md`，未修改运行代码、未发送输入。
+- 2026-10-07 — 跟随稳定性首批实现：新增动态 marker association、局部可行走目标投影、program session 单次 rearm 和 worker 自适应节流；关联/投影/跟随/双人/虚拟手柄聚焦测试通过，页面时序用例单独重跑通过。
+- 2026-10-07 — PoE2 实验全量回归 `429 passed`；同步更新 stale visual replay 断言，确认视觉短暂过期继续使用有界预测输出。
+
+## [第 2026-10-07-11 轮] 2026-10-07 — 三层稳定性方案收口
+
+- `(implemented)` 双人 marker assignment 增加 pair geometry 软评分和诊断，避免颜色候选冲突导致身份整体拒绝。
+- `(implemented)` 目标坐标投影增加局部开放比例/clearance 评分，中心栅格误差时选择局部更稳的可行走点。
+- `(implemented)` no-safe-route 冷却与 stalled 分支改为六向局部自由空间评分脉冲，始终保持有界输出并下一帧重评估。
+- `(verified)` 关联、投影、跟随 runtime、双人 motion `90 passed`；PoE2 专项 `431 passed`；页面专项单独运行 `105 passed`；compileall/diff-check 通过。
+- `(finding)` 页面专项全量组合的 4 个 dual-target Qt 时序用例仍会偶发失败，但四个用例单独运行全部通过，未形成稳定回归；需在后续页面测试隔离中处理。
+- `(next)` 等待用户明确授权后进行实机验证；记录 pair geometry、projection、probe、session rearm 和 worker EMA/drop 诊断。
+
+## [第 2026-10-07-12 轮] 2026-10-07 — 最新实机异常只读审计
+
+### A. 本轮目标
+读取最新 PoE2 跟随日志、occlusion evidence 和 raw 截图，区分真实算法异常、前台保护和正常生命周期清理；本轮不改代码。
+
+### C. 关键发现
+- `(confirmed)` 首帧 accepted，前段双人 tracking 正常；前台切换导致约 59 次 `poe2_not_foreground` 采集忽略，之后恢复。
+- `(confirmed)` 两个 marker 都存在但 pair/动态关联仍拒绝 Dex：单候选距离约 `33px`、pair error `36px`，导致 51 次 dropout；这是当前最明确的算法异常。
+- `(confirmed)` 后段 StrDex 长时间 marker loss，`recovery_required` 重复诊断且 uncertainty 达约 `178 native px`，但没有重复全局恢复；需降低噪声并明确预测漂移升级边界。
+- `(confirmed)` 目标附近 start/target 均被 native 栅格判为 wall/collision，四个 A* 尺度 no_path，probe 六向全部不可行走；与实际体验不完全一致，仍是坐标/局部栅格偏移风险。
+- `(confirmed)` worker 单帧 `38–75ms`、`dropped_results=129`；latest-only 生效但延迟仍会扩大关联误差。
+- `(not observed)` 未发现本次新的 session expired、异常堆栈或全局 recovery；末尾 deferred stop 与页面隐藏一致。
+
+### D. 证据
+- `data/poe2_live_terrain_test/occlusion_diagnostics/1791307748207-1791307748207-0f14d12c/evidence.json`
+- `data/poe2_live_terrain_test/occlusion_diagnostics/1791307748207-1791307748207-0f14d12c/raw.png`
+- `data/logs/poe2_live_terrain.log`，时间范围 `2026-10-07 01:27–01:29`
+
+### E. 下一步
+先与用户讨论三个取舍：pair 失配时的单角色保留策略、目标投影邻域扩展策略、recovery_required 重复日志降频与预测不确定度上限。
+
+## [第 2026-10-07-13 轮] 2026-10-07 — 暂时失配与采样频率方案决策
+
+### A. 本轮目标
+根据最新实机证据讨论两件事：颜色干扰造成的暂时 marker 失配如何处理，以及提高采样频率是否能改善定位、热路径是否需要迁移到 C/Cython。
+
+### C. 关键结论
+- `(decision)` 暂时失配不能作为单帧失败；监控小地图中的干扰颜色要求颜色身份保持软约束。
+- `(finding)` 当前单帧 `38–75ms`，提高采样频率前必须先降低单帧成本，否则会增加 dropped results。
+- `(proposal)` 采用单角色保留、另一角色预测保持；pair geometry 只降低置信度，连续 2/3 帧确认后恢复完整关联。
+- `(proposal)` marker 识别约 25–30Hz，墙体位移约 10–15Hz，局部重锚按需执行；队列继续只保留最新帧。
+- `(proposal)` 优先优化 ROI、重复预处理、NumPy 复制和高频日志；只有 profiling 证明 Python 循环占主耗时时再迁移 Cython/C++。
+
+## [第 2026-10-07-13 轮] 2026-10-07 — 用户决策与性能方案讨论
+
+- `(decision)` 用户确认双人暂时失配时保留已确认的单角色；另一角色单独进入候选等待/预测，不拖垮整组 assignment。
+- `(decision)` 用户确认扩大目标局部投影范围，继续保持小人物半径和不膨胀墙体。
+- `(discussion)` 用户提出提高图色帧采样频率；当前日志 `38–75ms` 处理耗时高于 `33ms` 周期，需先优化/拆分识别阶段，避免高频采样只制造更多丢帧。
+
+## [SYNC] 2026-10-07 — 稳定性模块代码库同步
+
+### A. SYNC 范围声明
+直接变更文件：`marker_association.py`、`target_projection.py`、`runtime.py` 及其纯测试；连带影响 `DualVisualTracker` 关联诊断、跟随规划诊断和页面 worker 消费链。同步更新 `CODEBASE.md` 的目录职责与模块说明。
+
+### C. SYNC 结果
+- 动态关联的 pair geometry、目标投影的状态契约、六向探针评分字段已与代码一致。
+- 受影响调用链复核：`DualVisualTracker._assign()` → `MarkerAssociator.assign()`；`SimulatedFollowRuntime._plan_safe_route()` → `WalkableTargetProjector.project()`；`_cooldown_probe_command()` → `FollowObservation.vector` → `ProgramFollowOutput.apply()`。
+- `CODEBASE.md` 已补充新增文件及算法边界；未改变正式定位/正式底层引擎。

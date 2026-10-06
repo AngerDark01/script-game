@@ -27,6 +27,7 @@ from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.si
 )
 
 from .models import DualFirstFrameResult, PlayerMarkerCandidate
+from .marker_association import MarkerAssociator
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,25 @@ class DualVisualTracker:
         self._local_player_identity: str | None = None
         self._local_player_hint: tuple[float, float] | None = None
         self._last_assignment: dict[str, Any] = {}
+        self._local_correction_requested = False
+        self._marker_associator = MarkerAssociator(
+            base_gate=max_marker_step,
+            max_gate=max(120.0, max_marker_step * 4.0),
+            margin=identity_margin,
+        )
+        self._last_assignment_at_ms: dict[str, int] = {}
+        self._screen_velocities: dict[str, tuple[float, float]] = {}
+
+    def request_local_correction(self) -> None:
+        """Schedule one local wall re-anchor using the existing transform.
+
+        Runtime recovery already knows the map orientation and has a predicted
+        native position.  This flag forces the next tracker tick through the
+        bounded local matcher; it never reads process memory or starts a new
+        global registration.  The caller may escalate only when that local
+        match fails.
+        """
+        self._local_correction_requested = True
 
     def start(
         self,
@@ -138,9 +158,16 @@ class DualVisualTracker:
         }
         self._identity_hints = hints if len(set(hints.values())) == 2 and all(hints.values()) else {}
         self._last_assignment = {}
+        self._last_assignment_at_ms = {
+            identity: int(frame.captured_at_ms) for identity in self._screen_positions
+        }
+        self._screen_velocities = {
+            identity: (0.0, 0.0) for identity in self._screen_positions
+        }
         self._failures = 0
         self._frames_since_correction = 0
         self._recovery_emitted = False
+        self._local_correction_requested = False
         self._marker_dropout_failures = 0
         self._identity_dropout_failures = {
             identity: 0 for identity in self._screen_positions
@@ -201,7 +228,7 @@ class DualVisualTracker:
                 (transform.translation[0] - delta[0], transform.translation[1] - delta[1]),
             )
         self._frames_since_correction += 1
-        correction_due = shift is None or (
+        correction_due = self._local_correction_requested or shift is None or (
             self.matcher is not None
             and self.correction_frame_interval > 0
             and self._frames_since_correction >= self.correction_frame_interval
@@ -209,6 +236,7 @@ class DualVisualTracker:
         correction_attempted = False
         if correction_due and self.matcher is not None and not warmup_assumed_stationary:
             correction_attempted = True
+            self._local_correction_requested = False
             transformed = transform_feature(
                 current,
                 self._local_player_hint or frame.local_player,
@@ -257,7 +285,7 @@ class DualVisualTracker:
             for identity, hint in active_hints.items()
         }
         assigned, ambiguous = self._assign(
-            candidates, shift or (0.0, 0.0), screen_hints,
+            candidates, shift or (0.0, 0.0), screen_hints, frame.captured_at_ms,
         )
         first_live_frame = self._first_live_frame_pending
         self._first_live_frame_pending = False
@@ -432,54 +460,38 @@ class DualVisualTracker:
         candidates: Sequence[PlayerMarkerCandidate],
         wall_shift: tuple[float, float],
         screen_hints: Mapping[str, tuple[float, float]] | None = None,
+        captured_at_ms: int | None = None,
     ) -> tuple[dict[str, tuple[float, float]], bool]:
-        visible = tuple(sorted(candidates, key=lambda item: item.confidence, reverse=True)[:6])
-        if not visible:
-            self._last_assignment = {"candidate_ids": (), "options": ()}
-            return {}, False
         predicted = {
             identity: (screen_hints[identity] if screen_hints and identity in screen_hints
                        else (point[0] + wall_shift[0], point[1] + wall_shift[1]))
             for identity, point in self._screen_positions.items()
         }
-        options = []
-        for count in range(min(len(predicted), len(visible)), 0, -1):
-            for selected in itertools.combinations(visible, count):
-                for identities in itertools.permutations(predicted, count):
-                    if any(
-                        identity in self._identity_hints
-                        and self._identity_hints[identity] != str(candidate.color_features.get("identity_hint") or "")
-                        for identity, candidate in zip(identities, selected)
-                    ):
-                        continue
-                    distances = tuple(
-                        math.dist(predicted[identity], candidate.local_position)
-                        for identity, candidate in zip(identities, selected)
-                    )
-                    if all(distance <= self.max_marker_step for distance in distances):
-                        options.append((sum(distances), identities, selected, distances))
-            if options:
-                break
-        options.sort(key=lambda item: item[0])
-        self._last_assignment = {
-            "candidate_ids": tuple(item.candidate_id for item in visible),
-            "options": tuple(
-                {
-                    "cost": float(cost), "identities": identities,
-                    "candidate_ids": tuple(item.candidate_id for item in selected),
-                    "distances": distances,
-                }
-                for cost, identities, selected, distances in options[:4]
-            ),
+        now = int(captured_at_ms or 0)
+        elapsed = {
+            identity: max(0, now - self._last_assignment_at_ms.get(identity, now))
+            for identity in predicted
         }
-        if not options:
-            return {}, False
-        if len(options) > 1 and options[1][0] - options[0][0] < self.identity_margin:
-            return {}, True
-        return {
-            identity: candidate.local_position
-            for identity, candidate in zip(options[0][1], options[0][2])
-        }, False
+        result = self._marker_associator.assign(
+            candidates,
+            predicted,
+            identity_hints=self._identity_hints,
+            velocities=self._screen_velocities,
+            elapsed_ms=elapsed,
+            wall_shift=wall_shift,
+        )
+        self._last_assignment = dict(result.diagnostics)
+        if result.assignment and now:
+            for identity, point in result.assignment.items():
+                previous = self._screen_positions.get(identity)
+                if previous is not None:
+                    dt = max(1, now - self._last_assignment_at_ms.get(identity, now)) / 1000.0
+                    self._screen_velocities[identity] = (
+                        (point[0] - previous[0] - wall_shift[0]) / dt,
+                        (point[1] - previous[1] - wall_shift[1]) / dt,
+                    )
+                self._last_assignment_at_ms[identity] = now
+        return dict(result.assignment), result.ambiguous
 
     def _map_players(
         self, visible: Mapping[str, tuple[float, float]]

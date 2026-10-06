@@ -32,6 +32,7 @@ from .closed_loop_controller import ClosedLoopMotionController
 from .motion_models import MotionObservation, MotionResponse
 from .motion_snapshot import build_motion_snapshot
 from .reacquisition import select_reacquisition_vector
+from .target_projection import WalkableTargetProjector
 
 
 @dataclass
@@ -167,6 +168,7 @@ class SimulatedFollowRuntime:
         # contract so both stages evaluate the same obstacles.
         self.wall_map = np.where(walls > 0, 255, 0).astype("uint8")
         self.wall_map.setflags(write=False)
+        self.target_projector = WalkableTargetProjector(self.wall_map, radius=8)
         self._clearance_distance = cv2.distanceTransform(
             np.where(self.wall_map > 0, 0, 255).astype("uint8"),
             cv2.DIST_L2,
@@ -475,12 +477,20 @@ class SimulatedFollowRuntime:
                 current.source,
             )
             follower.position = current
-        if current is None or now_ms - current.captured_at_ms > self.position_ttl_ms:
+        if current is None:
             follower.state = FollowState.WAITING_POSITION
-            return self._observation(follower, target, reason="follower_position_stale")
+            return self._observation(follower, target, reason="follower_position_unseeded")
+        if now_ms - current.captured_at_ms > self.position_ttl_ms:
+            current = PositionSample(
+                follower.role, self.map_identity, current.position, now_ms,
+                max(0.25, current.confidence * 0.5), "command_prediction",
+            )
+            follower.position = current
         if now_ms - target.captured_at_ms > self.position_ttl_ms:
-            follower.state = FollowState.WAITING_POSITION
-            return self._observation(follower, target, reason="target_position_stale")
+            target = PositionSample(
+                target.role, self.map_identity, target.position, now_ms,
+                max(0.25, target.confidence * 0.5), "target_hold",
+            )
         if current.map_identity != self.map_identity or target.map_identity != self.map_identity:
             follower.state = FollowState.MAP_MISMATCH
             return self._observation(follower, target, reason="map_identity_mismatch")
@@ -666,15 +676,20 @@ class SimulatedFollowRuntime:
                 and follower.recovery_attempts >= 2
                 and not follower.local_escape_available
             ):
-                follower.route = ()
-                follower.planned_target = None
-                follower.retry_after_ms = now_ms + self.blocked_retry_ms
-                follower.state = FollowState.BLOCKED
+                probe = self._cooldown_probe_command(
+                    follower, current.position, target.position,
+                )
+                follower.state = (
+                    FollowState.PROGRAM_READY
+                    if follower.mode is ControlMode.PROGRAM
+                    else FollowState.PREVIEWING
+                )
                 return self._observation(
                     follower,
                     target,
                     distance=distance,
-                    reason="contact_relocalization_required",
+                    reason="contact_relocalization_probe",
+                    vector=probe,
                 )
 
             # A visual/native registration can land on a wall cell by a few
@@ -827,12 +842,19 @@ class SimulatedFollowRuntime:
                     ),
                     vector=vector,
                 )
-            follower.route = ()
-            follower.planned_target = None
             follower.direction_mismatch_ticks = 0
-            follower.retry_after_ms = now_ms + self.blocked_retry_ms
-            follower.state = FollowState.BLOCKED
-            return self._observation(follower, target, distance=distance, reason="stalled_no_escape")
+            probe = self._cooldown_probe_command(
+                follower, current.position, target.position,
+            )
+            follower.state = (
+                FollowState.PROGRAM_READY
+                if follower.mode is ControlMode.PROGRAM
+                else FollowState.PREVIEWING
+            )
+            return self._observation(
+                follower, target, distance=distance,
+                reason="stalled_probe", vector=probe,
+            )
         # The cached route may end inside the old arrival band but outside the
         # new one.  Replan before VectorPathTracker reports arrival at that old
         # endpoint and leaves an actor motionless short of the actual target.
@@ -854,8 +876,25 @@ class SimulatedFollowRuntime:
         )
         if route_stale:
             if self._failed_plan_on_cooldown(follower, current.position, target.position, now_ms):
-                follower.state = FollowState.BLOCKED
-                return self._observation(follower, target, distance=distance, reason="no_safe_route_cooldown")
+                # A failed route is cached briefly to avoid repeating a full
+                # search every tick. It is not evidence that the actor must
+                # stop: the native/map point can be one raster cell inside a
+                # wall while the real actor is merely touching its edge.
+                # Keep the controller alive and probe locally; the next
+                # observation can clear the stale start cell and rebuild the
+                # route normally.
+                probe = self._cooldown_probe_command(
+                    follower, current.position, target.position,
+                )
+                follower.state = (
+                    FollowState.PROGRAM_READY
+                    if follower.mode is ControlMode.PROGRAM
+                    else FollowState.PREVIEWING
+                )
+                return self._observation(
+                    follower, target, distance=distance,
+                    reason="no_safe_route_probe", vector=probe,
+                )
             planned = self._plan_safe_route(current.position, active_target)
             follower.plan_attempts = tuple(self._last_plan_diagnostics.get("attempted_factors", ()))
             follower.plan_factor = self._last_plan_diagnostics.get("accepted_factor")
@@ -883,14 +922,21 @@ class SimulatedFollowRuntime:
                         reason="wall_start_recovery",
                         vector=wall_vector,
                     )
-                follower.route = ()
-                follower.planned_target = None
-                follower.command_duration_ms = 0
-                follower.state = FollowState.BLOCKED
                 follower.failed_start = current.position
                 follower.failed_target = target.position
                 follower.retry_after_ms = now_ms + self.blocked_retry_ms
-                return self._observation(follower, target, distance=distance, reason="no_safe_route")
+                probe = self._cooldown_probe_command(
+                    follower, current.position, target.position,
+                )
+                follower.state = (
+                    FollowState.PROGRAM_READY
+                    if follower.mode is ControlMode.PROGRAM
+                    else FollowState.PREVIEWING
+                )
+                return self._observation(
+                    follower, target, distance=distance,
+                    reason="no_safe_route_probe", vector=probe,
+                )
             follower.route = tuple((float(point[0]), float(point[1])) for point in planned)
             follower.planned_target = active_target
             self._clear_failed_plan(follower)
@@ -929,8 +975,10 @@ class SimulatedFollowRuntime:
             # watchdog above to emit a lateral recovery waypoint; declaring
             # BLOCKED here used to release the stick before recovery could
             # ever run.
+            vector = self._cooldown_probe_command(
+                follower, current.position, target.position,
+            )
             follower.last_tick_ms = now_ms
-            follower.command_duration_ms = 0
             follower.state = (
                 FollowState.PROGRAM_READY
                 if follower.mode is ControlMode.PROGRAM
@@ -940,7 +988,8 @@ class SimulatedFollowRuntime:
                 follower,
                 target,
                 distance=distance,
-                reason="route_not_progressing",
+                reason="route_not_progressing_probe",
+                vector=vector,
             )
         follower.last_command_vector = vector
         # The closed-loop controller owns the pulse duration. Do not replace
@@ -1118,6 +1167,75 @@ class SimulatedFollowRuntime:
         side = -1.0 if int(attempt) % 2 == 0 else 1.0
         distance = min(64.0, max(28.0, self.arrival_radius * 4.0))
         return (current[0] + px * side * distance, current[1] + py * side * distance)
+
+    def _cooldown_probe_command(
+        self,
+        follower: _Follower,
+        current: tuple[float, float],
+        target: tuple[float, float],
+    ) -> tuple[float, float]:
+        """Emit a short exploratory vector during a failed-plan cooldown.
+
+        The collision raster is intentionally not a hard constraint here: it
+        may be stale by one cell at a wall edge. The small alternating pulse
+        changes the approach axis and is corrected by the next observation.
+        """
+        dx = float(target[0]) - float(current[0])
+        dy = float(target[1]) - float(current[1])
+        length = math.hypot(dx, dy)
+        if length <= 1e-6:
+            return (0.0, 0.0)
+        ux, uy = dx / length, dy / length
+        # Score several short directions against the current map.  This is a
+        # local escape policy, not a second path planner: it deliberately
+        # tolerates stale collision cells and lets the next observation decide.
+        base_angle = math.atan2(uy, ux)
+        angles = (0.0, -0.55, 0.55, -1.05, 1.05, math.pi)
+        probe_distance = min(32.0, max(12.0, self.arrival_radius * 2.5))
+        candidates: list[dict[str, float | bool]] = []
+        previous = follower.last_command_vector or (ux, uy)
+        for offset in angles:
+            angle = base_angle + offset
+            vector = (math.cos(angle), math.sin(angle))
+            endpoint = (
+                current[0] + vector[0] * probe_distance,
+                current[1] + vector[1] * probe_distance,
+            )
+            walkable = bool(line_is_walkable(self.collision_map, current, endpoint, corner_safe=True))
+            metrics = self._point_metrics(endpoint)
+            clearance = float(metrics.get("clearance", 0.0) or 0.0)
+            approach = point_distance(current, target) - point_distance(endpoint, target)
+            continuity = vector[0] * float(previous[0]) + vector[1] * float(previous[1])
+            free_hint = 0.0
+            if offset < 0 and follower.local_free_left is not None:
+                free_hint = float(follower.local_free_left)
+            elif offset > 0 and follower.local_free_right is not None:
+                free_hint = float(follower.local_free_right)
+            score = (
+                approach * 1.5
+                + min(clearance, 24.0) * 0.35
+                + min(free_hint, 24.0) * 0.15
+                + continuity * 2.0
+                + (8.0 if walkable else -12.0)
+            )
+            candidates.append({
+                "angle": float(math.degrees(offset)), "score": float(score),
+                "walkable": walkable, "clearance": clearance,
+                "approach": float(approach), "vector_x": vector[0], "vector_y": vector[1],
+            })
+        selected = max(candidates, key=lambda item: float(item["score"]))
+        vector = (float(selected["vector_x"]), float(selected["vector_y"]))
+        follower.last_command_vector = vector
+        follower.command_duration_ms = 100
+        follower.last_local_diagnostics = {
+            **follower.last_local_diagnostics,
+            "reason": "no_safe_route_probe",
+            "policy": "bounded_cooldown_probe",
+            "probe_candidates": tuple(candidates),
+            "selected_probe_score": float(selected["score"]),
+            "selected_probe_angle": float(selected["angle"]),
+        }
+        return vector
 
     def _recovery_waypoints(
         self,
@@ -1455,6 +1573,8 @@ class SimulatedFollowRuntime:
         )
 
     def _plan_safe_route(self, start: tuple[float, float], end: tuple[float, float]):
+        projected_target = self.target_projector.project(end)
+        planning_end = projected_target.position
         attempted_factors: list[int] = []
         rejections: list[dict[str, object]] = []
         start_metrics = self._point_metrics(start)
@@ -1470,7 +1590,7 @@ class SimulatedFollowRuntime:
         for finder in self._pathfinders:
             factor = int(getattr(finder, "downsample_factor", 0))
             attempted_factors.append(factor)
-            planned = finder.find_path(self.collision_map, start, end)
+            planned = finder.find_path(self.collision_map, start, planning_end)
             if not planned:
                 rejections.append({"factor": factor, "reason": "no_path"})
                 continue
@@ -1479,9 +1599,9 @@ class SimulatedFollowRuntime:
                 # waypoints. Simplify only through the inflated map, so a
                 # shortcut can never cut through the actor footprint.
                 planned = smooth_path(self.collision_map, planned, corner_safe=True)
-            safety_reason = self._route_safety_reason(start, planned, end)
+            safety_reason = self._route_safety_reason(start, planned, planning_end)
             if safety_reason is None:
-                chain = (start, *planned, end)
+                chain = (start, *planned, planning_end)
                 route_length = sum(
                     point_distance(first, second)
                     for first, second in pairwise(chain)
@@ -1643,6 +1763,8 @@ class SimulatedFollowRuntime:
                 "plan_rejections": tuple(rejections),
                 "start_metrics": start_metrics,
                 "target_metrics": target_metrics,
+                "planning_target": planning_end,
+                "target_projection": projected_target.diagnostics,
                 "selected_route_score": route_score,
                 "selected_route_length": route_length,
                 "selected_route_minimum_clearance": -negative_clearance,
@@ -1659,6 +1781,8 @@ class SimulatedFollowRuntime:
             "plan_rejections": tuple(rejections),
             "start_metrics": start_metrics,
             "target_metrics": target_metrics,
+            "planning_target": planning_end,
+            "target_projection": projected_target.diagnostics,
         }
         return None
 

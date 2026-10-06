@@ -35,6 +35,8 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 
 ## 当前补充：PoE2 实时地形预览
 
+自动跟随从启动、冷启动同步、双人视觉帧、目标融合、路径规划、局部脱困、程序输出和全局恢复的完整文字链路见 [`docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md`](docs/POE2_AUTOFOLLOW_COMPLETE_LOGIC.md)。该文档以当前源码为准，明确区分 native 坐标、UI 展示坐标和手柄输入坐标，并记录实时跟随、地图点击跟随、双人同目标三种组合及异常状态。
+
 多帧全局定位、滚动局部地图、方案 A/B 及导航消费方案已在 PoE2 数据采集实验台实现，设计与实施基线分别见 `docs/plans/2026-09-23-poe2-multiframe-localization-navigation-design.md` 和 `docs/plans/2026-09-23-poe2-multiframe-localization-navigation-implementation-plan.md`。新链路没有替换正式 `Poe2HybridProductRuntime`：正式页面仍使用一次锚点注册、`visual_f2f` 和有界局部纠偏；只有测试台显式启动多帧 experiment 时才执行新状态机。
 
 ### `features/poe2/live_terrain/experimental/multiframe_localization`（verified implementation, real-game calibration pending）
@@ -513,7 +515,7 @@ marker/轨迹保持同一坐标系；它不参与定位计算。`MainWindow.setu
 6. 历史上一个/下一个和图层选择只通过 `CaptureSampleArchive.list_samples()/load()` 读取合法 manifest，可直接比较 wall/fog/raw-gray；旧样本缺少可选层时显示缺层，不会借用其他样本图像。
 7. 用户点击“开始绘图”后，窗口先把当前 profile 的 `stitcher_params` 传给 `Poe2StitchingSession.configure()`；参数变化只允许在非 running 状态重建会话，随后当前及后续 evidence 经过 `consume()` -> `MapStitcher.add_evidence()` -> `add_frame_to_stitcher()`。输出为相对拼图、位置、轨迹和统计，仅驻留独立会话内存，不修改 native terrain 或正式定位状态。
 8. 用户点击“保存拼图实验”后，`Poe2StitchingArchive.save()` 原子写入 `stitching_sessions/<timestamp-profile>/` 的七张基础 PNG、可选同实例 `terrain.png` 与 `session.json`；没有已接受轨迹时拒绝保存，terrain 缺失时明确记录 missing。
-9. `Poe2CaptureTestPage.shutdown()` 关闭独立窗口，窗口 `closeEvent()` 停止定时器、暂停拼图并释放当前帧；整条链路不调用 `Poe2LocalizationRuntime.tick()`，不触碰绘图页面实例、输入设备、Host 或 LAN。
+9. `Poe2CaptureTestPage.suspend()/shutdown()` 先停止 follow、dual-target、program-probe、视觉 worker 与相关 timer，释放实验 output，再关闭独立窗口；窗口 `closeEvent()` 停止定时器、暂停拼图并释放当前帧。采集监控链路本身不调用 `Poe2LocalizationRuntime.tick()`，不触碰绘图页面实例或 LAN；只有用户显式启动程序移动/跟随实验时才经过独立 output adapter。
 
 **数据流 F-POE2-DUAL-FIRST-FRAME-PREVIEW（verified）：**
 
@@ -1072,11 +1074,13 @@ features/poe2/live_terrain/experimental/multiplayer_localization/memory_anchors.
 features/poe2/live_terrain/experimental/multiplayer_localization/dual_first_frame.py - 双人共同形状、方向、镜像和两锚点首帧注册。
 features/poe2/live_terrain/experimental/multiplayer_localization/experiment.py - 一次性内存锚点、截图和注册的 PoE2 实验组合。
 features/poe2/live_terrain/experimental/multiplayer_localization/dual_motion.py - 共享墙体视口位移、独立人物识别、有界纠偏和恢复请求的纯视觉实验状态。
+features/poe2/live_terrain/experimental/multiplayer_localization/marker_association.py - 无副作用的动态人物候选关联；按时间、屏幕速度、墙体位移和双角色相对距离计算软成本，颜色只作身份提示。
 features/poe2/live_terrain/experimental/multiplayer_localization/occlusion_archive.py - 失明状态切换时限量保存原始小地图、颜色 mask、候选及分配诊断。
 features/poe2/live_terrain/experimental/multiplayer_localization/minimap_contact_adapter.py - 将 PoE2 当前 wall mask 和人物屏幕点转换为前方墙体、左右清空度等局部接触证据，不修改墙图。
 features/poe2/live_terrain/experimental/multiplayer_follow/__init__.py - PoE2 实验跟随的公开契约导出。
 features/poe2/live_terrain/experimental/multiplayer_follow/models.py - 角色、地图实例、位置新鲜度、控制模式与跟随观测 DTO。
-features/poe2/live_terrain/experimental/multiplayer_follow/runtime.py - PoE2 实验目标、逐角色状态、0/255 墙图多尺度 A*、路线长度与清距暴露评分、原图穿墙与最小清距校验、墙边栅格起点有界脱困和无进度侧向恢复。
+features/poe2/live_terrain/experimental/multiplayer_follow/runtime.py - PoE2 实验目标、逐角色状态、0/255 墙图多尺度 A*、目标局部投影、路线长度与清距暴露评分、原图穿墙与最小清距校验，以及六向自由空间探针和无进度侧向恢复。
+features/poe2/live_terrain/experimental/multiplayer_follow/target_projection.py - 将落入墙栅格但局部邻域仍可走的目标投影到距离、开放比例和 clearance 综合最优的可行走点，并输出投影状态诊断。
 features/poe2/live_terrain/experimental/multiplayer_follow/program_output.py - 跟随观测到显式程序手柄 lease 的实验装配；模拟模式不输出真实输入。
 features/poe2/live_terrain/experimental/multiplayer_follow/motion_models.py - 游戏中立的运动观测、命令、反馈、校准状态与阶段 DTO，统一 native 坐标和地图版本契约。
 features/poe2/live_terrain/experimental/multiplayer_follow/motion_snapshot.py - 每个控制 tick 的只读墙图、距离场、路线和目标快照；复制数组并执行地图版本校验。
@@ -1283,10 +1287,12 @@ Level 3: unified action-event path
 
 ### 2026-10-06 跟随恢复生命周期更新
 
-`Poe2CaptureTestPage` 的实时跟随恢复已与用户停止生命周期分离。视觉恢复调用 `stop_dual_motion(preserve_follow=True)` 时只切换双人视觉 worker/首帧配准，保留 follow runtime、timer、程序输出、角色目标和 `CommandRoleTracker`；恢复期间继续使用有界命令预测。新鲜双人帧到达后，`_maybe_resume_dual_follow_after_relocalization()` 原地调用 `_sync_live_follow_from_fresh_frame()`，清除 recovery pending 并继续同一 session，不再调用 `start_follow_experiment()`。恢复冷却、首帧拒绝和 worker 异常安排重试；只有显式停止、换图、关闭或地图上下文失效才清理跟随。
+`Poe2CaptureTestPage` 的实时跟随恢复已与用户停止生命周期分离。视觉恢复调用 `stop_dual_motion(preserve_follow=True)` 时只切换双人视觉 worker/首帧配准，保留 follow runtime、timer、程序输出、角色目标和 `CommandRoleTracker`；恢复期间继续使用有界命令预测。新鲜双人帧到达后，`_maybe_resume_dual_follow_after_relocalization()` 原地调用 `_sync_live_follow_from_fresh_frame()`，清除 recovery pending 并继续同一 session，不再调用 `start_follow_experiment()`。恢复门槛由 `_recovery_frame_usable()` 统一：tracking 直接通过，墙体可信且角色仍有 available bounded estimate 的 degraded 帧也可以恢复；恢复帧不满足实时启动的 300ms 新鲜度时保留 context 等下一帧，不消费恢复上下文。恢复冷却、首帧拒绝和 worker 异常安排重试；只有显式停止、换图、关闭或地图上下文失效才清理跟随。
 
 ### `tests/test_poe2_capture_test_page.py`
 职责：用 offscreen Qt、假 terrain service 和假手柄输出验证采集页的点击、定位、恢复与生命周期。关键导出：pytest 用例和 `_dual_target_page()` 假会话构造器。对外依赖：`Poe2CaptureTestPage`、双人 `DualMotionState`、`SimulatedFollowRuntime` DTO、presenter 坐标变换与 PySide6。注意事项：双人同目标用例覆盖待命、双输出、重复点击、独立与先后到达/过期、整体失效、接触证据、受冷却重定位、恢复、异常和互斥；跟随用例额外覆盖 `cold_start/recovery_sync` 必须等待新鲜视觉帧、过期帧单次释放、1500ms 单次 recovery、单帧 overlay、近距离保持和恢复上下文。涉及 700ms 页面帧 TTL 的测试在手动 tick 前显式刷新 `captured_at_ms`，避免测试执行耗时被误判为业务失败。另以一次实机 221 度/镜像样本锁定 source/native 坐标往返，但该样本参数不是产品默认。测试不会连接真实 Host 或游戏。
+
+页面生命周期补充：`suspend()` 和 `shutdown()` 都会停止 follow、dual-target、program-probe、视觉 worker 和相关 timer，释放所有程序输出；`closeEvent()` 还会移除 `_UiLogHandler`。日志 handler 对已销毁的 Qt 对象做有效性检查，后台迟到日志只丢弃不写入 UI。
 
 ### `src/auto_modules/ui/modes/poe2_live_terrain/dual_motion_worker.py`
 职责：双人实验的有界截图—识别—跟踪 worker；只保留最新完成图像，另存待交付的单调 recovery revision，并在 `DualMotionFrameResult.processed` 中保留已完成预处理。关键导出：`DualMotionFrameResult`、`Poe2DualMotionWorker`、`Poe2DualFirstFrameWorker`。对外依赖：PySide6 信号、`HybridFrame`、HSV marker adapter 和注入的 preview/recognizer/tracker。注意事项：worker 不读内存、不绘图、不发送输入；`frame_failed` 记录单帧异常，连续失败达到 `max_consecutive_failures` 才发出终止信号；GUI 按 generation 丢弃迟到结果，并分别消费 `take_latest()` 与 `take_pending_recovery_revision()`。一次性首帧 worker 在发出 `result_available` 后将终态锁定，thread-local cleanup 失败只作诊断，不再发第二个 `failed`。
@@ -1303,6 +1309,12 @@ Level 3: unified action-event path
 职责：在已接受双人首帧的固定方向、镜像和比例下维护共同视口平移，并把颜色候选映射到 native 地图。关键导出：`DualMotionState`、`DualVisualTracker`。对外依赖：通用 canonical wall、phase displacement、`BoundedRoleObservations`、局部 matcher 协议及首帧点变换。注意事项：不读游戏内存、不发送输入；最多六个候选参加身份/距离赋值；marker 按 identity 的时间/误差预算独立退化，失明估计不是本帧视觉观测；预算耗尽才请求恢复。
 
 `RolePredictionHint(native_position, uncertainty_native, predicted_at_ms)` 仅在实验跟随显式传入。`tick()` 先更新共享墙层变换，再过滤年龄 `0..700ms`、误差 `<=12` 且坐标有限的提示；`inverse_transform_local_point()` 用与首帧正向注册完全相同的仿射几何将 native 提示回投到当前屏幕，供 `_assign()` 的身份/颜色/距离门使用。角色暂不可见时返回该角色的提示 native 点，但 `role_observations.visible=False` 且视觉 `last_seen_at_ms` 不变；有界提示可暂缓旧固定时限的强制恢复。颜色候选重现须通过预测 native 位置门及连续帧确认，失效/过期提示恢复原本的超时重锚；墙层失效不受提示豁免。
+
+### `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_localization/marker_association.py`
+职责：在固定变换下把小地图候选关联到稳定角色身份。关键导出：`AssociationResult`、`MarkerAssociator.assign()`。对外依赖：`PlayerMarkerCandidate`；无 Qt、进程、输入或文件副作用。注意事项：`assign()` 用基础距离、角色速度×帧间隔和墙体位移生成有上限 gate，再枚举单人/双人组合；双人组合将观测间距与预测间距误差加入软成本，颜色提示只参与初次筛选，全部拒绝时回退几何关联；诊断保存候选、gate、pair 距离和前四个候选成本。无候选或超过 gate 返回空 assignment，不直接决定全局恢复。
+
+### `src/auto_modules/features/poe2/live_terrain/experimental/multiplayer_follow/target_projection.py`
+职责：修正 native 目标中心落入单个墙栅格的量化误差。关键导出：`ProjectedTarget`、`WalkableTargetProjector.project()`。对外依赖：NumPy；无 Qt、输入或地图写入副作用。中心可走时原样返回；否则在局部半径内枚举可走格，按目标距离、3×3 开放比例和局部 clearance 计算综合分，选择局部更稳点；没有邻域可走点返回原点并标记 `target_no_walkable_neighbor`。调用方仍需用 runtime 的实际路线安全校验确认可达，投影不会修改墙图。
 
 ### `src/auto_modules/core/localization/bounded_observation.py`
 职责：为任意可哈希 identity 保存最后可信位置，并将短时失明表示为有时间和误差上限的估计。关键导出：`RoleObservation`、`BoundedRoleObservations`。对外依赖：无内部模块。注意事项：新视觉候选在连续失明后须通过位置门和连续帧确认；估计本身不刷新 `last_seen_at_ms`，时间倒退抛 `ValueError`；不读 PoE 内存，也不产生输入。
@@ -1332,7 +1344,9 @@ Level 3: unified action-event path
 
 `tools/debug/poe2_movement_probe.py` 的 `run_bounded_output()` 是独立管理员诊断：输入前默认等待 10 秒，验证 PoE2 前台，每 50ms 发一次方向状态，最多 2 秒；失焦或结束进入 finally 发送中性并释放。`main()` 在同地图实例读取前后 P1 坐标并记录 JSONL；`--check-only` 只读。该探针不计算路线，也不启用 LAN、键鼠。路线探针的每个非零路径段保持 reference/native 坐标，直接交给 PoE2 输入基底，registration 不在输入边界重复应用。
 
-实验页真实程序移动在确认后延迟 10 秒切回游戏，并通过 adapters/windows/window_finder.py 只读获取 PoE2 PID/HWND；程序移动探针和跟随输出都在每个控制 tick 检查游戏仍在前台、视觉位置年龄不超过 700ms。前台失败进入等待边沿，只释放一次已有 lease、保留视觉 worker，不把焦点问题升级成重定位；恢复前台后以最新完整帧重置跟随视觉基线。最长 30 秒保护、失焦中性释放和窗口查询均不调用聚焦或鼠标 API。每 5 个 tick 记录 reference/native 当前点、目标点、路线端点、native 向量和局部向量；Host adapter 的低频诊断还记录 basis 后向量、轴值、TTL 和租约状态。
+实验页真实程序移动在确认后延迟 10 秒切回游戏，并通过 adapters/windows/window_finder.py 只读获取 PoE2 PID/HWND；程序移动探针和跟随输出都在每个控制 tick 检查游戏仍在前台、视觉位置年龄不超过 700ms。前台失败进入等待边沿，只释放一次已有 lease、保留视觉 worker，不把焦点问题升级成重定位；恢复前台后以最新完整帧重置跟随视觉基线。地图运行没有总时长硬停止，长路线持续到目标或显式操作/生命周期边界；视觉帧新鲜度与 Host command TTL 是单次观测安全契约，不是整张地图的运行时限。失焦中性释放和窗口查询均不调用聚焦或鼠标 API。每 5 个 tick 记录 reference/native 当前点、目标点、路线端点、native 向量和局部向量；Host adapter 的低频诊断还记录 basis 后向量、轴值、TTL 和租约状态。
+`probe_mixin.py` 独立导入 `QMessageBox`、`find_process_id`、`find_process_window` 和 `is_process_foreground`，程序移动真实入口不依赖旧单体页面的隐式模块全局。
+`dual_motion_mixin.py` 显式导入 `MapRuntime`、`LocalMapMatcher`、`DualVisualTracker`、`Poe2DualMotionWorker` 和 registration boundary；`localization_mixin.py`/`page_lifecycle_mixin.py` 显式导入各自的 Qt/position 类型，避免只有实机入口才暴露的拆分后 `NameError`。
 `tools/debug/poe2_route_probe.py` 是独立门后路线探针：离线模式通过 `SimulatedFollowRuntime.tick()` 复现页面的墙边起点恢复并输出观测格/规划起点诊断；实机模式先用当前实例 native 起点、当前 NPZ 墙图和原图逐段碰撞校验生成目标路线，再等待 10 秒、检查 PoE2 前台后以 PoE2 专用输入基底发送有界 Xbox 状态。路线段向量保持 reference/native 坐标，由 PoE2 basis 单独投影到摇杆，最后读取同实例人物位置记录位移；地图/进程/权限/焦点任一门禁失败都不发送或立即中性释放。
 
 ### `tools/debug/poe2_follow_readonly_probe.py`
@@ -2421,7 +2435,7 @@ def _update_follow_local_contact(self, runtime: SimulatedFollowRuntime, state: A
 2. `start_dual_target_experiment()` 检查 snapshot、首帧 transform、双人 tracker、真实视觉帧采集时间及两个不同的有效角色；先停止其他输入场景，再绑定控制器 1/2 的输出对象并添加两个 `PROGRAM` follower。只建立待命状态，未点击前不取得 lease、不发输入；factory 异常关闭已建输出并显示错误。
 3. `_on_follow_map_click()` 仍统一把 source pixmap 坐标逆变换到 native，校验墙图边界并回投 display；只有新场景活跃时将一次有效点击赋给共享 target。无效越界点击保留上一目标，坐标变换整体失败则停止新会话。`_tick_dual_target_experiment_impl()` 只采用最新真实 `captured_at_ms` 的角色点更新 runtime；先检查 700ms 帧龄、地图身份和 tracker 状态，再由 `runtime.tick()` 分别生成观察。仅 `PROGRAM_READY` 的角色可 arm，随后逐角色 `apply()`；到达/过期/阻塞由输出适配器中性释放。
 4. `_update_follow_local_contact()` 把本帧 screen marker 和 native 命令逆变换为屏幕方向，调用 `inspect_minimap_contact()` 的中心线/侧向探针，并把墙前、可逃逸方向和距离交给该角色的 runtime contact monitor。证据读取异常只写 `local_contact_failed`，不冒充 Host 输出失败；新场景日志每 5 tick 限流，旧程序探针行为保持原样。
-5. 若任一观察明确要求 `relocalization_requested`，新场景先保存 source 目标、两角色身份和 instance，立即释放两个 lease，再用现有 `_start_dual_motion(recovery=True)` 做一次双人内存锚点和首帧注册；10 秒内重复要求直接安全停止。`_maybe_resume_dual_target_after_relocalization()` 仅在同实例、两个角色可见、新 tracking 帧不超过 1000ms 时重建并重放点击。异常、关闭、清图或用户停止会清掉 context。
+5. 若任一观察明确要求 `relocalization_requested`，新场景先保存 source 目标、两角色身份和 instance，立即释放两个 lease，再用现有 `_start_dual_motion(recovery=True)` 做一次双人内存锚点和首帧注册；10 秒内重复要求进入恢复冷却，不启动第二次读内存。`_maybe_resume_dual_target_after_relocalization()` 仅在同实例、两个角色可见、新 tracking 帧不超过 700ms 时重建并重放点击；该门与正常启动门保持一致，避免恢复入口消费后又被启动入口拒绝。异常、关闭、清图或用户停止会清掉 context。
 6. `_render_dual_target_overlay()` 用同一 registration 把每人的 native 当前位置及规划器实际给出的路线点映射到显示 pixmap；共享目标单独作为标记显示，不把无路径观察伪画成直达线，不更改底图或坐标。`stop_dual_target_experiment()` 停计时器、close 两个输出、清目标与路线；输出异常被记录，Qt tick 的未预期异常统一进入该安全停止。两人均到达时停止计时器，再次点击可重新启动。
 
 副作用：Qt 控件/overlay 和侧栏日志更新；有效点击后经已有 Host 输出适配器向控制器 1/2 发送向量。调用关系：`ScalableMapWidget.pixel_clicked` → `_on_follow_map_click()` → `_tick_dual_target_experiment()` → `SimulatedFollowRuntime.tick()` → `ProgramFollowOutput.apply()`；双人 worker/sync 视觉帧 → `_render_dual_motion_state()` → `_render_dual_target_overlay()`；定位恢复 → `_save_dual_target_recovery_context()` → `_start_dual_motion()` → `_maybe_resume_dual_target_after_relocalization()`。
@@ -2434,7 +2448,7 @@ def _maybe_resume_program_probe_after_relocalization(self) -> None
 ```
 1. `add_follower()` 校验角色、地图实例和位置后，为该角色建立独立 `ContactMonitor`，其 `required_samples` 取 runtime 的 `contact_required_samples`；因此多个角色的无进展计数不会共享。
 2. `_start_dual_motion(recovery=True, first_frame_ready=False)` 先停止旧 worker/输入但保留 recovery context；未交付首帧时清空旧首帧并调用 `run_dual_first_frame_experiment(render_map=False, force_memory_read=True)`，读取同一 `instance_id` 的双人 native anchors，最多对短间隔截图做注册候选选择，再创建新的 `DualVisualTracker`。异步 worker 已交付 `status=accepted` 时，回调以 `first_frame_ready=True` 进入同一函数，消费 `_apply_dual_first_frame_bundle()` 写入的 accepted 缓存，不能把 recovery 结果重新置空；结果状态、accepted 标志和 has-frame 会写入 `dual_motion.first_frame_context`。
-3. 新 worker 结果或同步 tick 更新 `latest_dual_state/latest_dual_captured_at_ms` 后，`_maybe_resume_program_probe_after_relocalization()` 校验状态为 tracking、角色可见且帧龄不超过 1000ms；恢复保存的角色/控制器选择，以保存的 native target 调用 `_start_program_move_probe_at(..., _confirmed=True)`。视觉跟随 recovery 由 `_save_dual_follow_recovery_context()` 保存 source 点击和角色模式，在新鲜 tracking 帧后调用 `start_follow_experiment()` 再重放点击，确保恢复前不发送输入。重定位失败或选择不存在时清理 context，不申请输入。
+3. 新 worker 结果或同步 tick 更新 `latest_dual_state/latest_dual_captured_at_ms` 后，`_maybe_resume_program_probe_after_relocalization()` 校验状态为 tracking、角色可见且帧龄不超过 700ms；恢复保存的角色/控制器选择，以保存的 native target 调用 `_start_program_move_probe_at(..., _confirmed=True)`。视觉跟随 recovery 由 `_save_dual_follow_recovery_context()` 保存 source 点击和角色模式，在新鲜 tracking 帧后原地同步 tracker/runtime 并重新挂载输出，确保恢复前不发送输入且不会重新丢失 recovery context。重定位失败或选择不存在时清理 context，不申请输入。
 副作用：步骤 2 每次 recovery revision 最多读取一次游戏内存、更新 Qt tracker/worker；步骤 3 可能重建一个显式 Host lease；不会发送网络同步。失败行为：首帧拒绝、worker 启动异常、帧过期或角色缺失均记录 `program_probe.relocalization_failed` 并保持中性停止；10 秒冷却阻止重复 recovery。
 调用关系：`_tick_program_move_probe()` → `_start_dual_motion(recovery=True)` → `run_dual_first_frame_experiment()`；`_on_dual_worker_result()`/`_tick_dual_motion()` → `_maybe_resume_program_probe_after_relocalization()` → `_start_program_move_probe_at()`。
 
@@ -5252,10 +5266,10 @@ def shutdown(self)
 7. 恢复 revision 触发 `_start_dual_motion(recovery=True)` 的一次新首帧内存读；后台首帧结果经 `_on_dual_first_frame_worker_result()` 应用后，以 `first_frame_ready=True` 消费 accepted 缓存并建立新 tracker，不再把 accepted 结果误判为空。10 秒内再次失败停表并提示手动重启，不形成密集读取循环。换图、主动停止与关闭均停表并释放输出。
 
 ### Flow: PoE2 程序移动的小地图接触纠偏
-1. `Poe2CaptureTestPage._tick_program_move_probe()` 以最新 `DualMotionState.players[actor_id]` 和真实 `captured_at_ms` 更新 `SimulatedFollowRuntime.update_follower_position()`；不为旧帧重打时间戳，视觉帧年龄超过 700ms 立即中性释放。
+1. `Poe2CaptureTestPage._tick_program_move_probe()` 以最新 `DualMotionState.players[actor_id]` 和真实 `captured_at_ms` 更新 `SimulatedFollowRuntime.update_follower_position()`；不为旧帧重打时间戳，视觉短暂超过 700ms 时进入有界预测保持并记录 observation gap，只有失去可用估计、前台失焦、显式停止或 recovery episode 达到门槛时才中性释放。
 2. 上一 tick 的 native route vector 经 `inverse_transform_local_displacement()` 回到小地图局部方向；`inspect_minimap_contact(wall_mask, screen_position, screen_vector)` 只采样人物前方 6/10/14 像素束和左右侧束，返回 `wall_ahead`、首个墙距与 `free_left/free_right`，不清除或修改人物/墙体像素。
 3. 页面调用 `runtime.update_local_contact()` 保存这份适配层证据；下一次 `update_follower_position()` 由 `ContactMonitor.observe()` 把命令、native 位移、对齐度和局部障碍合成为 `ContactEvidence`。
-4. `_tick_follower()` 发现连续无进展且局部前方有墙时跳过原 global route，调用 `_recovery_waypoints(preferred_side=...)` 优先选择小地图更开的一侧；输出 `contact_recovery` 并保持有限脉冲。PoE2 页面使用四样本接触门；两次局部恢复仍无进展返回 `contact_relocalization_required`，页面保存目标/角色/控制器、neutralize/release，并调用 `_start_dual_motion(recovery=True)` 强制新增一次内存锚点首帧注册。新 tracking 帧到达后 `_maybe_resume_program_probe_after_relocalization()` 自动恢复原目标；全过程不会等待 30 秒总时长保护才处理撞墙，也不会在冷却窗口内循环读内存。
+4. `_tick_follower()` 发现连续无进展且局部前方有墙时跳过原 global route，调用 `_recovery_waypoints(preferred_side=...)` 优先选择小地图更开的一侧；输出 `contact_recovery` 并保持有限脉冲。PoE2 页面使用四样本接触门；两次局部恢复仍无进展返回 `contact_relocalization_required`，页面保存目标/角色/控制器、neutralize/release，并调用 `_start_dual_motion(recovery=True)` 强制新增一次内存锚点首帧注册。新 tracking 帧到达后 `_maybe_resume_program_probe_after_relocalization()` 自动恢复原目标；全过程不依赖总时长硬停止处理撞墙，也不会在冷却窗口内循环读内存。
 
 ### Flow: PoE2 双人首帧特征预览与定时刷新
 1. `Poe2CaptureTestPage.run_dual_first_frame_experiment()` 输入 `TerrainSnapshot`、`Poe2MonitorConfig`，只读一次两名人物 native anchor，并从 `preview_provider(config)` 至多获取三张截图；输出选定的 `raw_frame:uint8[H,W,3]`。
@@ -5637,6 +5651,8 @@ Each output `OcrSpan` uses `frame.coordinate_space` and has a positive-area `Bou
 `sync.share.catalog` payload：`deviceId: str`、`catalog: {deviceId,catalogRevision,catalogHash,events,definitions}`。
 
 ## 9. 风险与隐患登记
+FollowProbe lifecycle invariant: arm occurs only after runtime, role, and output construction succeeds; invalid follow starts leave the target source disarmed.
+审计补充：恢复入口统一接受两类安全帧：完整 `tracking`，或 `degraded` 且 `diagnostics.wall_trusted=True`、所需角色仍有 bounded `players` 估计。实时跟随恢复使用 300ms 新鲜度门；超龄帧只等待下一帧并保留 recovery context，不消费上下文。双人同目标与程序移动恢复使用同一状态判定，避免 marker 短暂重叠造成恢复会话悬挂。
 P1 - `Poe2CaptureTestPage.run_dual_first_frame_experiment()` 首帧搜索和 oriented map 构造仍在 GUI 线程；实时双人帧已迁移到 `Poe2DualMotionWorker`，但启动/恢复时的大范围注册仍可能短暂阻塞。触发条件：地图很大、双人近距离首帧需要多候选搜索。建议：后续把首帧/恢复注册也搬到带 generation 的 worker，且保持一次 revision 一次内存读取。
 
 Resolved in experiment 2026-10-04 - `Poe2CaptureTestPage._start_dual_motion()` / `start_follow_experiment()` 现在为每个 live-follow role 装载 750ms 的 `CommandRoleTracker` 输出—视觉相位窗口；窗口内仅放宽未显式指定协方差的观测，过期后恢复 `9 native²` 稳态门。触发条件仍是恢复后第一枚程序脉冲已写入而截图尚未更新；对应 tracker/page 回归已覆盖窗口内接受和窗口外跳变拒绝。

@@ -9,6 +9,7 @@ from typing import Any, Mapping, cast
 
 from auto_modules.ui.widgets.aspect_preview import AspectPreviewLabel
 from auto_modules.features.poe2.live_terrain.orientation import TerrainOrientation
+from auto_modules.features.poe2.live_terrain.player_position import PlayerPositionSample
 from auto_modules.ui.modes.poe2_live_terrain.presenter import (
     build_localization_presentation,
     localization_display_point,

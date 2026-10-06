@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid as _qt_is_valid
 
 from auto_modules.adapters.windows import find_process_window, is_process_foreground
 from auto_modules.core.localization.local_matcher import LocalMapMatcher
@@ -45,6 +46,7 @@ from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.mo
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow import (
     ClosedLoopMotionController,
     ControlMode,
+    FollowObservation,
     FollowState,
     MapIdentity,
     PositionSample,
@@ -134,6 +136,14 @@ class _UiLogHandler(logging.Handler, QObject):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            # The feature logger outlives individual experiment pages.  A
+            # worker can finish while Qt is tearing down the page, so never
+            # emit into a deleted QObject or its queued widget slot.
+            if not _qt_is_valid(self):
+                return
+            parent = self.parent()
+            if parent is not None and not _qt_is_valid(parent):
+                return
             self.message_emitted.emit(self.format(record))
         except Exception:
             self.handleError(record)
@@ -214,10 +224,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._logger = get_terrain_logger()
         self.preview_timer = QTimer(self)
         self.preview_timer.setInterval(self._preview_interval())
-        self.preview_timer.timeout.connect(self.refresh_preview)
+        self.preview_timer.timeout.connect(self._on_preview_timer)
         self.hybrid_timer = QTimer(self)
         self.hybrid_timer.setInterval(self._localization_interval())
-        self.hybrid_timer.timeout.connect(self._tick_hybrid_localization)
+        self.hybrid_timer.timeout.connect(self._on_hybrid_timer)
         self._snapshot = None
         self._player_position: PlayerPositionSample | None = None
         self._terrain_base_pixmap = None
@@ -250,6 +260,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._dual_motion_restart_pending: bool | None = None
         self._dual_motion_session_token = 0
         self._dual_motion_generation = 0
+        # Recovery is an edge event, but the latest-only worker may overwrite
+        # the frame that carried ``recovery_requested=True``.  Keep the last
+        # revision consumed by this tracker generation so a persistent
+        # ``recovery_required`` state can safely re-emit the edge once.
+        self._dual_last_handled_recovery_revision = 0
         self._dual_motion_controller = DualMotionController()
         self._dual_last_ui_render_at = 0.0
         self._dual_frame_failure_suppressed = 0
@@ -374,26 +389,26 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._program_probe_last_relocalization_at_ms: int | None = None
         self._program_probe_arm_timer = QTimer(self)
         self._program_probe_arm_timer.setSingleShot(True)
-        self._program_probe_arm_timer.timeout.connect(self._arm_program_move_probe)
+        self._program_probe_arm_timer.timeout.connect(self._on_program_probe_arm_timer)
         self._program_probe_timer = QTimer(self)
         self._program_probe_timer.setInterval(50)
-        self._program_probe_timer.timeout.connect(self._tick_program_move_probe)
+        self._program_probe_timer.timeout.connect(self._on_program_probe_timer)
         self._follow_timer = QTimer(self)
         self._follow_timer.setInterval(100)
-        self._follow_timer.timeout.connect(self._tick_follow_experiment)
+        self._follow_timer.timeout.connect(self._on_follow_timer)
         self._dual_target_timer = QTimer(self)
         self._dual_target_timer.setInterval(100)
-        self._dual_target_timer.timeout.connect(self._tick_dual_target_experiment)
+        self._dual_target_timer.timeout.connect(self._on_dual_target_timer)
         self._dual_motion_timer = QTimer(self)
         self._dual_motion_timer.setInterval(self._localization_interval())
-        self._dual_motion_timer.timeout.connect(self._tick_dual_motion)
+        self._dual_motion_timer.timeout.connect(self._on_dual_motion_timer)
         self._multiframe_experiment = None
         self._last_multiframe_state = None
         self._multiframe_trajectory: list[tuple[float, float]] = []
         self._multiframe_trajectory_version = 0
         self._multiframe_timer = QTimer(self)
         self._multiframe_timer.setInterval(self._localization_interval())
-        self._multiframe_timer.timeout.connect(self._tick_multiframe)
+        self._multiframe_timer.timeout.connect(self._on_multiframe_timer)
         self.localization_control_dialog = Poe2LocalizationControlDialog(self)
         self.multiframe_panel = self.localization_control_dialog.panel
         self._build_ui()
@@ -402,6 +417,53 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._logger.addHandler(self._log_handler)
         self._append_session_log("PoE2 实验会话已创建")
         self._render_state("未初始化")
+
+    def _top_level_hidden_timer_guard(self) -> bool:
+        """Suspend orphaned top-level pages when a Qt timer fires.
+
+        Normal application pages are children of ``Poe2LiveTerrainPage`` and
+        are suspended by its hide event.  A standalone page (for example an
+        experiment harness or an embed that was never shown) has no parent
+        lifecycle owner; allowing its timers to run indefinitely can keep
+        virtual-gamepad tests and other Qt pages busy.  Direct/manual tick
+        calls intentionally bypass this guard.
+        """
+        if self._closing or self.parent() is not None or self.isVisible():
+            return False
+        self.suspend()
+        return True
+
+    def _on_program_probe_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_program_move_probe()
+
+    def _on_program_probe_arm_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._arm_program_move_probe()
+
+    def _on_preview_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self.refresh_preview()
+
+    def _on_hybrid_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_hybrid_localization()
+
+    def _on_follow_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_follow_experiment()
+
+    def _on_dual_target_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_dual_target_experiment()
+
+    def _on_dual_motion_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_dual_motion()
+
+    def _on_multiframe_timer(self) -> None:
+        if not self._top_level_hidden_timer_guard():
+            self._tick_multiframe()
 
     def _build_ui(self) -> None:
         root = QHBoxLayout(self)
@@ -1327,8 +1389,17 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
 
     def _append_session_log(self, message: str) -> None:
         """Append one formatted logger record without growing the page layout."""
-        if hasattr(self, "session_log"):
+        if (
+            _qt_is_valid(self)
+            and hasattr(self, "session_log")
+            and _qt_is_valid(self.session_log)
+        ):
             self.session_log.appendPlainText(str(message))
+
+    def closeEvent(self, event) -> None:
+        """Make widget destruction follow the same cleanup contract as shutdown."""
+        self.shutdown()
+        super().closeEvent(event)
 
     def _sync_follow_radius_control(self) -> None:
         live_mode = self.follow_mode_combo.currentData() in {"p1_leads", "p2_leads"}
@@ -1388,7 +1459,6 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._logger.info("step=follow_experiment.restart_previous_session")
             self.stop_follow_experiment()
         self.stop_dual_target_experiment()
-        self._experiment_composition.follow_probe.arm()
         state = self._latest_dual_state
         reference = self._dual_follow_reference
         if state is None or reference is None or self._dual_map_transform is None:
@@ -1413,7 +1483,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         if live_mode and (
             captured_at_ms is None
             or not 0 <= now_ms - int(captured_at_ms) <= self._FOLLOW_START_MAX_FRAME_AGE_MS
-            or state.status != "tracking" or getattr(state, "recovery_requested", False)
+            or not self._recovery_frame_usable(
+                state,
+                required_identities=(p1_identity, p2_identity),
+            )
+            or getattr(state, "recovery_requested", False)
             or state.diagnostics.get("warmup_assumed_stationary", False)
         ):
             frame_age_ms = None if captured_at_ms is None else now_ms - int(captured_at_ms)
@@ -1489,6 +1563,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             return
         self._follow_program_output = program_output
         self._follow_runtime = runtime
+        # Arm the target source only after all localization, role selection,
+        # output binding, and follower construction checks have succeeded.
+        # An invalid start attempt must not leave a stale probe armed.
+        self._experiment_composition.follow_probe.arm()
         self._follow_session_id = f"{self._follow_session_id}-{id(runtime):x}"
         self._experiment_runtime.start(self._follow_session_id, started_at_ms=now_ms)
         self._follow_program_roles = program_roles
@@ -1593,6 +1671,17 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
 
     def start_dual_target_experiment(self) -> None:
         """Prepare two independent program outputs for one clicked map target."""
+        # The button is disabled while this session is active, but recovery
+        # callbacks and automated harnesses can still re-enter the method.
+        # Reclaim the old timer/output lease before replacing the runtime so a
+        # second start cannot orphan a virtual controller.
+        if (
+            self._dual_target_runtime is not None
+            or self._dual_target_timer.isActive()
+            or self._dual_target_output is not None
+        ):
+            self._logger.info("step=dual_target.restart_previous_session")
+            self.stop_dual_target_experiment()
         state = self._latest_dual_state
         reference = self._dual_follow_reference
         if (
@@ -1606,9 +1695,6 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         if captured_at_ms is None or now_ms - int(captured_at_ms) > self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS:
             self.dual_target_status_label.setText("双人同目标：视觉位置已过期，请等待新帧")
             return
-        if getattr(state, "recovery_requested", False) or state.status != "tracking":
-            self.dual_target_status_label.setText("双人同目标：定位尚未稳定")
-            return
         players = {str(key): point for key, point in state.players.items() if point is not None}
         self._sync_follow_role_choices(state.players)
         p1 = self.dual_target_p1_combo.currentData()
@@ -1616,13 +1702,17 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         if p1 not in players or p2 not in players or p1 == p2:
             self.dual_target_status_label.setText("双人同目标：请选择两个不同且当前有效的角色")
             return
+        if getattr(state, "recovery_requested", False) or not self._recovery_frame_usable(
+            state, required_identities=(str(p1), str(p2)),
+        ):
+            self.dual_target_status_label.setText("双人同目标：定位尚未稳定")
+            return
         if self.program_output_factory is None:
             self.dual_target_status_label.setText("双人同目标：虚拟手柄输出未绑定")
             return
         self.stop_dual_target_experiment()
         self.stop_follow_experiment()
         self.stop_program_move_probe()
-        self._experiment_composition.dual_target_probe.arm()
         map_identity = MapIdentity(
             str(self._snapshot.metadata.area_id), str(self._snapshot.metadata.instance_id),
         )
@@ -1646,21 +1736,33 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self.dual_target_status_label.setText(f"双人同目标：手柄不可用 | {exc}")
             self._logger.exception("step=dual_target.output_bind_failed")
             return
-        for role in roles:
-            runtime.add_follower(
-                role,
-                PositionSample(
-                    role, map_identity, players[role.actor_id],
-                    int(captured_at_ms), 1.0, "visual",
-                ),
-                mode=ControlMode.PROGRAM,
-            )
+        try:
+            for role in roles:
+                runtime.add_follower(
+                    role,
+                    PositionSample(
+                        role, map_identity, players[role.actor_id],
+                        int(captured_at_ms), 1.0, "visual",
+                    ),
+                    mode=ControlMode.PROGRAM,
+                )
+        except Exception as exc:
+            try:
+                output.close_all()
+            except Exception:
+                self._logger.exception("step=dual_target.output_cleanup_failed")
+            self._logger.exception("step=dual_target.runtime_bind_failed")
+            self.dual_target_status_label.setText(f"双人同目标：运行时初始化失败 | {exc}")
+            return
         self._dual_target_runtime = runtime
         self._dual_target_output = output
         self._dual_target_roles = roles
         self._dual_target_observations = {}
         self._dual_target_tick_count = 0
         self._dual_target_last_program_diagnostics_at_ms = None
+        # Arm only after runtime and every output binding have succeeded.  A
+        # failed start must leave the probe idle for the next attempt.
+        self._experiment_composition.dual_target_probe.arm()
         self.start_dual_target_button.setEnabled(False)
         self.stop_dual_target_button.setEnabled(True)
         self.dual_target_status_label.setText("双人同目标：等待地图点击，尚未发送输入")
@@ -1720,7 +1822,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._logger.warning("step=dual_target.invalid_map_or_localization")
             self.stop_dual_target_experiment()
             return
-        if getattr(state, "recovery_requested", False) or state.status not in {"tracking", "degraded"}:
+        required_ids = tuple(role.actor_id for role in self._dual_target_roles)
+        if getattr(state, "recovery_requested", False) or not self._recovery_frame_usable(
+            state, required_identities=required_ids,
+        ):
             output.release_all()
             self._dual_target_observations = {}
             self._render_dual_target_overlay()
@@ -2595,6 +2700,17 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 captured_at_ms is None
                 or frame_age_ms > self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS
             ) and not self._follow_recovery_pending
+            # A recovery episode deliberately preserves the last state while
+            # a fresh worker is being built.  Treat that preserved state like
+            # an observation gap: it may drive prediction, but it must not be
+            # reseeded as a new visual anchor.
+            visual_frame_untrusted = frame_is_stale or self._follow_recovery_pending
+            # Keep a monotonic local clock for prediction samples when the
+            # capture provider has not supplied a timestamp at all.  The
+            # ``frame_is_stale`` flag remains true, so this fallback can never
+            # be mistaken for a fresh visual frame or enter cold-start sync.
+            if captured_at_ms is None:
+                captured_at_ms = now_ms
             warmup_assumed_stationary = bool(
                 state.diagnostics.get("warmup_assumed_stationary", False)
             )
@@ -2602,11 +2718,14 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 if self._follow_stale_since_ms is None:
                     self._follow_stale_since_ms = now_ms
                 if not self._follow_stale_release_sent:
-                    if self._follow_program_output is not None:
-                        self._follow_program_output.release_all()
+                    # A delayed capture is an observation gap, not proof that
+                    # the controlled role stopped. Keep command odometry alive
+                    # so the motion runtime can use contact/no-progress evidence
+                    # instead of turning one slow frame into a stop.
                     self._follow_stale_release_sent = True
                     self._logger.warning(
-                        "step=live_role_follow.waiting status=%s frame_age_ms=%s leader=%s",
+                        "step=live_role_follow.visual_gap_hold status=%s "
+                        "frame_age_ms=%s leader=%s prediction_continues=True",
                         state.status, frame_age_ms, leader.key,
                     )
                 stale_duration_ms = now_ms - self._follow_stale_since_ms
@@ -2628,16 +2747,16 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                         tick_attempt, frame_age_ms, stale_duration_ms,
                     )
                     return
-                self.follow_status_label.setText("实时跟随：等待可信双人位置，手柄已释放")
-                return
+                self.follow_status_label.setText("实时跟随：视觉帧延迟，按运动预测继续")
             if self._follow_stale_since_ms is not None:
-                self._logger.info(
-                    "step=live_role_follow.visual_frame_resumed stale_duration_ms=%s",
-                    max(0, now_ms - self._follow_stale_since_ms),
-                )
-                self._follow_stale_since_ms = None
-                self._follow_stale_release_sent = False
-                self._follow_stale_recovery_requested = False
+                if not visual_frame_untrusted:
+                    self._logger.info(
+                        "step=live_role_follow.visual_frame_resumed stale_duration_ms=%s",
+                        max(0, now_ms - self._follow_stale_since_ms),
+                    )
+                    self._follow_stale_since_ms = None
+                    self._follow_stale_release_sent = False
+                    self._follow_stale_recovery_requested = False
             if role_tracker is None or warmup_assumed_stationary:
                 if self._follow_program_output is not None:
                     self._follow_program_output.release_all()
@@ -2655,8 +2774,14 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             if (
                 not self._follow_recovery_pending
                 and (
-                getattr(state, "recovery_requested", False)
-                or state.status not in {"tracking", "degraded"}
+                (
+                    getattr(state, "recovery_requested", False)
+                    and not self._is_marker_only_recovery_state(state)
+                )
+                or (
+                    state.status not in {"tracking", "degraded"}
+                    and not self._is_marker_only_recovery_state(state)
+                )
                 or (state.status == "degraded" and not state.diagnostics.get("wall_trusted", False))
                 )
             ):
@@ -2669,7 +2794,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 )
                 self._request_live_follow_reanchor("wall_or_identity_tracking_lost")
                 return
-            if self._follow_sync_phase in {"cold_start", "recovery_sync"} and not self._follow_recovery_pending:
+            if (
+                self._follow_sync_phase in {"cold_start", "recovery_sync"}
+                and not self._follow_recovery_pending
+                and not visual_frame_untrusted
+            ):
                 baseline = self._follow_sync_baseline_captured_at_ms
                 has_new_frame = (
                     baseline is not None and int(captured_at_ms) > int(baseline)
@@ -2699,12 +2828,40 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 elif not self._sync_live_follow_from_fresh_frame(
                     state, captured_at_ms=int(captured_at_ms), now_ms=now_ms,
                 ):
-                    live_sync_pending = True
-                    if self._follow_program_output is not None:
-                        self._follow_program_output.release_all()
-                    self.follow_status_label.setText(
-                        "实时跟随：冷启动同步中，等待完整双人视觉帧"
+                    # A fresh wall-trusted frame may contain a temporary
+                    # marker dropout.  Every role already has a bounded seed
+                    # from the accepted start frame, so keep the session
+                    # moving from those estimates instead of holding the
+                    # output until both markers happen to be visible in the
+                    # same capture.  This is still a sync promotion, not a
+                    # visual acceptance: missing roles remain prediction-only
+                    # until their marker returns.
+                    wall_trusted = bool(state.diagnostics.get("wall_trusted", False))
+                    seeded_roles = all(
+                        role_tracker.estimate(role.key, now_ms=now_ms) is not None
+                        for role in roles
                     )
+                    if (
+                        seeded_roles
+                        and state.status in {"tracking", "degraded"}
+                        and wall_trusted
+                    ):
+                        self._follow_sync_phase = "tracking"
+                        self._follow_sync_frame_count += 1
+                        live_sync_pending = False
+                        self._logger.info(
+                            "step=live_role_follow.sync_degraded "
+                            "reason=marker_dropout_prediction_seeded "
+                            "captured_at_ms=%s status=%s",
+                            captured_at_ms, state.status,
+                        )
+                    else:
+                        live_sync_pending = True
+                        if self._follow_program_output is not None:
+                            self._follow_program_output.release_all()
+                        self.follow_status_label.setText(
+                            "实时跟随：冷启动同步中，等待完整双人视觉帧"
+                        )
             self._logger.debug(
                 "step=live_role_follow.frame_inputs attempt=%s tick=%s "
                 "captured_at_ms=%s frame_age_ms=%s phase=%s roles=%s",
@@ -2730,8 +2887,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             for role in roles:
                 info = role_observations.get(role.actor_id)
                 visible = (
-                    bool(info.get("visible")) if isinstance(info, dict)
-                    else state.status == "tracking" and state.players.get(role.actor_id) is not None
+                    not visual_frame_untrusted
+                    and (
+                        bool(info.get("visible")) if isinstance(info, dict)
+                        else state.status == "tracking" and state.players.get(role.actor_id) is not None
+                    )
                 )
                 point = state.players.get(role.actor_id)
                 if visible and point is not None:
@@ -2986,17 +3146,28 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 estimate = role_tracker.estimate(role.key, now_ms=max(now_ms, int(captured_at_ms)))
                 visual_age_ms = now_ms - estimate.last_visual_at_ms
                 if role == leader:
-                    if visual_age_ms > 3000:
-                        self._request_live_follow_reanchor("manual_target_unobserved")
-                        return
+                    # A missing leader marker is an observation gap, not a
+                    # terminal follow condition.  Keep the last target and
+                    # let the next fresh frame correct it; stopping here made
+                    # a short overlap/occlusion abort an otherwise valid run.
                     source = "target_hold"
                 else:
-                    if estimate.uncertainty_native > 12.0 or (
-                        visual_age_ms > self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS
-                        and not role_tracker.has_output_since_visual(role.key)
-                    ):
-                        self._request_live_follow_reanchor("command_prediction_unbounded")
-                        return
+                    # Command odometry is the fallback while a follower's
+                    # marker is hidden.  Its uncertainty is diagnostic data,
+                    # not permission to stop or launch an expensive global
+                    # re-anchor.  Contact/no-progress evidence from the
+                    # motion runtime remains the recovery authority.
+                    if estimate.uncertainty_native > 12.0 or visual_age_ms > self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS:
+                        if self._follow_tick_count == 1 or self._follow_tick_count % 10 == 0:
+                            self._logger.warning(
+                                "step=live_role_follow.prediction_unbounded_hold "
+                                "role=%s visual_age_ms=%s uncertainty=%.3f "
+                                "output_since_visual=%s",
+                                role.key,
+                                visual_age_ms,
+                                estimate.uncertainty_native,
+                                role_tracker.has_output_since_visual(role.key),
+                            )
                     source = "command_prediction"
                 live_samples[role.actor_id] = PositionSample(
                     role, runtime.map_identity, estimate.position, now_ms,
@@ -3503,7 +3674,15 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             point = state.players.get(role.actor_id)
             info = role_observations.get(role.actor_id)
             visible = (
-                bool(info.get("visible")) if isinstance(info, dict)
+                (
+                    bool(info.get("visible"))
+                    or (
+                        str(getattr(state, "status", "")) == "degraded"
+                        and bool((getattr(state, "diagnostics", {}) or {}).get("wall_trusted", False))
+                        and bool(info.get("available"))
+                        and role != self._follow_leader_role
+                    )
+                ) if isinstance(info, dict)
                 else state.status in {"tracking", "degraded"} and point is not None
             )
             if point is None or not visible:
@@ -3559,6 +3738,27 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
 
     def _request_live_follow_reanchor(self, reason: str) -> None:
         preserve_follow = bool(self._follow_live_mode and self._follow_runtime is not None)
+        if (
+            preserve_follow
+            and self._dual_motion_tracker is not None
+            and getattr(self._dual_motion_tracker, "matcher", None) is not None
+        ):
+            request_local = getattr(self._dual_motion_tracker, "request_local_correction", None)
+            if callable(request_local):
+                # Orientation and scale were already established by the first
+                # frame.  Re-anchor around the predicted native position using
+                # the existing local matcher; do not read memory or restart a
+                # global first-frame registration for a runtime disturbance.
+                request_local()
+                self._logger.warning(
+                    "step=live_role_follow.local_reanchor_requested reason=%s "
+                    "memory_read=False global_registration=False prediction_continues=True",
+                    reason,
+                )
+                self.follow_status_label.setText(
+                    "实时跟随：局部墙体重锚中，按大地图预测继续"
+                )
+                return
         if preserve_follow and self._follow_recovery_episode_active:
             self._follow_recovery_episode_suppressed += 1
             if self._follow_recovery_episode_suppressed == 1 or (
@@ -3753,10 +3953,35 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self.status_label.setText("状态：错误")
         self.error_label.setText(f"错误：{error}")
 
+    def suspend(self) -> None:
+        """Release active side effects while the tab is hidden.
+
+        Hiding the host page is a temporary lifecycle transition.  Stop
+        timers, workers and output leases without marking this page closed so
+        it can be reused when the tab is shown again.
+        """
+        if self._closing:
+            return
+        self._logger.info("step=test_page.suspend reason=page_hidden")
+        self.stop_program_move_probe(reason="页面隐藏")
+        # Hiding the host page is a terminal boundary for every experiment
+        # that can own a program output lease.  The visual worker may be
+        # restarted when the tab is shown again, but follow and dual-target
+        # timers must not continue driving controllers while their canvas is
+        # hidden.
+        self.stop_follow_experiment()
+        self.stop_dual_target_experiment()
+        self.stop_dual_motion()
+        self.stop_preview()
+        self.stop_hybrid_localization()
+        self.stop_multiframe_localization()
+
     def shutdown(self) -> None:
         self._closing = True
         self._invalidate_dual_motion_session()
         self.stop_program_move_probe()
+        self.stop_follow_experiment()
+        self.stop_dual_target_experiment()
         self.stop_dual_motion()
         self.stop_preview()
         self.stop_hybrid_localization()

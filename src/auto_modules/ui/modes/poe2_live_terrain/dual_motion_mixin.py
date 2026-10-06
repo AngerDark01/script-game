@@ -8,7 +8,13 @@ from typing import Any, Mapping
 
 from PySide6.QtCore import QTimer
 
+from auto_modules.core.localization.local_matcher import LocalMapMatcher
+from auto_modules.core.localization.map_runtime import MapRuntime
+from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.absolute_registrar import (
+    reference_boundary_layer,
+)
 from auto_modules.features.poe2.live_terrain.experimental.hybrid_localization.models import HybridFrame
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization import DualVisualTracker
 from auto_modules.features.poe2.live_terrain.experimental.recovery.controller import RecoveryObservation
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization import (
     MarkerColorProfile, marker_candidates_from_observation, detect_saturated_marker_observation,
@@ -25,9 +31,42 @@ from auto_modules.features.poe2.live_terrain.terrain_reference import build_refe
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.occlusion_archive import (
     save_dual_occlusion_evidence,
 )
+from auto_modules.ui.modes.poe2_live_terrain.dual_motion_worker import Poe2DualMotionWorker
 
 
 class Poe2DualMotionMixin:
+    @staticmethod
+    def _is_marker_only_recovery_state(state: Any) -> bool:
+        """Return whether recovery is caused only by role-marker loss.
+
+        The map transform and wall layer remain usable in this case.  A role
+        marker is an observation source, not the owner of the movement state:
+        the follow runtime can continue from command odometry and the last
+        trusted native position until a marker reappears.  Global relocaliza-
+        tion is reserved for a lost wall/map transform or an invalid map.
+        """
+        if state is None:
+            return False
+        reason = str(getattr(state, "reason", "") or "")
+        if reason not in {
+            "markers_missing",
+            "markers_ambiguous",
+            "markers_missing_grace",
+            "markers_partial_grace",
+        }:
+            return False
+        diagnostics = getattr(state, "diagnostics", {}) or {}
+        if diagnostics.get("wall_trusted") is False:
+            return False
+        # ``_failed`` preserves the marker diagnostics but does not add the
+        # normal tracking-frame ``wall_trusted`` field.  The per-role
+        # observation block is therefore the durable evidence that this is a
+        # marker-only expiry rather than a lost wall transform.
+        return bool(
+            diagnostics.get("wall_trusted", False)
+            or diagnostics.get("role_observations")
+        )
+
     def _start_dual_motion(
         self, *, recovery: bool, first_frame_ready: bool = False,
         preserve_follow: bool = False,
@@ -173,6 +212,7 @@ class Poe2DualMotionMixin:
             self.map_widget.set_image(prepare_localization_map(base, initial.transform))
             self._dual_map_source_size = (base.width(), base.height())
             self._dual_motion_tracker = tracker
+            self._dual_last_handled_recovery_revision = 0
             self._dual_motion_frame_count = 0
             self._dual_evidence_count = 0
             self._dual_evidence_signature = None
@@ -662,8 +702,29 @@ class Poe2DualMotionMixin:
                 worker.completed_frames,
             )
         revision = worker.take_pending_recovery_revision()
+        state_revision = int(getattr(state, "recovery_revision", 0) or 0)
+        # ``recovery_requested`` is an edge and can be lost when the worker's
+        # latest-only slot replaces the edge frame before the UI drains it.
+        # A persistent recovery_required state with a new revision is the
+        # authoritative level-triggered fallback.  The revision guard keeps
+        # this from starting recovery on every subsequent frame.
+        if (
+            state.status == "recovery_required"
+            and state_revision > self._dual_last_handled_recovery_revision
+        ):
+            revision = max(int(revision or 0), state_revision)
+            self._logger.warning(
+                "step=dual_motion.recovery_edge_recovered revision=%s "
+                "edge=%s pending=%s",
+                state_revision,
+                bool(getattr(state, "recovery_requested", False)),
+                int(revision or 0),
+            )
         if revision or state.recovery_requested:
-            revision = revision or state.recovery_revision
+            revision = int(revision or state_revision)
+            if revision <= self._dual_last_handled_recovery_revision:
+                return
+            self._dual_last_handled_recovery_revision = revision
             self._logger.warning("step=dual_motion.recovery revision=%s", revision)
             live_follow_recovery = bool(
                 self._follow_live_mode and self._follow_runtime is not None
@@ -671,6 +732,28 @@ class Poe2DualMotionMixin:
             recovery_episode_already_active = bool(
                 live_follow_recovery and self._follow_recovery_episode_active
             )
+            if (
+                live_follow_recovery
+                and not recovery_episode_already_active
+                and self._is_marker_only_recovery_state(state)
+            ):
+                # Marker loss is an observation gap.  The follow tick already
+                # has a bounded native estimate from command odometry; do not
+                # tear down the motion worker and spend 14–23 seconds on a
+                # global first-frame registration for a missing colour blob.
+                self._logger.warning(
+                    "step=dual_motion.recovery_deferred reason=marker_only_loss "
+                    "status=%s state_reason=%s follow_prediction_continues=True "
+                    "wall_trusted=%s diagnostics=%s",
+                    state.status,
+                    state.reason,
+                    bool(state.diagnostics.get("wall_trusted", False)),
+                    dict(state.diagnostics),
+                )
+                self.dual_motion_status_label.setText(
+                    "双人实时：人物图标暂不可见，按大地图位移预测继续"
+                )
+                return
             if recovery_episode_already_active:
                 self._follow_recovery_episode_suppressed += 1
                 self._follow_recovery_pending = True
@@ -815,7 +898,27 @@ class Poe2DualMotionMixin:
                     tracking_elapsed_ms,
                     (time.perf_counter() - tick_started) * 1000.0,
                 )
-            if state.recovery_requested:
+            state_revision = int(getattr(state, "recovery_revision", 0) or 0)
+            recovery_revision = state_revision
+            if (
+                state.status == "recovery_required"
+                and recovery_revision > self._dual_last_handled_recovery_revision
+            ):
+                self._logger.warning(
+                    "step=dual_motion.recovery_edge_recovered revision=%s edge=%s",
+                    recovery_revision,
+                    bool(getattr(state, "recovery_requested", False)),
+                )
+            if (
+                state.recovery_requested
+                or (
+                    state.status == "recovery_required"
+                    and recovery_revision > self._dual_last_handled_recovery_revision
+                )
+            ):
+                if recovery_revision <= self._dual_last_handled_recovery_revision:
+                    return
+                self._dual_last_handled_recovery_revision = recovery_revision
                 self._logger.warning("step=dual_motion.recovery revision=%s", state.recovery_revision)
                 live_follow_recovery = bool(
                     self._follow_live_mode and self._follow_runtime is not None

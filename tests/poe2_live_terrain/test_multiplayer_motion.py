@@ -191,6 +191,30 @@ def test_local_correction_can_recover_wall_shift_without_memory_read():
     assert calls[0]["radius"] == 48.0
 
 
+def test_requested_local_correction_runs_before_periodic_interval():
+    initial, result = _registered(_walls())
+    calls = []
+
+    def match(_walls, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(valid=True, frame_origin_global=(201.0, 301.0))
+
+    tracker = DualVisualTracker(
+        matcher=SimpleNamespace(match=match), correction_frame_interval=120,
+    )
+    tracker.start(initial, result)
+    tracker.request_local_correction()
+    state = tracker.tick(
+        _frame(_walls(), 2),
+        (_candidate("a", 25, 30), _candidate("b", 65, 55)),
+    )
+
+    assert state.status == "tracking"
+    assert state.correction_attempted
+    assert len(calls) == 1
+    assert calls[0]["radius"] == 48.0
+
+
 def test_local_correction_uses_first_player_anchor_instead_of_frame_center(monkeypatch):
     initial, result = _registered(_walls())
     calls = []
