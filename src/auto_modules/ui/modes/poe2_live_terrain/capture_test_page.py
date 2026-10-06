@@ -76,6 +76,15 @@ from auto_modules.features.poe2.live_terrain.experimental.recovery.controller im
     RecoveryController,
     RecoveryObservation,
 )
+from auto_modules.features.poe2.live_terrain.experimental.application import (
+    ExperimentRuntime,
+)
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer import (
+    DualMotionController,
+)
+from auto_modules.features.poe2.live_terrain.experimental.follow.target_sources import (
+    MutableTargetSource,
+)
 from auto_modules.features.poe2.live_terrain.player_position import find_process_id
 from auto_modules.features.poe2.live_terrain.orientation import TerrainOrientation
 from auto_modules.features.poe2.live_terrain.movement import (
@@ -234,6 +243,7 @@ class Poe2CaptureTestPage(QWidget):
         self._dual_motion_restart_pending: bool | None = None
         self._dual_motion_session_token = 0
         self._dual_motion_generation = 0
+        self._dual_motion_controller = DualMotionController()
         self._dual_last_ui_render_at = 0.0
         self._dual_frame_failure_suppressed = 0
         self._dual_evidence_count = 0
@@ -248,6 +258,7 @@ class Poe2CaptureTestPage(QWidget):
         self._clicked_target_source: tuple[float, float] | None = None
         self._clicked_target_native: tuple[float, float] | None = None
         self._clicked_target_display: tuple[float, float] | None = None
+        self._click_target_source = MutableTargetSource()
         self._last_follow_observations = {}
         self._follow_program_output = None
         self._follow_role_tracker: CommandRoleTracker | None = None
@@ -314,6 +325,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_reason: str | None = None
         self._follow_recovery_episode_suppressed = 0
         self._recovery_controller = RecoveryController()
+        self._experiment_runtime = ExperimentRuntime()
         self._dual_target_runtime = None
         self._dual_target_output = None
         self._dual_target_roles: tuple[RoleId, ...] = ()
@@ -1437,6 +1449,7 @@ class Poe2CaptureTestPage(QWidget):
             worker = None
             if hasattr(self.monitor_config, "localization_fps"):
                 self._dual_motion_generation += 1
+                self._dual_motion_controller.start(self._dual_motion_generation)
                 worker_recognizer = None
                 # HSVRecognizer owns a CLAHE native object.  Keep the GUI
                 # recognizer out of the capture thread even though the
@@ -1532,6 +1545,7 @@ class Poe2CaptureTestPage(QWidget):
         preserve_program_probe_recovery: bool = False,
         preserve_follow: bool = False,
     ) -> None:
+        self._dual_motion_controller.stop(self._dual_motion_generation)
         # A user-initiated stop, a worker failure, and a map reset all cancel
         # any delayed restart request.  The recovery path sets a new pending
         # value only after this method returns, so this cannot cancel a fresh
@@ -1842,6 +1856,12 @@ class Poe2CaptureTestPage(QWidget):
             return
         result = worker.take_latest()
         if result is None:
+            return
+        if self._dual_motion_controller.publish(self._dual_motion_generation, result) is None:
+            self._logger.debug(
+                "step=dual_motion.frame_ignored reason=retired_generation generation=%s",
+                self._dual_motion_generation,
+            )
             return
         if self._follow_live_mode and self._follow_runtime is not None:
             foreground, foreground_reason = self._refresh_follow_game_window()
@@ -3335,6 +3355,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_program_output = program_output
         self._follow_runtime = runtime
         self._follow_session_id = f"{self._follow_session_id}-{id(runtime):x}"
+        self._experiment_runtime.start(self._follow_session_id, started_at_ms=now_ms)
         self._follow_program_roles = program_roles
         self._follow_role_tracker = (
             CommandRoleTracker(expected_speed=runtime.speed_units_per_second)
@@ -3732,6 +3753,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_reason = None
         self._follow_recovery_episode_suppressed = 0
         was_active = self._follow_runtime is not None or self._follow_timer.isActive()
+        self._experiment_runtime.stop()
         was_live = self._follow_live_mode
         had_timer = self._follow_timer.isActive()
         had_output = self._follow_program_output is not None
@@ -3847,6 +3869,7 @@ class Poe2CaptureTestPage(QWidget):
         self._clicked_target_source = None
         self._clicked_target_native = None
         self._clicked_target_display = None
+        self._click_target_source.set(None)
         self.map_widget.set_target(None)
         if had_target:
             self._logger.info("step=map_click.cleared reason=%s", reason)
@@ -3923,6 +3946,7 @@ class Poe2CaptureTestPage(QWidget):
         self._clicked_target_source = source_click
         self._clicked_target_native = (float(point[0]), float(point[1]))
         self._clicked_target_display = (float(display_point[0]), float(display_point[1]))
+        self._click_target_source.set(self._clicked_target_native)
         self.map_widget.set_target(self._clicked_target_display)
         mode = "program_probe" if self._program_probe_waiting_click else (
             "dual_target" if self._dual_target_runtime is not None else (

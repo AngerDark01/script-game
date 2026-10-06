@@ -9446,3 +9446,14 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - A2 新增恢复决策模型和 episode/backoff 控制器：`experimental/recovery/controller.py`；页面恢复入口开始通过 controller 记录 episode、清理和 retry backoff，旧行为保持兼容。
 - 新增模型与恢复控制器测试，页面聚焦回归 `95 passed`，`compileall` 与 `git diff --check` 通过。
 - 下一步：提取双人视觉 worker/frame router，保持旧页面方法作为 façade。
+
+## 2026-10-06 — A3/A4 与 B1～B4 首轮模块边界建立
+
+- A3：新增 `experimental/multiplayer/controller.py`，统一 generation 过滤和双人帧事件；页面 worker 入口使用 `DualMotionController`，旧页面方法仍是 façade。
+- A4：新增 `experimental/follow/target_sources.py` 与 `observation_fusion.py`；地图点击目标开始通过 `MutableTargetSource` 保存，视觉/预测融合有独立契约。
+- B1：新增 `experimental/application/runtime.py`，跟随会话启动/停止接入统一生命周期 runtime。
+- B2：新增 `experimental/motion/ports.py`、`decisions.py`，定义截图、内存、窗口、手柄和目标端口。
+- B3：新增 `experimental/localization/service.py`，统一 `PositionEstimate` 与重定位服务边界。
+- B4：新增 `experimental/diagnostics/events.py`，提供有界事件记录和耗时测量。
+- C2 预备：新增 `experimental/composition.py` 与最小 `replay.py`，为后续完整装配和离线回放建立入口。
+- 验证：实验新模块 + 页面回归 `108 passed`，`compileall` 和 `git diff --check` 通过；下一步继续把页面内算法实现迁移到这些控制器，不能停留在 façade。
