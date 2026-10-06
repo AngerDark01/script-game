@@ -9980,3 +9980,9 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(implemented)` 生产配置点击首帧时复用 `Poe2DualFirstFrameWorker`，不再在 Qt GUI 线程同步执行重型注册；无定位 FPS 的最小测试配置保持同步兼容。
 - `(implemented)` 首帧注册候选上限独立为 4，实时 worker 候选预算仍保持 6，避免把首帧搜索边界和实时跟踪混用。
 - `(verified)` 首帧/双人页面专项 13 passed；候选预算回归 1 passed。
+
+## [第 2026-10-07-26 轮] 2026-10-07 — 方案 A 完成回归
+
+- `(verified)` 页面、worker、双人首帧、双人 tracker、离线 replay 合计 162 passed。
+- `(verified)` compileall 与 diff check 通过。
+- `(boundary)` 尚未发送真实输入或启动游戏窗口；下一步仅做用户授权的实机观察和日志核对。
