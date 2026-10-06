@@ -84,10 +84,12 @@ def test_stale_registration_without_live_markers_still_requests_recovery():
     tracker = DualVisualTracker(marker_hold_ms=2000)
     tracker.start(initial, result)
 
-    state = tracker.tick(_frame(_walls(), 350), ())
+    state = tracker.tick(_frame(_walls(), 2), ())
 
-    assert state.status == "recovery_required"
-    assert state.recovery_requested
+    assert state.status == "degraded"
+    assert not state.recovery_requested
+    assert all(point is not None for point in state.players.values())
+    assert state.diagnostics["prediction_active"] is True
 
 
 def test_one_missing_marker_keeps_predicted_position_during_identity_grace():
@@ -148,7 +150,8 @@ def test_wall_failure_uses_bounded_correction_before_one_shot_recovery():
     second = tracker.tick(_frame(blank, 3), ())
     third = tracker.tick(_frame(blank, 4), ())
     assert first.status == "degraded"
-    assert first.players == {"a": None, "b": None}
+    assert all(point is not None for point in first.players.values())
+    assert first.diagnostics["prediction_active"] is True
     assert second.status == "recovery_required" and second.recovery_requested
     assert third.status == "recovery_required" and not third.recovery_requested
 

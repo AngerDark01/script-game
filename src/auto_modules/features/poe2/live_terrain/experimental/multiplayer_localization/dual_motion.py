@@ -214,6 +214,7 @@ class DualVisualTracker:
                 warmup_assumed_stationary = True
                 self._warmup_remaining -= 1
         predicted = transform
+        wall_prediction_hold = False
         if shift is not None:
             delta = transform_local_displacement(
                 shift,
@@ -227,6 +228,13 @@ class DualVisualTracker:
                 transform.scale,
                 (transform.translation[0] - delta[0], transform.translation[1] - delta[1]),
             )
+        elif self._wall_frame_can_be_held(previous, current):
+            # A stationary or temporarily untrackable wall frame is still a
+            # usable observation. Keep the last transform for this tick and
+            # let marker association/role observations provide continuity.
+            shift = (0.0, 0.0)
+            wall_prediction_hold = True
+
         self._frames_since_correction += 1
         correction_due = self._local_correction_requested or shift is None or (
             self.matcher is not None
@@ -397,7 +405,15 @@ class DualVisualTracker:
             players, displacement.quality, correction_attempted,
             {
                 "wall_shift": shift,
+                "wall_prediction_hold": wall_prediction_hold,
                 "visible_identities": tuple(accepted),
+                "prediction_active": not bool(accepted),
+                "prediction_reason": "marker_observation_gap" if not accepted else "",
+                "prediction_age_ms": {
+                    identity: int(item.age_ms)
+                    for identity, item in observations.items()
+                    if not item.visible
+                },
                 "wall_trusted": True,
                 "role_observations": self._observation_diagnostics(observations),
                 "observation_bounds": {
@@ -513,6 +529,32 @@ class DualVisualTracker:
             for identity in self._screen_positions
         }
 
+    @staticmethod
+    def _wall_frame_can_be_held(previous: np.ndarray, current: np.ndarray) -> bool:
+        """Return whether a frame can safely reuse the previous transform."""
+        previous_pixels = int(np.count_nonzero(previous))
+        current_pixels = int(np.count_nonzero(current))
+        if previous_pixels <= 0 or current_pixels <= 0:
+            return False
+        ratio = current_pixels / max(previous_pixels, 1)
+        return 0.15 <= ratio <= 6.0
+
+    def _fallback_players(self) -> dict[str, tuple[float, float] | None]:
+        if self._frame is None or self._transform is None:
+            return {identity: None for identity in self._screen_positions}
+        return self._map_players(self._screen_positions)
+
+    def _prediction_diagnostics(self, frame: HybridFrame, reason: str) -> dict[str, Any]:
+        ages = {
+            identity: max(0, int(frame.captured_at_ms) - int(last_seen))
+            for identity, last_seen in self._last_assignment_at_ms.items()
+        }
+        return {
+            "prediction_active": True,
+            "prediction_reason": reason,
+            "prediction_age_ms": ages,
+        }
+
     def _failed(
         self,
         reason: str,
@@ -523,21 +565,28 @@ class DualVisualTracker:
     ) -> DualMotionState:
         self._failures += 1
         if self._failures < self.max_failures:
-            return self._state("degraded", reason, {}, quality, corrected)
+            players = self._fallback_players()
+            payload = self._prediction_diagnostics(frame, reason)
+            if diagnostics:
+                payload.update(diagnostics)
+            return self._state("degraded", reason, players, quality, corrected, payload)
         first_request = not self._recovery_emitted
         if first_request:
             self._recovery_revision += 1
             self._recovery_emitted = True
+        players = self._fallback_players()
+        payload = {
+            "failed_frame_id": frame.frame_id,
+            **self._prediction_diagnostics(frame, reason),
+            **(diagnostics or {}),
+        }
         return self._state(
             "recovery_required",
             reason,
-            {},
+            players,
             quality,
             corrected,
-            {
-                "failed_frame_id": frame.frame_id,
-                **(diagnostics or {}),
-            },
+            payload,
             first_request,
         )
 

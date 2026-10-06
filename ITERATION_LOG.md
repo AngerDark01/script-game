@@ -9761,6 +9761,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 公式均按当前源码核对，特别说明：预测位置不能单独证明到达；视觉短暂丢失和 recovery 不是用户停止。
 - 本轮没有修改运行代码，没有发送真实输入；需执行差异检查后交付文档。
 
+## 2026-10-07 — 解释 `test_poe2_capture_test_page.py` 的职责和规模
+
+- `(verified)` 通过 CodeGraph 和源码索引确认：该文件约 3,229 行、102 个 `test_` 用例，不是运行时模块，不会随程序启动执行。
+- `(verified)` 文件集中覆盖采集页生命周期/保存、预览与地图、单/双人首帧与视觉 worker、单程序移动、实时角色跟随、预测与恢复、双人同目标以及页面关闭/输出清理。
+- `(finding)` 长度主要来自单文件承载多个状态机的 Qt 集成测试、每个场景都要构造 fake service/archive/recognizer/output、以及大量历史回归边界；不是单个算法本身有 3,000 行。
+- `(design debt)` 当前测试文件仍是页面职责拆分后的集中回归入口，适合后续按功能拆为多个测试模块并把 doubles/fixtures 提取到 `tests/poe2_live_terrain/fixtures.py`，但本轮未修改测试结构。
+
 ## [第 2026-10-06-5 轮] 2026-10-06 — 完整地图运行契约复核
 
 ### A. 本轮目标（阅读前声明）
@@ -9939,3 +9946,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(implemented)` `capture_test_page._compute_dual_first_frame()` 的手动/恢复首帧采样次数从 3 改为 1，移除无收益的帧间等待。
 - `(verified)` 新增调用计数回归断言；目标页面测试通过（1 passed）。
 - `(next)` 继续实现纯 tracker 的短时预测保持和恢复融合，仍不调颜色/面积/全局置信度参数。
+
+## [第 2026-10-07-21 轮] 2026-10-07 — 双人 tracker 异常帧预测保持
+
+- `(implemented)` `DualVisualTracker` 对静止/暂时不可测墙体复用上一变换；marker 或墙体短时异常返回最后可信角色地图位置，不再输出空人物集合。
+- `(diagnostic)` 状态增加 `prediction_active`、`prediction_reason`、`prediction_age_ms`、`wall_prediction_hold`，便于区分视觉缺失与地图失效。
+- `(verified)` `tests/poe2_live_terrain/test_multiplayer_motion.py`：25 passed。
+- `(next)` 为 live worker 增加候选提取和总处理耗时字段，继续保持 latest-only。

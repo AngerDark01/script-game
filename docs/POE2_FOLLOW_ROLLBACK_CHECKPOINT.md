@@ -80,7 +80,9 @@
 
 - 运行代码基于 `a3070ea`；本轮已完成首个结构性改动：手动/后台双人首帧只采集一次并注册一次，没有发送真实输入。
 - 首帧回归测试已验证：`tests/test_poe2_capture_test_page.py -k dual_first_frame_experiment_renders_two_players_without_timer` 通过。
-- 下一步是给纯双人 tracker 增加短时预测保持和可验证的恢复边界。
+- 纯双人 tracker 已增加短时预测保持：静止/暂时不可测墙体复用上一变换，marker 失配和墙体异常时返回最后可信角色位置，并输出预测诊断；地图失效仍保留原有恢复边界。
+- 纯 tracker 回归测试已通过：`tests/poe2_live_terrain/test_multiplayer_motion.py`（25 passed）。
+- 下一步是给 live worker 增加候选阶段和总耗时统计，验证 latest-only 的有效处理频率。
 
 ## 用户确认的设计方向（2026-10-07）
 
