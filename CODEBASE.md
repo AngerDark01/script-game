@@ -6486,6 +6486,10 @@ second claim after an explicit fresh-sync boundary.
 
 职责：用 `MoveProbe`、`DualTargetProbe`、`FollowProbe` 管理目标生命周期，不实现路径规划。`select()` 在未 arm 时抛出 `RuntimeError`；双人目标标记为 `shared_target`，跟随源更新标记为 `follow_source`，三者最终都交给共享运动 runtime。
 
+### `features/poe2/live_terrain/experimental/follow/controller.py`
+
+职责：提供 Qt-free `FollowController`，统一目标刷新和 shared runtime tick。`start()`/`stop()` 只改变生命周期，`tick(now_ms)` 在运行时调用 `refresh_simulated_target` 后返回 runtime observations；未启动返回空映射，不访问设备。
+
 ### 当前实验重构数据流（verified）
 
 ```

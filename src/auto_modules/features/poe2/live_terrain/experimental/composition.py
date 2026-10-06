@@ -10,6 +10,7 @@ from .adapters import AdapterBundle
 from .diagnostics import EventRecorder
 from .multiplayer import DualMotionController
 from .probes import DualTargetProbe, FollowProbe, MoveProbe
+from .follow import FollowController
 from .recovery import RecoveryController
 
 
@@ -23,6 +24,7 @@ class Poe2ExperimentComposition:
     move_probe: MoveProbe
     dual_target_probe: DualTargetProbe
     follow_probe: FollowProbe
+    follow_controller: FollowController | None = None
 
 
 def build_experiment_composition(

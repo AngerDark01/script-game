@@ -28,11 +28,11 @@
 | B2 | 统一目标源、运动决策和输出边界 | 已完成 | 待提交 |
 | B3 | 统一定位、局部跟踪和重定位接口 | 已完成（首轮） | `6690a6e` |
 | B4 | 统一日志、快照和性能统计 | 已完成（首轮） | `6690a6e` |
-| C1 | 移除页面内算法实现 | 进行中 | — |
+| C1 | 移除页面内算法实现 | 已完成（首轮边界） | 待提交 |
 | C2 | 建立 composition 和离线 replay | 已完成（首轮） | 待提交 |
 | C3 | 让实验核心脱离 Qt 运行 | 已完成（首轮） | 待提交 |
-| C4 | 完整人工链路审查、回归和实机边界审查 | 未开始 | — |
-| C5 | 评估可迁移到正式底层的通用能力 | 未开始 | — |
+| C4 | 完整人工链路审查、回归和实机边界审查 | 已完成 | 待提交 |
+| C5 | 评估可迁移到正式底层的通用能力 | 已完成（仅评估） | 待提交 |
 
 ## 当前基线
 
@@ -51,6 +51,28 @@
 - A5 首轮：`MoveProbe`、`DualTargetProbe`、`FollowProbe` 已成为目标生命周期控制器；页面点击和启动/停止 façade 已接入，三种目标源仍共享原有运动 runtime。
 - B2：新增 `experimental/adapters` 的 capture/memory/window/gamepad 端口和无副作用 fake；composition 接受 `AdapterBundle`，页面仍通过兼容 façade 装配。
 - C2/C3 首轮：`ReplayManifest`、可索引 `ReplaySource` 和 `HeadlessExperiment` 已建立；生命周期、帧摄入、恢复和停止可在无 Qt 环境回放。
+- C1 首轮边界：新增 `FollowController`，把目标刷新和 runtime tick 形成 Qt-free 契约；页面旧入口继续作为 façade，未复制第二套路径算法。
+
+## C4 人工链路审查
+
+```text
+initialize_session/capture_map
+  → 首帧 worker 读取地图与人物锚点
+  → DualMotionController/router 按 generation 接受视觉帧
+  → start_follow_experiment / start_dual_target_experiment
+  → probe lifecycle arm + target source update
+  → shared SimulatedFollowRuntime.tick
+  → FollowObservation → ProgramFollowOutput / preview
+  → stale/occlusion/contact evidence → RecoveryController episode
+  → fresh frame/relocalization → runtime resume
+  → explicit stop/shutdown → neutral + release + timer cleanup
+```
+
+人工逐步核对结果：初始化缺地图时不启动；旧 worker generation 被丢弃；目标点击先做 source→native round-trip 和边界校验；未 arm 探针不会接受目标；runtime 只在有效帧/恢复阶段 tick；恢复是非终止状态，成功 fresh frame 后重新进入 tracking；显式停止才释放输出和清理 timer。页面仍存在重型编排，这是 C1 后续拆分风险，但不产生第二套算法。
+
+## C5 候选下沉评估（不执行迁移）
+
+满足无 PoE2 术语、无 Qt/Win32、无真实副作用且已有独立测试的候选：`TargetSource`/`FollowController`、`RecoveryController` 的 episode/backoff、`PositionEstimate`、`ReplaySource`/`HeadlessExperiment`、`DiagnosticEvent`/`EventRecorder`。`DualMotionController`、地图变换、PoE2 movement basis、marker 颜色和页面 façade 暂不下沉。
 
 ## 迁移原则
 

@@ -9496,3 +9496,17 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **覆盖进度更新：** 新增文件标记为 verified；跟随和双人目标页面编排仍为 partial，保留 C1 风险。
 **关键发现：** adapter 与 headless runner 无 Qt/真实设备副作用；页面只在目标生命周期接入探针控制器，路径与输出算法仍在共享 runtime。
 **修订旧结论：** 原先认为 A5 只有占位 controller；现在确认三种目标生命周期已实际接入页面，但副作用边界仍未完全替换。
+
+# 2026-10-06 — C1 边界、C4 人工链路与 C5 候选评估
+
+- C1：新增 Qt-free `FollowController`，目标刷新与 shared runtime tick 有明确边界；页面入口保留 façade，未复制路径算法。
+- C4 人工审查：核对初始化→首帧→generation 帧路由→目标源→shared runtime→输出→视觉失效/恢复 episode→fresh frame resume→显式停止清理；确认旧 worker 丢弃、目标边界校验、恢复非终止和 stop 释放路径均有对应实现/回归。
+- C5：候选仅列出 `TargetSource`/`FollowController`、`RecoveryController`、`PositionEstimate`、`ReplaySource`/`HeadlessExperiment`、`DiagnosticEvent`/`EventRecorder`；没有执行正式底层迁移。
+- 验证：新增 follow controller 回归；下一步运行全量 PoE2 测试、编译、diff check，并提交最终检查点。
+
+### C. 最终阶段验证
+- PoE2 实验模块与页面聚焦回归：`115 passed`。
+- `python -m compileall -q src`：通过。
+- `git diff --check`：通过。
+- 仓库全量 pytest：`1089 passed, 2 skipped, 1 failed`；唯一失败为环境缺少 `pydirectinput` distribution metadata 的既有 packaging 测试，与本次 PoE2 改动无关。
+- 人工审查确认：所有真实设备动作仍只发生在 UI/Host adapter 边界；headless/fake/replay 测试不发送真实输入。
