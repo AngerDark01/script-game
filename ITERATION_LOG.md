@@ -9967,3 +9967,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(implemented)` 新增 `tests/poe2_live_terrain/test_dual_follow_replay.py`，覆盖单帧 marker 失配、空墙体短时预测和视觉恢复。
 - `(verified)` 页面全量 `105 passed`；双人 worker/motion/replay `37 passed`；首帧专项 `19 passed`。
 - `(next)` 运行 compileall、diff check 和全量 PoE2 相关回归，确认没有破坏首帧/双人生命周期。
+
+## [第 2026-10-07-24 轮] 2026-10-07 — 方案 A 完成专项验证
+
+- `(verified)` `tests/poe2_live_terrain`、`tests/test_poe2_capture_test_page.py`、`tests/test_poe2_dual_motion_worker.py` 合计 548 passed。
+- `(verified)` `python -m compileall -q src` 与 `git diff --check` 通过。
+- `(boundary)` 本轮只完成离线/页面回归，没有真实游戏窗口或手柄输入验证。
+- `(next)` 用户实机测试时重点查看首帧是否只采一帧、有效 FPS、candidate/total timing，以及异常帧是否保持预测而不立即停止。

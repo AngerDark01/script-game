@@ -86,6 +86,10 @@
 - worker 回归测试已通过：`tests/test_poe2_dual_motion_worker.py`（10 passed）；页面双人专项（13 passed）。
 - 预览/地图 overlay 已限制到 12Hz，控制状态仍消费每个 latest result；旧 worker 测试 fake 对象保持兼容。
 - 离线回放已覆盖一帧 marker 缺失和一帧空墙体后恢复；下一步执行完整专项回归和 compileall。
+- 专项全量回归已通过：`tests/poe2_live_terrain` + PoE2 页面/worker 共 548 passed；`compileall` 和 `git diff --check` 通过。
+- 当前提交序列为 `c879d64`、`c34a170`、`416604a`、`92c316c`、`e20ffad`，均建立在 `a3070ea` 之上。
+- 未跟踪的 `data/poe2_live_terrain_test/occlusion_diagnostics/` 是既有运行 evidence，本轮未删除或纳入代码提交。
+- 仍未进行真实游戏窗口/手柄测试；下一步需在用户明确测试时观察首帧耗时、worker timing 和异常帧 prediction diagnostics。
 
 ## 用户确认的设计方向（2026-10-07）
 
