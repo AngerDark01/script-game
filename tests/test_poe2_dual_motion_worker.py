@@ -42,6 +42,9 @@ def test_dual_motion_worker_replaces_stale_results_without_queueing():
     )
     first = worker._capture_one()
     second = worker._capture_one()
+    assert first.candidate_ms >= 0.0
+    assert first.total_worker_ms >= first.capture_ms
+    assert second.total_worker_ms >= second.capture_ms
     worker._offer(first)
     worker._offer(second)
 

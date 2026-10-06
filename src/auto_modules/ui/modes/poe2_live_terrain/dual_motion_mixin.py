@@ -692,12 +692,18 @@ class Poe2DualMotionMixin:
             )
             self._logger.info(
                 "step=dual_motion.timing frame=%s capture_ms=%.1f recognition_ms=%.1f "
-                "tracking_ms=%.1f total_worker_ms=%.1f dropped_results=%s completed_frames=%s",
+                "candidate_ms=%.1f tracking_ms=%.1f total_worker_ms=%.1f "
+                "processing_ema_ms=%.1f adaptive_interval_ms=%.1f effective_fps=%.1f "
+                "dropped_results=%s completed_frames=%s",
                 self._dual_motion_frame_count,
                 result.capture_ms,
                 result.recognition_ms,
+                result.candidate_ms,
                 result.tracking_ms,
-                result.capture_ms + result.recognition_ms + result.tracking_ms,
+                result.total_worker_ms,
+                worker.processing_ema_ms,
+                worker.adaptive_interval_ms,
+                worker.effective_fps,
                 worker.dropped_results,
                 worker.completed_frames,
             )

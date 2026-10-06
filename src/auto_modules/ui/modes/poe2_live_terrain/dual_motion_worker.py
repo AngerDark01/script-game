@@ -35,6 +35,8 @@ class DualMotionFrameResult:
     capture_ms: float
     recognition_ms: float
     tracking_ms: float
+    candidate_ms: float = 0.0
+    total_worker_ms: float = 0.0
     processed: Any | None = None
     candidates: tuple[Any, ...] = ()
 
@@ -89,6 +91,7 @@ class Poe2DualMotionWorker(QObject):
         self.consecutive_failures = 0
         self.processing_ema_ms = 0.0
         self.adaptive_interval_ms = 1000.0 / self.fps
+        self._started_at: float | None = None
 
     @property
     def is_running(self) -> bool:
@@ -102,7 +105,16 @@ class Poe2DualMotionWorker(QObject):
             name=f"poe2-dual-motion-{self.generation}",
             daemon=True,
         )
+        self._started_at = time.perf_counter()
         self._thread.start()
+
+    @property
+    def effective_fps(self) -> float:
+        """Return completed frame rate since this worker started."""
+        if self._started_at is None:
+            return 0.0
+        elapsed = max(1e-6, time.perf_counter() - self._started_at)
+        return float(self.completed_frames) / elapsed
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -193,8 +205,10 @@ class Poe2DualMotionWorker(QObject):
             mask,
             (float(shape[1]) / 2.0, float(shape[0]) / 2.0),
         )
-        tracking_started = time.perf_counter()
+        candidate_started = time.perf_counter()
         candidates = marker_candidates_from_observation(observation, max_candidates=6)
+        candidate_ms = (time.perf_counter() - candidate_started) * 1000.0
+        tracking_started = time.perf_counter()
         with self._lock:
             hints = dict(self._prediction_hints)
         state = (
@@ -202,6 +216,7 @@ class Poe2DualMotionWorker(QObject):
             if hints else self.tracker.tick(frame, candidates)
         )
         tracking_ms = (time.perf_counter() - tracking_started) * 1000.0
+        total_worker_ms = (time.perf_counter() - started) * 1000.0
         return DualMotionFrameResult(
             state=state,
             captured_at_ms=captured_at_ms,
@@ -210,6 +225,8 @@ class Poe2DualMotionWorker(QObject):
             capture_ms=capture_ms,
             recognition_ms=recognition_ms,
             tracking_ms=tracking_ms,
+            candidate_ms=candidate_ms,
+            total_worker_ms=total_worker_ms,
             processed=processed,
             candidates=candidates,
         )

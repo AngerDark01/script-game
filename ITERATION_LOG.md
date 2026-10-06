@@ -9953,3 +9953,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(diagnostic)` 状态增加 `prediction_active`、`prediction_reason`、`prediction_age_ms`、`wall_prediction_hold`，便于区分视觉缺失与地图失效。
 - `(verified)` `tests/poe2_live_terrain/test_multiplayer_motion.py`：25 passed。
 - `(next)` 为 live worker 增加候选提取和总处理耗时字段，继续保持 latest-only。
+
+## [第 2026-10-07-22 轮] 2026-10-07 — worker 阶段耗时与有效帧率诊断
+
+- `(implemented)` `DualMotionFrameResult` 增加 `candidate_ms`、`total_worker_ms`；worker 增加 processing EMA、adaptive interval、effective FPS。
+- `(implemented)` 双人 motion timing 日志现在区分 capture/recognition/candidate/tracking/total，并记录 dropped/completed。
+- `(verified)` worker 测试 10 passed；页面双人专项 13 passed。
+- `(next)` 继续隔离 UI 预览/evidence，补离线回放覆盖异常帧保持与恢复。
