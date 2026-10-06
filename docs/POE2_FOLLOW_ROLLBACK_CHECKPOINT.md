@@ -148,3 +148,15 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - 优点是更容易把处理频率提高到有效 25–30Hz；缺点是生命周期、时间戳和跨线程退出复杂，必须先有 A 的阶段耗时基线。
 
 当前建议先做方案 A，确认 `capture/recognition/candidate/tracking/render` 各段均低于目标周期后，再决定是否拆成方案 B。不能先上多进程或 C/Cython；只有 profiling 证明 Python 代码占主耗时，才考虑把单一热函数迁移到 NumPy/OpenCV/Cython。
+
+## 离线证据核查（2026-10-07，本轮）
+
+- `(confirmed)` `occlusion_diagnostics` 当前共有 83 个 `evidence.json`，其中 45 个 `recovery_required`、38 个 `degraded`；这些文件各自只有单帧 `candidates/diagnostics`，没有同一 session 的上一帧和恢复帧，因此不能单独证明连续跟随恢复或有效 FPS。
+- `(confirmed)` 历史 evidence 的恢复原因主要为 `markers_missing`、`markers_partial_grace`、`markers_missing_grace` 和 `wall_and_local_match_failed`；部分旧 evidence 仍包含角色观察年龄已经超过 `max_age_ms` 的信息，不能把它们当作当前实现的实时输出。
+- `(usable)` `data/poe2_live_terrain_test/samples/dual_player_20260925/raw.png` 与 `memory_probes/dual_player_20260925_probe/player-memory-probe-latest.json` 同属 `MapFlotsam:73681455`，图片为 300×300，探针提供双角色 native 网格 `(956.5,430.5)`、`(962.5,424.5)`；这是当前唯一可直接做“真实 raw + 同实例双锚点”离线首帧候选实验的历史样本。
+- `(boundary)` `latest.npz` 和 `dual-debug-current` 探针属于其他地图实例，不能与 `dual_player_20260925/raw.png` 拼接验证注册；`multiframe_sessions` 及部分旧 sample 目录存在 Windows ACL 拒绝，不能假设其中有可读连续帧。
+- `(next)` 先用同实例双人 raw 做低日志候选/注册耗时回放，再用现有合成 replay 验证“正常→单帧异常→恢复”；若要实证真实连续帧处理频率，需要用户补采最小连续序列。
+- `(implemented)` 新增 `tests/poe2_live_terrain/test_historical_dual_replay.py`：直接读取已归档的 `dual_player_20260925/raw.png`、`wall.png` 和配置颜色，执行一次首帧注册以及真实 wall/raw 的跟踪恢复回放；测试不写应用日志。
+- `(verified)` 历史 raw 回归 2 passed：首帧结果 `accepted`，最佳 pair confidence ≥ 0.90、shape quality ≥ 0.85；`tracking → degraded(prediction_active) → tracking` 恢复链通过；worker 路径连续 5 次最大耗时 < 33ms，`dropped_results=0`。
+- `(boundary)` 该首帧注册使用同一张历史墙体图构造受控几何夹具，避免把不同实例的 native terrain 拼在一起；它验证真实图像上的单次注册流程和候选质量，不证明真实 native 全图配准耗时。
+- `(diagnostic)` 对 83 张历史异常 raw 使用 evidence 自带颜色配置做无日志批量检测，平均检测耗时约 0.82ms；56/83 张仍提取到至少两个候选，23/83 张没有候选。后者属于输入确实缺失，不能靠提高采样频率单帧修复，只能由上一帧预测/后续恢复帧处理。

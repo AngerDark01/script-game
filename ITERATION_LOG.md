@@ -9991,3 +9991,17 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 
 - `(fixed)` `prediction_active` 改为按角色可见性计算，单角色失配时也能明确标记预测保持。
 - `(verified)` tracker/replay 27 passed；compileall 与 diff check 通过。
+
+## [第 2026-10-07-28 轮] 2026-10-07 — 离线证据边界核查
+
+- `(confirmed)` 历史 `occlusion_diagnostics` 仅有 83 个单帧 evidence（45 recovery、38 degraded），没有同 session 连续帧，不能伪造连续跟随恢复或有效 FPS 结论。
+- `(usable)` 找到同实例可复用样本：`samples/dual_player_20260925/raw.png` + `memory_probes/dual_player_20260925_probe/player-memory-probe-latest.json`，实例 `MapFlotsam:73681455`，包含双角色 native 锚点。
+- `(boundary)` `latest.npz` 属于其他实例；`multiframe_sessions`/部分旧 sample 受 ACL 限制，当前不纳入回放输入。
+- `(next)` 对同实例 raw 做低日志首帧候选/注册回放；连续实时性能仍需连续帧采样或 worker timing 数据。
+
+## [第 2026-10-07-29 轮] 2026-10-07 — 同实例历史 raw 离线回放
+
+- `(implemented)` 新增 `tests/poe2_live_terrain/test_historical_dual_replay.py`，低日志读取已归档双人 raw/wall，执行单次首帧注册、异常帧预测保持和恢复帧回归。
+- `(verified)` 2 passed：真实 raw 首帧 `accepted`，pair confidence/shape quality 达到离线门槛；跟踪状态为 `tracking → degraded(prediction_active) → tracking`；worker 5 次连续处理最大耗时低于 33ms，未产生 dropped result。
+- `(boundary)` 注册使用同一历史 wall 图构造几何夹具；历史数据没有同实例完整 native terrain 和连续 raw，因此不能据此宣称实机全局定位或真实有效 FPS 已证明。
+- `(diagnostic)` 83 张旧异常 raw 批量检测平均约 0.82ms；56 张有至少两个候选，23 张没有候选，支持“视觉缺失时保持上一帧”的设计判断。
