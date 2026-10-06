@@ -84,7 +84,8 @@
 - 纯 tracker 回归测试已通过：`tests/poe2_live_terrain/test_multiplayer_motion.py`（25 passed）。
 - live worker 已增加 `candidate_ms`、`total_worker_ms`、processing EMA、自适应间隔和 effective FPS 诊断；latest-only 机制未改变。
 - worker 回归测试已通过：`tests/test_poe2_dual_motion_worker.py`（10 passed）；页面双人专项（13 passed）。
-- 下一步是把预览/evidence 从控制帧进一步隔离，并增加离线回放验证单帧异常不停止跟随。
+- 预览/地图 overlay 已限制到 12Hz，控制状态仍消费每个 latest result；旧 worker 测试 fake 对象保持兼容。
+- 离线回放已覆盖一帧 marker 缺失和一帧空墙体后恢复；下一步执行完整专项回归和 compileall。
 
 ## 用户确认的设计方向（2026-10-07）
 

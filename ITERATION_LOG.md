@@ -9960,3 +9960,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(implemented)` 双人 motion timing 日志现在区分 capture/recognition/candidate/tracking/total，并记录 dropped/completed。
 - `(verified)` worker 测试 10 passed；页面双人专项 13 passed。
 - `(next)` 继续隔离 UI 预览/evidence，补离线回放覆盖异常帧保持与恢复。
+
+## [第 2026-10-07-23 轮] 2026-10-07 — UI 渲染节流与离线回放
+
+- `(implemented)` 双人控制状态每个 latest result 都更新，预览和地图 overlay 限制到 12Hz，避免 Qt 场景绘制拖慢控制帧。
+- `(implemented)` 新增 `tests/poe2_live_terrain/test_dual_follow_replay.py`，覆盖单帧 marker 失配、空墙体短时预测和视觉恢复。
+- `(verified)` 页面全量 `105 passed`；双人 worker/motion/replay `37 passed`；首帧专项 `19 passed`。
+- `(next)` 运行 compileall、diff check 和全量 PoE2 相关回归，确认没有破坏首帧/双人生命周期。

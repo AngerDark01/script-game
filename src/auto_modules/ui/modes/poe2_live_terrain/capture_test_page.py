@@ -267,6 +267,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._dual_last_handled_recovery_revision = 0
         self._dual_motion_controller = DualMotionController()
         self._dual_last_ui_render_at = 0.0
+        self._dual_last_overlay_render_at = 0.0
         self._dual_frame_failure_suppressed = 0
         self._dual_evidence_count = 0
         self._dual_evidence_signature = None

@@ -216,6 +216,7 @@ class Poe2DualMotionMixin:
             self._dual_motion_frame_count = 0
             self._dual_evidence_count = 0
             self._dual_evidence_signature = None
+            self._dual_last_overlay_render_at = 0.0
             self._dual_map_transform = initial.transform
             self._dual_follow_reference = reference
             self._latest_dual_state = initial
@@ -681,7 +682,16 @@ class Poe2DualMotionMixin:
             )
         source_size = self._dual_map_source_size
         if source_size is not None:
-            self._render_dual_motion_state(state, source_size)
+            # Control state is consumed every time, but map/overlay painting
+            # is deliberately capped at the preview cadence.  Full Qt scene
+            # updates must not reduce the effective tracking rate.
+            render_now = time.perf_counter()
+            if (
+                render_now - self._dual_last_overlay_render_at >= 1.0 / 12.0
+                or state.status != "tracking"
+            ):
+                self._dual_last_overlay_render_at = render_now
+                self._render_dual_motion_state(state, source_size)
         if self._dual_motion_frame_count % 30 == 0 or state.status != "tracking":
             self._logger.info(
                 "step=dual_motion.tick frame=%s status=%s reason=%s quality=%.3f "
@@ -698,12 +708,12 @@ class Poe2DualMotionMixin:
                 self._dual_motion_frame_count,
                 result.capture_ms,
                 result.recognition_ms,
-                result.candidate_ms,
+                getattr(result, "candidate_ms", 0.0),
                 result.tracking_ms,
-                result.total_worker_ms,
-                worker.processing_ema_ms,
-                worker.adaptive_interval_ms,
-                worker.effective_fps,
+                getattr(result, "total_worker_ms", result.capture_ms + result.recognition_ms + result.tracking_ms),
+                getattr(worker, "processing_ema_ms", 0.0),
+                getattr(worker, "adaptive_interval_ms", 0.0),
+                getattr(worker, "effective_fps", 0.0),
                 worker.dropped_results,
                 worker.completed_frames,
             )
