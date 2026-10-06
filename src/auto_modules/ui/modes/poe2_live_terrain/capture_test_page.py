@@ -1388,6 +1388,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._logger.info("step=follow_experiment.restart_previous_session")
             self.stop_follow_experiment()
         self.stop_dual_target_experiment()
+        self._experiment_composition.follow_probe.arm()
         state = self._latest_dual_state
         reference = self._dual_follow_reference
         if state is None or reference is None or self._dual_map_transform is None:
@@ -1621,6 +1622,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self.stop_dual_target_experiment()
         self.stop_follow_experiment()
         self.stop_program_move_probe()
+        self._experiment_composition.dual_target_probe.arm()
         map_identity = MapIdentity(
             str(self._snapshot.metadata.area_id), str(self._snapshot.metadata.instance_id),
         )
@@ -1668,6 +1670,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         )
 
     def stop_dual_target_experiment(self, *, _preserve_recovery: bool = False) -> None:
+        self._experiment_composition.dual_target_probe.stop()
         active = self._dual_target_runtime is not None
         if not _preserve_recovery:
             self._dual_target_recovery = None
@@ -1880,6 +1883,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     def stop_follow_experiment(
         self, *, _preserve_recovery: bool = False, reason: str = "requested",
     ) -> None:
+        self._experiment_composition.follow_probe.stop()
         reason = self._follow_stop_reason or reason
         self._follow_stop_reason = None
         self._follow_recovery_pending = False
@@ -2111,6 +2115,12 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             point[0],
             point[1],
         )
+        if self._program_probe_waiting_click:
+            self._experiment_composition.move_probe.select(point)
+        elif self._dual_target_runtime is not None:
+            self._experiment_composition.dual_target_probe.select(point)
+        elif self._follow_runtime is not None:
+            self._experiment_composition.follow_probe.update_from_source(point)
         selected_role = (
             self.program_probe_role_combo.currentData()
             if mode == "program_probe" and hasattr(self, "program_probe_role_combo")

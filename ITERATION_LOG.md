@@ -9463,3 +9463,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 修复：补齐三项显式导入，保持页面 façade 行为不变。
 - 验证：`tests/test_poe2_capture_test_page.py` `89 passed`。
 - 当前边界：页面探针逻辑仍直接编排 runtime、窗口和输出，下一步从 A5 开始接入 `experimental/probes` 控制器，并更新测试与文档。
+
+# 2026-10-06 — A5 探针目标生命周期首轮接入
+
+- 实现：新增 `FollowProbe`；点击移动、双人同目标、跟随目标分别由 `MoveProbe`、`DualTargetProbe`、`FollowProbe` 管理 arm/select/update/stop 生命周期。
+- 组合：`Poe2ExperimentComposition` 统一装配三个探针；页面仍保留既有路径 runtime 和输出逻辑，避免重复实现移动算法。
+- 验证：探针与页面聚焦回归 `92 passed`。
+- 下一步：进入 B2 适配器边界，把窗口、截图、内存和 gamepad 副作用从页面 mixin 迁移到 ports/adapters。

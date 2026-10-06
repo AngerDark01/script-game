@@ -35,3 +35,19 @@ class DualTargetProbe(MoveProbe):
     def select(self, position: tuple[float, float]) -> ProbeTarget:
         target = super().select(position)
         return ProbeTarget(target.position, "shared_target")
+
+
+class FollowProbe(MoveProbe):
+    """Target adapter for a moving follow source.
+
+    The probe deliberately owns only target lifecycle.  Motion planning,
+    localization and output remain in the shared runtime, so click targets,
+    shared targets and live role targets use the same movement path.
+    """
+
+    def update_from_source(self, position: tuple[float, float]) -> ProbeTarget:
+        if not self.armed:
+            self.arm()
+        target = ProbeTarget((float(position[0]), float(position[1])), "follow_source")
+        self.target = target
+        return target

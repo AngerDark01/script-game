@@ -1,5 +1,5 @@
 """Headless movement probe controllers."""
 
-from .controllers import DualTargetProbe, MoveProbe
+from .controllers import DualTargetProbe, FollowProbe, MoveProbe, ProbeTarget
 
-__all__ = ["DualTargetProbe", "MoveProbe"]
+__all__ = ["DualTargetProbe", "FollowProbe", "MoveProbe", "ProbeTarget"]

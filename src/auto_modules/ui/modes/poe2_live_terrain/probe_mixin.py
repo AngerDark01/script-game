@@ -24,6 +24,7 @@ from auto_modules.ui.modes.poe2_live_terrain.presenter import localization_displ
 class Poe2ProbeMixin:
     def start_program_move_probe(self) -> None:
         """Arm a standalone map-point movement test; no input is sent yet."""
+        self._experiment_composition.move_probe.arm()
         self.stop_dual_target_experiment()
         if self._program_probe_timer.isActive() or self._program_probe_waiting_click:
             return
@@ -892,6 +893,7 @@ class Poe2ProbeMixin:
         reason: str | None = None,
         _preserve_recovery: bool = False,
     ) -> None:
+        self._experiment_composition.move_probe.stop()
         stop_reason = reason or "requested"
         previous_ticks = self._program_probe_ticks
         stopped_at_ms = int(time.time() * 1000)
