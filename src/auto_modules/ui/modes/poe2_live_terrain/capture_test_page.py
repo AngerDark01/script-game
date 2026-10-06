@@ -72,6 +72,10 @@ from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localizati
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.dual_motion import (
     RolePredictionHint,
 )
+from auto_modules.features.poe2.live_terrain.experimental.recovery.controller import (
+    RecoveryController,
+    RecoveryObservation,
+)
 from auto_modules.features.poe2.live_terrain.player_position import find_process_id
 from auto_modules.features.poe2.live_terrain.orientation import TerrainOrientation
 from auto_modules.features.poe2.live_terrain.movement import (
@@ -309,6 +313,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason: str | None = None
         self._follow_recovery_episode_suppressed = 0
+        self._recovery_controller = RecoveryController()
         self._dual_target_runtime = None
         self._dual_target_output = None
         self._dual_target_roles: tuple[RoleId, ...] = ()
@@ -1722,6 +1727,9 @@ class Poe2CaptureTestPage(QWidget):
         """Open one recovery episode for the active live-follow session."""
         if self._follow_recovery_episode_active:
             return
+        self._recovery_controller.observe(
+            RecoveryObservation(str(reason), recovery_requested=True)
+        )
         self._follow_recovery_episode_active = True
         self._follow_recovery_episode_reason = str(reason)
         self._follow_recovery_episode_suppressed = 0
@@ -1745,6 +1753,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason = None
         self._follow_recovery_episode_suppressed = 0
+        self._recovery_controller.clear(reason)
         self._follow_recovery_retry_delay_ms = 0
 
     def _continue_live_follow_after_dual_failure(
@@ -3352,6 +3361,7 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason = None
         self._follow_recovery_episode_suppressed = 0
+        self._recovery_controller.clear("follow_started")
         self._follow_live_mode = live_mode
         if live_mode:
             self._enter_live_follow_sync(
@@ -5455,7 +5465,8 @@ class Poe2CaptureTestPage(QWidget):
         self._follow_recovery_retry_scheduled = True
         # Global dual-player registration is expensive. Back off failed
         # attempts instead of starting another computation every second.
-        delay_ms = self._follow_recovery_retry_delay_ms or 5_000
+        retry_decision = self._recovery_controller.schedule_retry(reason)
+        delay_ms = retry_decision.retry_after_ms or self._follow_recovery_retry_delay_ms or 5_000
         delay_ms = min(15_000, max(5_000, int(delay_ms)))
         self._follow_recovery_retry_delay_ms = min(15_000, delay_ms * 2)
         self._logger.info(

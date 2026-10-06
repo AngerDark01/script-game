@@ -9439,3 +9439,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 已创建模块盘点：`docs/plans/2026-10-06-poe2-experiment-module-inventory.md`。
 - A0 当前完成：页面约 6227 行、职责组、共享状态和副作用边界已盘点；待补齐逐符号调用路径、A1 失败测试和 A0 提交。
 - 约束：实验代码不并入正式底层；每阶段更新文档、测试和 Git 检查点；不得发送真实输入。
+
+## 2026-10-06 — A1/A2 状态与恢复模块提取
+
+- A1 新增 Qt-free 状态模型：`experimental/application/models.py`、`experimental/follow/models.py`、`experimental/recovery/models.py`。
+- A2 新增恢复决策模型和 episode/backoff 控制器：`experimental/recovery/controller.py`；页面恢复入口开始通过 controller 记录 episode、清理和 retry backoff，旧行为保持兼容。
+- 新增模型与恢复控制器测试，页面聚焦回归 `95 passed`，`compileall` 与 `git diff --check` 通过。
+- 下一步：提取双人视觉 worker/frame router，保持旧页面方法作为 façade。
