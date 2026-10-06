@@ -9906,3 +9906,36 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 动态关联的 pair geometry、目标投影的状态契约、六向探针评分字段已与代码一致。
 - 受影响调用链复核：`DualVisualTracker._assign()` → `MarkerAssociator.assign()`；`SimulatedFollowRuntime._plan_safe_route()` → `WalkableTargetProjector.project()`；`_cooldown_probe_command()` → `FollowObservation.vector` → `ProgramFollowOutput.apply()`。
 - `CODEBASE.md` 已补充新增文件及算法边界；未改变正式定位/正式底层引擎。
+## [第 2026-10-07-17 轮] 2026-10-07 — 回退负优化并进入只读对照审查
+
+### A. 本轮目标
+
+- 将代码恢复到 `a3070ea`，撤销首帧候选和连通域相关负优化。
+- 对比正式绘图页、正式导航页与实验双人页的采集、处理、渲染、线程和恢复边界。
+- 在形成根因和证据前不继续改运行代码。
+
+### C. 当前结果
+
+- `(verified)` HEAD 已回退到 `a3070ea`；`a618207`、`333d1d8`、`0e887e9` 不再位于当前工作树历史。
+- `(finding)` 1:56 后的首帧耗时回归与候选数量/组合搜索边界相关；双人实时崩溃尚未从日志获得稳定 traceback，仍需对照正式链路。
+- `(next)` 读取正式绘图页、正式导航页和实验 worker 的完整帧链路，建立只读性能对照表。
+
+## [第 2026-10-07-18 轮] 2026-10-07 — 完成正式/实验链路对照（只读）
+
+- `(confirmed)` 首帧手动入口仍在 Qt GUI 线程同步执行 3 次截图、识别和 `DualFirstFrameRegistrar`；候选上限 6 时为 `6P2=30` 组有序排列，叠加几何搜索，首帧几十秒/界面无响应是确定性结构问题。
+- `(confirmed)` 正式绘图与导航均采用单帧流水线、上一帧回退、UI只消费结果；实验双人仅实时 worker latest-only，首帧和预览/证据归档边界仍不一致。
+- `(decision)` 本轮不改运行代码、不继续调参数；后续先实现后台首帧任务边界、候选有界筛选和阶段耗时诊断，并以回归测试验证 worker generation/迟到 signal/失败清理。
+- `(reference)` 记录 OpenCV video tracking、shape/contour 与 ROS2 image_transport/image_pipeline 的可借鉴边界到 `docs/POE2_FOLLOW_ROLLBACK_CHECKPOINT.md`。
+
+## [第 2026-10-07-19 轮] 2026-10-07 — 用户确认单帧首帧与异常帧回退方向
+
+- `(decision)` 首帧人物静止时只采一帧并注册一次，取消无收益的三帧共识。
+- `(decision)` 实时链路以 latest-only 和有效处理频率为目标；单帧视觉失配沿用上一帧可信状态并结合速度/手柄方向短时预测，恢复后融合视觉观测。
+- `(constraint)` 单帧异常不停止跟随、不立即全局重定位；只有预测不确定度或地图有效性越界才升级恢复。
+- `(plan)` 先实施单线程固定节拍方案 A 并补阶段耗时/状态机回归，再依据 profiling 决定是否拆三级流水线方案 B。
+
+## [第 2026-10-07-20 轮] 2026-10-07 — 首帧改为单次采样
+
+- `(implemented)` `capture_test_page._compute_dual_first_frame()` 的手动/恢复首帧采样次数从 3 改为 1，移除无收益的帧间等待。
+- `(verified)` 新增调用计数回归断言；目标页面测试通过（1 passed）。
+- `(next)` 继续实现纯 tracker 的短时预测保持和恢复融合，仍不调颜色/面积/全局置信度参数。

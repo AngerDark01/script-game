@@ -1012,7 +1012,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         configured_profiles = getattr(self.monitor_config, "dual_marker_profiles", ())
         profiles = tuple(MarkerColorProfile.from_dict(item) for item in configured_profiles)
         captured_frames = []
-        capture_attempts = 3
+        # The first-frame contract is a single snapshot.  The player is
+        # stationary during registration; repeated captures only multiply the
+        # expensive dual assignment/shape search and block the GUI when this
+        # method is invoked from the manual experiment button.
+        capture_attempts = 1
         for attempt in range(1, capture_attempts + 1):
             candidate_frame = preview_provider(self.monitor_config)
             if candidate_frame is None:
@@ -1051,8 +1055,6 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     attempt, capture_attempts, len(candidate_observation.candidates),
                     [candidate.local_position for candidate in candidate_observation.candidates],
                 )
-            if attempt < capture_attempts:
-                time.sleep(0.04)
         if not captured_frames:
             raise RuntimeError("截图后端返回空帧")
         reference = orientation.transform_reference(build_reference(snapshot))

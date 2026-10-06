@@ -506,6 +506,7 @@ def test_localization_interval_honors_configured_fps_instead_of_legacy_sample_ca
 def test_dual_first_frame_experiment_renders_two_players_without_timer(tmp_path):
     _app()
     recognizer = FakeRecognizer()
+    capture_calls = []
 
     class _DualSource:
         def read_many(self, expected_instance_id):
@@ -553,23 +554,25 @@ def test_dual_first_frame_experiment_renders_two_players_without_timer(tmp_path)
         FakeService(),
         archive=FakeArchive(tmp_path),
         monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
-        preview_provider=lambda _config: np.zeros((20, 20, 3), dtype=np.uint8),
+        preview_provider=lambda _config: (capture_calls.append(True) or np.zeros((20, 20, 3), dtype=np.uint8)),
         recognizer=recognizer,
         dual_player_position_source=_DualSource(),
         dual_first_frame_factory=lambda provider: _DualExperiment(provider),
     )
     page.initialize_session()
     page.capture_map()
+    capture_calls.clear()
     page.dual_first_frame_button.click()
-    page.refresh_preview()
 
     assert page.dual_first_frame_button.isEnabled()
+    assert len(capture_calls) == 1
     assert "双人首帧：accepted" in page.dual_first_frame_status_label.text()
     assert "p1" in page.dual_first_frame_status_label.text()
     assert "p2" in page.dual_first_frame_status_label.text()
     assert "方向 90.0°，水平镜像" in page.dual_first_frame_status_label.text()
     assert page.map_widget.original_pixmap is not None
     assert not page.hybrid_timer.isActive()
+    page.refresh_preview()
     assert recognizer.combined_options[-1] == {
         "exclude_player": False,
         "exclude_dynamic": False,
