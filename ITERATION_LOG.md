@@ -9478,3 +9478,21 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - 回放：`ReplayManifest`、`ReplaySource.at()` 和 `HeadlessExperiment` 支持无 Qt 的开始、帧摄入、恢复、停止事件序列。
 - 验证：实验模块、页面回归、编译和差异检查通过，当前 `114 passed`。
 - 下一步：补齐 C1 页面 façade 的剩余跟随编排，并进行 C4 全链路人工审查；禁止真实输入测试。
+# [SYNC] 2026-10-06 — adapters、headless runner、probe lifecycle同步
+
+### A. 本轮目标（阅读前声明）
+**直接变更文件：**
+- `experimental/adapters/ports.py`, `fakes.py`, `__init__.py`
+- `experimental/application/headless.py`, `application/__init__.py`
+- `experimental/composition.py`, `experimental/replay.py`
+- `experimental/probes/controllers.py`, `ui/.../capture_test_page.py`, `ui/.../probe_mixin.py`
+
+**预计连带影响：** composition 装配、页面目标点击/启停 façade、实验生命周期与回放测试。
+**本轮想弄清楚：** 新增 adapter 是否保持 Qt-free，页面接入是否只改变生命周期而未改变移动 runtime；headless 状态转移是否可独立运行。
+
+### C. SYNC 结果
+**连带重读文件：** `adapters/ports.py`、`adapters/fakes.py`、`application/headless.py`、`composition.py`、`replay.py`、`capture_test_page.py` 的探针/跟随入口。
+**CODEBASE.md 更新内容：** 增加 adapter、headless、replay、probe 模块职责、目标流和风险登记。
+**覆盖进度更新：** 新增文件标记为 verified；跟随和双人目标页面编排仍为 partial，保留 C1 风险。
+**关键发现：** adapter 与 headless runner 无 Qt/真实设备副作用；页面只在目标生命周期接入探针控制器，路径与输出算法仍在共享 runtime。
+**修订旧结论：** 原先认为 A5 只有占位 controller；现在确认三种目标生命周期已实际接入页面，但副作用边界仍未完全替换。

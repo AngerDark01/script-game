@@ -6464,3 +6464,47 @@ Risk boundary: if a recovery worker never produces a fresh complete frame, the e
 suppresses repeated global recovery requests by design; the existing one-second retry path remains the only
 retry owner. Regression coverage includes 100 repeated requests in one episode, one claim/restart, and a
 second claim after an explicit fresh-sync boundary.
+## PoE2 实验模块化增量（verified）
+
+### `features/poe2/live_terrain/experimental/adapters/ports.py`
+
+职责：定义实验截图、内存、前台窗口和手柄的无 Qt/Win32 协议，以及组合用的 `AdapterBundle`。该文件没有设备副作用，具体实现由 UI/Host adapter 注入。
+
+### `features/poe2/live_terrain/experimental/adapters/fakes.py`
+
+职责：提供离线回放使用的 `StaticMemory`、`StaticWindow`、`RecordingGamepad`。内存读取只递增计数，窗口返回固定前台状态，手柄把命令记录到内存列表；不会访问真实进程或发送输入。
+
+### `features/poe2/live_terrain/experimental/application/headless.py`
+
+职责：提供 `HeadlessExperiment` 生命周期 runner。`start()` 建立 RUNNING 会话，`ingest()` 只接受 RUNNING/RECOVERING 状态并记录有序帧事件，`recover()` 转入 RECOVERING，`stop()` 转入 STOPPED；未启动时摄入帧抛出 `RuntimeError`。该 runner 不创建 QApplication、不读取设备。
+
+### `features/poe2/live_terrain/experimental/replay.py`
+
+职责：定义 `ReplayFrame`、`ReplayManifest` 和只读 `ReplaySource`。manifest 提供 replay_id、地图实例、场景、版本和标签；source 在构造时冻结帧序列，`at()` 进行确定性索引访问。
+
+### `features/poe2/live_terrain/experimental/probes/controllers.py`
+
+职责：用 `MoveProbe`、`DualTargetProbe`、`FollowProbe` 管理目标生命周期，不实现路径规划。`select()` 在未 arm 时抛出 `RuntimeError`；双人目标标记为 `shared_target`，跟随源更新标记为 `follow_source`，三者最终都交给共享运动 runtime。
+
+### 当前实验重构数据流（verified）
+
+```
+地图点击/角色目标
+  → capture_test_page._on_follow_map_click(display_x, display_y)
+  → localization_source_point(...) 得到 native target
+  → composition.move_probe / dual_target_probe / follow_probe 更新目标状态
+  → 页面既有 shared follow runtime 计算 route/vector
+  → ProgramFollowOutput → 注入的 gamepad adapter
+```
+
+```
+ReplayFrame → HeadlessExperiment.ingest(captured_at_ms, payload)
+  → ExperimentRuntime phase transition
+  → EventRecorder DiagnosticEvent sequence
+```
+
+### 当前风险登记（verified/partial）
+
+- **P1 `capture_test_page.start_follow_experiment` / `_tick_follow_experiment_impl`**：页面仍直接编排 runtime、窗口前台校验和输出，尚未完全收口到 controller/adapter；触发条件是 UI 页面运行而不是 headless composition。建议 C1 继续把 tick 编排提取为无 Qt controller。
+- **P1 `capture_test_page.start_dual_target_experiment`**：输出 factory 和窗口/地图状态仍由页面持有；adapter 契约已存在但尚未替换全部调用。建议 B2 后续把副作用调用改成显式 port。
+- **P2 `HeadlessExperiment.ingest`**：当前只验证生命周期和诊断，不执行真实定位/路径算法；它用于确定性状态回放，不能作为实机成功证明。
