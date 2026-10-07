@@ -10204,6 +10204,12 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_contracts.py`：`7 passed`。
 - `(next)` M1.2 实现 generation/sequence/map instance 的结果门控。
 
+## [M1.2 完成] 2026-10-07 代际与序列门控
+
+- `(implemented)` 新增 `follow_engine/generation.py`，提供 `GenerationClock` 和 `SequenceGate`。
+- `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_generation.py`：`2 passed`。
+- `(next)` M1.3 开始实现预测、速度校准和视觉融合纯逻辑。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标

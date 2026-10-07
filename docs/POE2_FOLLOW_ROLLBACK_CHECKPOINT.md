@@ -437,3 +437,10 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(boundary)` 所有 DTO 都是 frozen/slots，不包含 Qt、游戏内存、截图 provider 或手柄副作用；角色映射和消息头在构造时校验。
 - `(verified)` `tests/poe2_live_terrain/test_follow_engine_contracts.py`：`7 passed`，覆盖不可变映射、有限数值、归一化输出、错误角色和非法帧元数据。
 - `(next)` M1.2 实现 generation/sequence/map instance 门控，确保迟到进程结果不能覆盖新会话。
+
+## M1.2 代际与序列门控完成（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/generation.py`：`GenerationClock` 创建单调 session generation，`SequenceGate` 校验 generation、map instance 和严格递增 sequence。
+- `(verified)` `tests/poe2_live_terrain/test_follow_engine_generation.py`：`2 passed`；覆盖停止/重启代际、重复帧、逆序帧、旧代际和地图实例不一致。
+- `(boundary)` 门控只处理消息生命周期，不改变人物预测、视觉算法或输出行为。
+- `(next)` M1.3 实现 command odometry、速度校准、位置融合和预测不确定度增长。
