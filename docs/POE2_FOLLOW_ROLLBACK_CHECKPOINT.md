@@ -401,3 +401,11 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(confirmed)` 当前 Host 心跳仍是旧协议表现：`heartbeat_count=0`、`heartbeat_failures>1000`；本段没有 session expired，但不能把 `controller=2 armed` 当作游戏真实移动已确认。
 - `(conclusion)` 首要根因是“P2 长期视觉失配被 occlusion-held 抑制恢复 + 命令预测继续累积”，不是单纯方向反转。需要把双人跟随的恢复触发从“是否检测到墙体接触”改为“角色观测年龄/不确定度/预测-视觉一致性”联合门控；P2 超过短时预测窗口后必须重新使用最新帧局部匹配或低频内存锚点，不能因 `no_recovery_evidence` 永久保持。
 - `(boundary)` 当前截图只能证明 UI 估计的 P1/P2 标记和目标叠加关系，不能单独证明游戏内实际 P2 已超过 P1；需下一次记录内存锚点或连续视觉恢复帧作为最终事实。
+
+## 双通道引擎重构计划（2026-10-07）
+
+- `(checkpoint)` 已将此前恢复链和 Host/session 改动提交为 `ea72667 checkpoint: isolate follow recovery boundaries`；未提交 evidence 数据。
+- `(design)` 完整设计已写入 `docs/plans/2026-10-07-poe2-follow-engine-multiprocess-design.md`。
+- `(decision)` 采用两个长期业务进程：`VisionProcess` 负责截图/墙体/人物/局部 ROI，`FollowControlProcess` 负责预测/融合/路径/恢复/输出；Qt 只做 UI，Host 保持独立。
+- `(design)` 内存快速重锚和全局恢复作为控制进程内的低频单次任务，不为每种异常创建独立进程；进程间使用 latest-only shared frame ring 和带 generation/sequence/instance 的结构化快照。
+- `(next)` M0 先冻结回放和纯逻辑契约，随后按 M1→M7 迁移；在 M1/M2 离线回归通过前不迁移实机输入。

@@ -10176,3 +10176,15 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(confirmed)` 当前视觉 worker 是线程，内存恢复是线程池，Qt 主线程做融合/输出；不是全链路多进程。
 - `(decision)` 未来拆为预测进程、latest-only 视觉进程、融合/输出控制线程；内存和全局恢复作为带 generation 的低频异步任务。
 - `(constraint)` 先建立共享快照/时间戳/退出契约，再迁移进程；不能直接跨进程传递 Qt 对象、MSS provider 或 Windows 进程句柄。
+
+## [设计计划] 2026-10-07 双通道跟随引擎重构
+
+### A. 本轮目标
+基于当前源码和已确认的 P2 漂移根因，形成可执行的进程边界、模块拆分、数据契约、迁移阶段和验收标准。
+
+### C. 结果
+- `(committed)` 当前基线已提交为 `ea72667`，仅包含源码、测试和文档，不包含运行 evidence。
+- `(designed)` 新设计文档为 `docs/plans/2026-10-07-poe2-follow-engine-multiprocess-design.md`，覆盖 M0–M7 八个阶段。
+- `(decision)` 两个长期业务进程：视觉 latest-only 进程、预测/融合/控制进程；Qt UI 和 VirtualGamepad Host 保持独立。
+- `(constraint)` 预测与融合放同一控制进程，内存/全局恢复使用低频单次任务，避免进程数量膨胀；共享帧使用固定 ring，消息使用 generation/sequence/map instance 校验。
+- `(next)` 执行前先完成 M0 回放夹具和 M1 纯逻辑契约，验证双通道融合后再迁移视觉进程。
