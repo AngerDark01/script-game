@@ -1,5 +1,53 @@
 # Iteration Log
 
+## [第 2026-10-07-39 轮] 2026-10-07 — 快速内存重锚耗时与分层方案核对
+
+- `(confirmed)` 实机完整双人首帧/重定位约 8–11s；其中 `memory_ms≈3.6s`，视觉注册 `≈4.1–7.4s`。内存耗时包含 PID/descriptor/layout/reader/component 扫描，不是单个坐标读取耗时。
+- `(confirmed)` 首帧确定的旋转、镜像、比例可复用；transform-only 为纯数学计算，适合跟随异常的快速恢复。
+- `(decision)` 采用 L0 预测 → L1 单次内存重锚+复用 transform → L2 局部视觉 → L3 全局视觉的分层恢复；L1 增加实例校验和 5–10s 冷却，失败不停止跟随。
+- `(next)` 先做可注入 warm-reader/transform-only 基准和回归，再决定是否实现缓存 reader/layout/component 地址；本轮未改运行代码、未发送真实输入。
+
+## [第 2026-10-07-40 轮] 2026-10-07 — 15:26 后对话综合问题与新开发方案
+
+- `(scope)` 15:26 后没有对应的新实机日志，本轮只综合对话确认和既有 14:46–14:53 证据，不宣称新增实机验证。
+- `(decision)` 最终恢复优先级为“新帧视觉全局关联 → 新帧局部 ROI → 短时预测 → 内存快速重锚 → 异步局部/全局恢复”；新帧存在时不得直接读内存。
+- `(problem-set)` 汇总 P1/P2 失配、target stale、预测误到达、内存冷启动、恢复阻塞、Host 心跳旧协议、前台门控、worker 迟退、帧处理过载和动态 session 被错误释放等问题。
+- `(plan)` 先实现恢复调度器/诊断，再实现 latest-frame + 局部 ROI，再实现 warm memory reader，随后接入分层状态机与生命周期修复；完成离线回放后才实机验证。
+
+## [第 2026-10-07-41 轮] 2026-10-07 — 开始执行恢复方案基础层
+
+- `(implemented)` 新增 recovery state/diagnostic 契约，覆盖 tracking、visual degraded、local/memory/global reanchor、follow hold/rearming。
+- `(implemented)` 新增 `RecoveryCoordinator`，验证新帧优先视觉/局部、无新帧且预测超限才允许内存、冷却期间继续预测。
+- `(implemented)` 新增 `MemoryFastReanchor` 双人一次读取封装，验证实例校验、transform 复用和冷却。
+- `(implemented)` 新增局部 ROI 半径与预测/观测融合纯函数。
+- `(verified)` 恢复基础测试 `9 passed`，相关模块 compileall 和 diff check 通过。
+- `(boundary)` 新模块尚未替换页面旧恢复链；真实 reader/layout 缓存、页面适配、异步全局恢复和 Host 实机心跳仍待后续阶段完成。
+
+## [第 2026-10-07-42 轮] 2026-10-07 — 基础层自检
+
+- `(fixed)` 修复 `MemoryFastReanchor` 默认时钟固定为 0 的冷却缺陷，改用 monotonic ms。
+- `(verified)` 新增恢复测试仍为 `9 passed`，compileall/diff check 通过。
+- `(gap)` 自检确认新调度器和内存封装尚未接入现有页面实时 tick，局部模块还未做真实 ROI 匹配，warm reader 尚未完成；因此当前版本不能进入实机验收。
+
+## [第 2026-10-07-43 轮] 2026-10-07 — 隔离 live-follow 旧 retry controller
+
+- `(implemented)` live-follow 的恢复重试不再调用旧 `RecoveryController.schedule_retry()`；静态/legacy 路径保持兼容。
+- `(verified)` 页面 recovery/reanchor 聚焦测试 `9 passed`。
+- `(boundary)` live reanchor 在 local matcher 不可用时仍保留旧 global fallback；待新 local/memory/global async 链接管后再移除该 fallback。
+## [诊断] 2026-10-07 — 最新测试异常与图片关联
+
+### A. 范围声明
+
+- 只读最新跟随 session 日志、occlusion evidence 和输出恢复调用链；查首个错误、截图及耗时，不修改运行代码或发送真实输入。
+- 当前最新日志末段为 Host session expired 的 foreground 中立写入重复失败，需追溯首次错误及先行视觉异常。
+
+### C. 只读发现
+
+- `(confirmed)` 首个根因错误为 14:13:40.199 Host program session expired；后续 foreground_release_failed 是重复写入失效 token 的次生错误。
+- `(confirmed)` 先行视觉链路是 DexFourb 视觉年龄持续增长至约 11.5s，P1 可见但双人关联无法恢复 P2，状态进入 `recovery_required/markers_missing`；最新六张 evidence raw 已核对。
+- `(confirmed)` recovery 期间 runtime tick 达 472–926ms，首帧恢复总耗时 5.4–16.5s，存在控制线程被重型恢复/路径计算拖慢的证据。
+- `(boundary)` 本轮不改代码、不发送输入；下一步按用户决定分别处理 session rearm 的中立帧边界和恢复期间的非阻塞化。
+
 ## [第 2026-10-06-7 轮] 2026-10-06 — 文档推导历史缺陷
 
 ### A. 阅读前声明
@@ -10005,3 +10053,126 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` 2 passed：真实 raw 首帧 `accepted`，pair confidence/shape quality 达到离线门槛；跟踪状态为 `tracking → degraded(prediction_active) → tracking`；worker 5 次连续处理最大耗时低于 33ms，未产生 dropped result。
 - `(boundary)` 注册使用同一历史 wall 图构造几何夹具；历史数据没有同实例完整 native terrain 和连续 raw，因此不能据此宣称实机全局定位或真实有效 FPS 已证明。
 - `(diagnostic)` 83 张旧异常 raw 批量检测平均约 0.82ms；56 张有至少两个候选，23 张没有候选，支持“视觉缺失时保持上一帧”的设计判断。
+
+## [第 2026-10-07-30 轮] 2026-10-07 — 最新跟随 target_arrival 异常只读核对
+
+- `(confirmed)` 最新会话 `12:18:11~12:18:39` 中，目标在移动后稳定于 `(960.3059,974.3315)`；P2 预测位置 `(957.8049,981.7013)` 进入 `arrival_radius=12`，但最近视觉观测仍是旧位置 `(900.0785,1070.1693)`。
+- `(confirmed)` 运行时命中 `command_prediction + distance<=arrival_radius` 的 `arrival_unconfirmed` 分支，随后页面快照为 `waiting_position/vector=(0,0)/acquired=False`，表现为输出被释放，而非首帧或路径失败。
+- `(confirmed)` 同一会话后段独立出现 `poe2_not_foreground`，最终由用户请求停止；前台失焦不应与 target arrival 根因混合。
+- `(decision pending)` 动态跟随需要“目标稳定窗口 + 新视觉确认 + 连续 tick”才进入 hold；在此之前保持低幅度校正/预测输出。先补诊断与回归测试，再决定实现改动。
+- `(confirmed)` `12:18:12.467` 发生 `VirtualGamepadError: Program session expired or was revoked`；`12:18:13.603` 重新 arm，Host 随后接受 controller=2 报告，说明是短暂输出会话失效。
+- `(confirmed)` `target_arrival_unconfirmed` 首次出现约 `12:18:15.123`，随后 controller=2 报告停止、页面状态为 `waiting_position/vector=(0,0)/acquired=False`；它是实际释放输出的状态，不是无害提示。
+- `(confirmed)` 同段 worker 有效频率约 14.4 FPS、dropped_results 约 225，P2 视觉年龄从 8 秒增长到 34 秒，属于长期预测未重新吸收的背景异常。
+
+## [第 2026-10-07-31 轮] 2026-10-07 — 建立自动跟随完整执行链文档
+
+- `(documented)` 新增 `docs/POE2_AUTOFOLLOW_EXECUTION_CHAIN.md`，完整记录 P1/P2 角色职责、启动/冷启动、逐 tick、预测融合、路径/局部避障、手柄脉冲、正常与异常恢复链路。
+- `(highlighted)` 特别标记本次 `target_arrival_unconfirmed`：动态 `target_hold` 与 `command_prediction` 命中到达半径后进入 `WAITING_POSITION`，最终调用 `release()` 停止 P2 输出；同时区分 `Program session expired` 和 `poe2_not_foreground`。
+- `(documented)` 记录当前参数、有效帧率约 14.4 FPS、丢帧背景、日志字段和待讨论的动态跟随到达语义。
+- `(boundary)` 本轮只读文档工作，无运行代码变更、无真实输入；下一步如实现修复，先针对该异常链补回归测试。
+
+## [第 2026-10-07-32 轮] 2026-10-07 — 确认动态跟随只能人工停止并梳理待处理问题
+
+- `(decision)` 用户明确要求动态跟随持续运行；目标接近、静止、视觉失配、路径失败、贴墙、窗口失焦、Host session 失效和重定位都不得自动结束跟随，只有人工停止才结束 session。
+- `(documented)` 在 `POE2_AUTOFOLLOW_EXECUTION_CHAIN.md` 新增“动态跟随的停止语义”“待处理问题清单”“新的动态跟随验收链”，明确列出 P0/P1/P2 风险和处理边界。
+- `(highlighted)` 最高风险是 `runtime -> _STOP_STATES -> ProgramFollowOutput.release()`；动态跟随的 `target_hold + command_prediction` 近距离分支必须脱离静态 `WAITING_POSITION` 语义。
+- `(required)` no-safe-route、撞墙、失焦、输出 session 失效和重定位均改为跟随 session 内的恢复/保持状态；旧 generation 结果不得结束当前 session。
+- `(boundary)` 本轮只更新文档和断点，没有修改运行代码、没有发送真实输入；后续实现必须先补“异常不自动停止”的回归测试。
+
+## [第 2026-10-07-33 轮] 2026-10-07 — 首轮实现动态跟随持续语义
+
+- `(implemented)` 增加 `FOLLOW_HOLD`、`FOLLOW_PREDICTING`、`FOLLOW_RELOCATING`、`FOLLOW_REARMING` 状态；实时 runtime 通过 `continuous_follow=True` 区分动态跟随。
+- `(implemented)` 动态目标接近和 `target_hold` 接近不再返回静态 `ARRIVED/WAITING_POSITION`；输出适配器通过 `continuous_roles` 保持 session 租约，普通异常状态不自动 release。
+- `(implemented)` 静态点击目标、双人同目标和默认 runtime 继续使用原到达/释放语义，避免跨模式污染。
+- `(verified)` `tests/poe2_live_terrain` 439 passed；`tests/test_poe2_capture_test_page.py` 105 passed。
+- `(verified)` 新增动态接近、target_hold 和 FOLLOW_HOLD 输出租约回归测试。
+- `(next)` 为路径失败、局部/全局重定位、Host session rearm、失焦等异常补动态 session 保持测试；随后执行 compileall、diff check 和人工链路审查。
+
+## [第 2026-10-07-34 轮] 2026-10-07 — 异常期间保留连续输出租约
+
+- `(implemented)` `ProgramFollowOutput.release_all(force=False)` 对连续角色改为写中立帧并保留 armed lease；`close_all()` 内部强制释放，仍负责人工结束时的最终释放。
+- `(implemented)` 失焦、等待新帧、地图上下文缺失、重定位和临时 runtime 异常路径不会撤销动态跟随输出租约，恢复后可继续沿用同一 session。
+- `(verified)` `tests/poe2_live_terrain` 439 passed；`tests/test_poe2_capture_test_page.py` 105 passed；连续角色 release/close 语义已有专项回归。
+- `(next)` 补齐路径失败、reanchor、Host session rearm 和失焦恢复后的同 session 继续写入测试，随后执行 compileall/diff check。
+
+## [第 2026-10-07-35 轮] 2026-10-07 — 统一中立帧与移动脉冲的 Host session 重建
+
+- `(implemented)` `ProgramFollowOutput._write()` 统一移动脉冲和中立帧的 session expired/revoked 重建逻辑，避免 FOLLOW_HOLD 期间中立写入触发未处理异常。
+- `(verified)` `tests/poe2_live_terrain` 440 passed；`tests/test_poe2_capture_test_page.py` 105 passed；新增中立帧 session 失效回归。
+- `(next)` 执行 compileall、diff check 和人工调用链审查，确认所有动态异常只保持/恢复 session，不自动结束跟随。
+- `(implemented)` 2026-10-07 — 为跟随链路补齐分段耗时：worker 拆分截图/墙体/人物观测/候选/跟踪，页面 tick 覆盖上下文、前台门控、目标/预测、runtime、输出、局部接触、绘制和总耗时，首帧/重锚/worker drain/输出会话均增加耗时字段；日志采用 debug 全量 + info 抽样，未改变控制节拍。
+- `(verified)` 聚焦回归 180 passed，随后页面/worker 复跑 115 passed；compileall 与 diff check 通过。人工审查确认动态跟随异常路径不调用终止方法，只有显式关闭/手动停止释放连续 session。
+- `(verified)` 后续加入首帧/重锚/输出/worker drain 计时后，worker、页面、runtime、虚拟手柄聚焦回归 `187 passed`，compileall 与 diff check 通过。
+- `(diagnostic)` 2026-10-07 最新实机异常确认：Host/ViGEm 后端仍在线，失效的是 controller=2 的 220ms program token；恢复期 runtime tick 472–926ms 超过 TTL，导致续租窗口丢失。现有 adapter 的单次 rearm 限制和失效 token 上重复中立写入会把一次过期放大成持续错误；本轮只读未改代码。
+
+## [第 2026-10-07-36 轮] 2026-10-07 — 确认 program lease 需要独立心跳
+
+- `(confirmed)` 普通 `heartbeat` 只续 StateStore source，不续 program token；Host 的 `ProgramOutputLease.Deadline` 仅由 `program.state` 更新，且无 `program.heartbeat` 协议。
+- `(confirmed)` 慢 runtime tick 超过 220ms output TTL 会导致 program token 被 Host 清理；后续中立写入只是失效 token 的连锁错误。
+- `(next)` 增加 Host `program.heartbeat`、输出层独立保活与可重复 rearm；先补回归测试，再做实现与验证。
+
+## [第 2026-10-07-37 轮] 2026-10-07 — 完成 program session 独立心跳
+
+- `(implemented)` Host 增加 `program.heartbeat`，token 校验后只更新 program ownership deadline，不修改摇杆状态/output TTL。
+- `(implemented)` Python `ProgramGamepadOutput` 增加独立 daemon heartbeat、关闭时安全回收、失效后后台 rearm 及诊断字段；不再依赖跟随 runtime tick 续租。
+- `(implemented)` `ProgramFollowOutput` 改为可重复 rearm + 500ms 退避，避免旧 token 重复写入和一次过期永久锁死。
+- `(verified)` Python 聚焦回归 74 passed；compileall、diff check 通过。完整页面套件中 5 个时序敏感用例单独复跑通过；并行整套出现的失败均为既有 timing flaky，非本改动路径。
+- `(blocked)` 当前环境无 .NET SDK，Host C# 测试仅完成源码与测试补充，未能执行。
+
+## [第 2026-10-07-38 轮] 2026-10-07 — 最新异常核对：旧 Host 协议与 stale target hold
+
+- `(confirmed)` 实机日志显示 Python 心跳线程在运行，但 Host 对 `program.heartbeat` 返回 `Unknown program command`；`heartbeat_count=0`、失败数持续增长，说明 Host 进程尚未更新/重启到包含新协议的版本。
+- `(confirmed)` 本次没有新的 `Program session expired`，但旧 Host 下 program lease 仍只能靠控制帧续租，不能视为心跳修复已生效。
+- `(confirmed)` `follow_hold_target_unconfirmed` 实际表示 P1 目标样本过期后使用 `target_hold`，而非 P2 到达失败；P2 当时距旧目标约 1–2 native px、输出中立、session 仍 armed。
+- `(risk)` 若 P1 已实际移动但视觉长期失配，当前 target_hold 会让 P2 留在旧点；后续需要把 stale target 分成“目标静止保持”和“目标移动预测”两种路径，不能仅靠字符串/阈值掩盖。
+- `(next)` 先重启更新后的 Host 验证心跳成功，再针对 stale target 的运动预测和原因命名设计回归测试。
+## [SYNC] 2026-10-07 — 全面自检新旧恢复链隔离
+
+### A. SYNC 范围声明
+
+**触发任务：** 用户要求全面自检，确认新恢复链接入且旧实时恢复链不再运行。
+**直接变更文件：** `capture_test_page.py`、恢复模块、恢复测试、断点文档。
+**预计连带影响：** live-follow retry/reanchor、静态实验恢复、worker generation、Host session 输出和相关回归测试。
+
+### C. SYNC 结果
+
+- `(verified)` 重新阅读恢复模块、页面 live retry/reanchor 入口和相关测试；聚焦测试 `12 passed`，compileall/diff check 通过。
+- `(fixed)` 内存快速重锚补充双人数量校验、transform 返回二维校验和独立 perf elapsed；默认 monotonic 冷却时钟保持有效。
+- `(confirmed)` live retry 已绕过旧 `RecoveryController.schedule_retry()`；但 live `_request_live_follow_reanchor()` 在 local matcher 不可用时仍调用旧 global fallback，属于尚未完成的接管边界。
+- `(confirmed)` 新 `RecoveryCoordinator` 当前只在页面初始化，尚未作为 live tick 的实际决策入口；局部模块仍只有 ROI/score 契约，没有真实候选匹配实现。
+- **CODEBASE 更新内容：** §2/§4/§5/§6/§9 增加恢复模块和 live fallback 风险说明。
+- **下一轮计划：** 先完成 live reanchor 兼容适配和旧 global fallback 的调用隔离，再实现真实局部 ROI 匹配与 warm reader。
+
+## [第 2026-10-07-44 轮] 2026-10-07 — 新策略接入 live reanchor
+
+- `(implemented)` live `_request_live_follow_reanchor()` 现在先由 `RecoveryCoordinator` 根据帧年龄、失配持续时间和预测不确定度决定预测保持、局部视觉或升级恢复。
+- `(verified)` 页面 recovery/reanchor 聚焦测试 `9 passed`，compileall/diff check 通过。
+- `(boundary)` memory/global backend 暂时仍复用旧异步 worker，但已由新策略显式决定并打出 replacement_pending；尚未完成 memory fast backend 和旧直接入口删除。
+
+## [第 2026-10-07-45 轮] 2026-10-07 — 异步内存快速重锚接入页面
+
+- `(implemented)` live decision=`memory` 提交到单线程后台 executor，读取双人 anchor，不阻塞控制 tick；完成后在 tick 线程 seed tracker 并恢复 session。
+- `(implemented)` future 取消和 executor 生命周期已接入 suspend/shutdown；失败日志明确 fallback=global_async。
+- `(verified)` 页面 recovery/reanchor/shutdown 聚焦测试 `12 passed`，compileall/diff check 通过。
+- `(boundary)` 真实 source warm cache和异步 memory 注入回归尚未完成；旧 global worker仍是 memory失败后的最终执行器。
+- `(implemented)` live global fallback is now routed through GlobalReanchorBackend; layout cache was added to the dual memory source; recovery episode deduplication runs before policy evaluation. Focused page/recovery/memory tests: 111 passed.
+- `(verified)` `test_global_reanchor_backend.py` covers live side-effect routing and preserves the static legacy call shape.
+
+## [只读异常分析] 2026-10-07 17:19 双人跟随漂移
+
+- `(confirmed)` P2 最后可信视觉约 45.9s 前；期间连续 `markers_partial_grace/markers_missing`，页面重复输出 `occlusion_held reason=no_recovery_evidence`，未进入新的恢复后端。
+- `(confirmed)` P2 仅使用 `command_prediction`，tracker 不确定度约 102→206 native px，而跟随层仍记录约 10→12，两个不确定度口径不一致。
+- `(confirmed)` 输出层持续发送非零脉冲，不能证明游戏角色实际位移；因此命令预测累积是 P2 漂到 P1 前方的首要嫌疑。
+- `(next)` 先统一恢复触发的观测年龄/不确定度口径，再设计“短时预测→局部视觉→内存快速锚”的门控，不在本轮直接改阈值。
+
+## [架构决策] 2026-10-07 双通道定位与纠偏
+
+- `(decision)` 预测和视觉纠偏拆为两个独立 latest-only 通道，分别连续运行并通过融合状态互相校正。
+- `(confirmed)` 当前链路在 P2 视觉丢失后主要依赖 `command_prediction`，`occlusion_held` 阻止了及时局部重定位，因此不是双通道架构。
+- `(design)` 新优先级为：最新帧局部 ROI 纠偏 → 预测短时保持 → 低频内存快速锚 → 异步全局恢复；任何来源暂时不可信都不终止跟随。
+
+## [架构补充] 2026-10-07 多进程边界
+
+- `(confirmed)` 当前视觉 worker 是线程，内存恢复是线程池，Qt 主线程做融合/输出；不是全链路多进程。
+- `(decision)` 未来拆为预测进程、latest-only 视觉进程、融合/输出控制线程；内存和全局恢复作为带 generation 的低频异步任务。
+- `(constraint)` 先建立共享快照/时间戳/退出契约，再迁移进程；不能直接跨进程传递 Qt 对象、MSS provider 或 Windows 进程句柄。

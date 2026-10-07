@@ -113,6 +113,11 @@ class Poe2DualPlayerPositionSource:
     def __init__(self, *, api: Any | None = None, max_players: int = 2) -> None:
         self.api = api
         self.max_players = int(max_players)
+        self._cached_pid: int | None = None
+        self._cached_descriptor: Mapping[str, Any] | None = None
+        self._cached_layout_pid: int | None = None
+        self._cached_layout_slot: int | None = None
+        self._cached_layout: Mapping[str, Any] | None = None
         if self.max_players != 2:
             raise ValueError("the experimental adapter currently supports exactly two players")
 
@@ -131,12 +136,39 @@ class Poe2DualPlayerPositionSource:
             else resolve_poe2_layout
         )
         pid = find_pid()
-        descriptor = resolve_descriptor(pid, stage="dual-player-position")
+        if self._cached_pid != pid or self._cached_descriptor is None:
+            descriptor = resolve_descriptor(pid, stage="dual-player-position")
+            self._cached_pid = int(pid)
+            self._cached_descriptor = dict(descriptor)
+        else:
+            descriptor = self._cached_descriptor
         resolved_slot = int(descriptor["resolved_global_slot_rva"], 16)
         captured_at = datetime.now(timezone.utc).isoformat()
         with reader_type(pid) as reader:
-            layout = resolve_layout(reader, reader.module_base(), resolved_slot)
+            module_base = reader.module_base()
+            layout = None
+            if (
+                self._cached_layout_pid == int(pid)
+                and self._cached_layout_slot == resolved_slot
+                and self._cached_layout is not None
+            ):
+                layout = self._cached_layout
+            if layout is None:
+                layout = resolve_layout(reader, module_base, resolved_slot)
+                self._cached_layout_pid = int(pid)
+                self._cached_layout_slot = resolved_slot
+                self._cached_layout = dict(layout)
             area_instance = f"{layout['area_code']}:{layout['area_hash']:08X}"
+            if expected_instance_id and area_instance != expected_instance_id:
+                # A map transition invalidates all pointer-derived cache state.
+                self._cached_layout = None
+                self._cached_layout_pid = None
+                self._cached_layout_slot = None
+                layout = resolve_layout(reader, module_base, resolved_slot)
+                self._cached_layout_pid = int(pid)
+                self._cached_layout_slot = resolved_slot
+                self._cached_layout = dict(layout)
+                area_instance = f"{layout['area_code']}:{layout['area_hash']:08X}"
             if expected_instance_id and area_instance != expected_instance_id:
                 raise PlayerPositionError(
                     f"area instance changed during dual-player read: expected {expected_instance_id}, got {area_instance}"

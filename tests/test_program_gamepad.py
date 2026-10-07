@@ -24,6 +24,46 @@ def test_program_output_uses_lease_not_mapping_start_and_zero_stops_immediately(
     assert client.calls[0] == ("pause", {"controller": 2})
 
 
+def test_program_output_heartbeat_renews_session_without_writing_state():
+    class Client:
+        def __init__(self):
+            self.calls = []
+        def pause(self, controller):
+            self.calls.append(("pause", controller))
+        def request(self, name, payload):
+            self.calls.append((name, payload))
+            return {"token": "test"} if name == "program.acquire" else {"accepted": True}
+
+    client = Client()
+    output = ProgramGamepadOutput(client, controller=2, heartbeat_interval_ms=900)
+    output.start()
+    assert output.heartbeat()
+    assert [name for name, _ in client.calls].count("program.heartbeat") == 1
+    assert [name for name, _ in client.calls].count("program.state") == 0
+    output.stop()
+
+
+def test_program_output_heartbeat_runs_without_control_writes():
+    import time
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+        def pause(self, controller):
+            pass
+        def request(self, name, payload):
+            self.calls.append(name)
+            return {"token": "test"} if name == "program.acquire" else {"accepted": True}
+
+    client = Client()
+    output = ProgramGamepadOutput(client, controller=2, heartbeat_interval_ms=20)
+    output.start()
+    time.sleep(0.075)
+    output.stop()
+    assert client.calls.count("program.heartbeat") >= 2
+    assert client.calls.count("program.state") == 0
+
+
 def test_program_output_close_releases_lease_and_closes_dedicated_client():
     class Client:
         def __init__(self):

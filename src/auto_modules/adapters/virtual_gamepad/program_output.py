@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from math import hypot, isfinite
@@ -60,6 +61,7 @@ class ProgramGamepadOutput:
         basis=(1.0, 0.0, 0.0, -1.0),
         ttl_ms=120,
         slew_rate=180_000.0,
+        heartbeat_interval_ms=None,
     ):
         if controller not in (1, 2) or not 1 <= ttl_ms <= 300:
             raise ValueError("invalid controller or TTL")
@@ -81,6 +83,19 @@ class ProgramGamepadOutput:
         self._last_host_request_ms = 0.0
         self._last_diagnostics_ms = 0.0
         self._write_count = 0
+        self.heartbeat_interval_ms = int(
+            heartbeat_interval_ms if heartbeat_interval_ms is not None
+            else min(250, max(50, ttl_ms // 3))
+        )
+        if not 20 <= self.heartbeat_interval_ms <= 900:
+            raise ValueError("heartbeat_interval_ms must be between 20 and 900")
+        self._io_lock = threading.RLock()
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread = None
+        self._heartbeat_count = 0
+        self._heartbeat_failures = 0
+        self._last_heartbeat_ms = 0.0
+        self._session_expired = False
         self._last_command = {
             "input_vector": (0.0, 0.0),
             "input_magnitude": 0.0,
@@ -94,6 +109,10 @@ class ProgramGamepadOutput:
         }
 
     def start(self, *, requested_at_ms=None):
+        with self._io_lock:
+            self._start_locked(requested_at_ms=requested_at_ms)
+
+    def _start_locked(self, *, requested_at_ms=None):
         if self.token is not None:
             raise RuntimeError("program output is already acquired")
         # The Host deliberately rejects a program lease while the normal
@@ -116,13 +135,19 @@ class ProgramGamepadOutput:
             },
         )["token"]
         self.limiter.reset()
+        self._session_expired = False
+        self._heartbeat_stop.clear()
+        self._start_heartbeat_thread_locked()
         _LOGGER.info(
-            "program_output.acquired controller=%s token_present=%s requested_at_ms=%s",
+            "program_output.acquired controller=%s token_present=%s requested_at_ms=%s heartbeat_interval_ms=%s",
             self.controller, self.token is not None, request_time,
+            self.heartbeat_interval_ms,
         )
 
     def write(self, vector, *, elapsed_ms=20, valid_for_ms=None, buttons=0):
         if self.token is None:
+            if self._session_expired:
+                raise RuntimeError("Program session expired or was revoked")
             raise RuntimeError("program output is not acquired")
         if len(vector) != 2 or not all(isfinite(value) for value in vector):
             raise ValueError("finite movement vector required")
@@ -211,21 +236,93 @@ class ProgramGamepadOutput:
             (int(axes[0]), int(axes[1])), remaining_ms,
         )
 
+    def heartbeat(self) -> bool:
+        """Renew program ownership without changing the current stick state."""
+        with self._io_lock:
+            token = self.token
+            if token is None:
+                return False
+            started = time.perf_counter()
+            try:
+                response = self.client.request(
+                    "program.heartbeat",
+                    {"controller": self.controller, "token": token},
+                )
+            except Exception as exc:
+                self._last_heartbeat_ms = (time.perf_counter() - started) * 1000.0
+                self._heartbeat_failures += 1
+                if _is_session_expired(exc):
+                    self._session_expired = True
+                    self.token = None
+                _LOGGER.warning(
+                    "program_output.heartbeat_failed controller=%s elapsed_ms=%.1f failures=%s error=%s",
+                    self.controller, self._last_heartbeat_ms, self._heartbeat_failures, exc,
+                )
+                return False
+            self._last_heartbeat_ms = (time.perf_counter() - started) * 1000.0
+            self._heartbeat_count += 1
+            if isinstance(response, dict) and response.get("accepted") is False:
+                self._heartbeat_failures += 1
+                return False
+            if self._heartbeat_count <= 2 or self._heartbeat_count % 20 == 0:
+                _LOGGER.info(
+                    "program_output.heartbeat controller=%s count=%s elapsed_ms=%.1f",
+                    self.controller, self._heartbeat_count, self._last_heartbeat_ms,
+                )
+            return True
+
+    def _start_heartbeat_thread_locked(self):
+        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name=f"program-heartbeat-{self.controller}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _heartbeat_loop(self):
+        wait_seconds = self.heartbeat_interval_ms / 1000.0
+        while not self._heartbeat_stop.wait(wait_seconds):
+            if self.heartbeat():
+                continue
+            with self._io_lock:
+                if self._heartbeat_stop.is_set() or self.token is not None:
+                    continue
+                try:
+                    # Recover an expired lease even when the main runtime is
+                    # blocked and no further movement/neutral frame arrives.
+                    self._start_locked()
+                except Exception:
+                    self._heartbeat_failures += 1
+                    _LOGGER.exception(
+                        "program_output.heartbeat_rearm_failed controller=%s",
+                        self.controller,
+                    )
+            time.sleep(min(0.25, wait_seconds))
+
     def stop(self):
-        token, self.token = self.token, None
-        self.limiter.reset()
-        self._write_count = 0
-        self._last_command = {
-            "input_vector": (0.0, 0.0),
-            "input_magnitude": 0.0,
-            "basis_vector": (0.0, 0.0),
-            "basis_magnitude": 0.0,
-            "axes": (0, 0),
-            "axis_magnitude": 0.0,
-            "ttl_ms": self.ttl_ms,
-            "slew_rate": self.slew_rate,
-            "host_request_ms": 0.0,
-        }
+        with self._io_lock:
+            self._heartbeat_stop.set()
+            thread = self._heartbeat_thread
+            self._heartbeat_thread = None
+            token, self.token = self.token, None
+            self._session_expired = False
+            self.limiter.reset()
+            self._write_count = 0
+            self._last_command = {
+                "input_vector": (0.0, 0.0),
+                "input_magnitude": 0.0,
+                "basis_vector": (0.0, 0.0),
+                "basis_magnitude": 0.0,
+                "axes": (0, 0),
+                "axis_magnitude": 0.0,
+                "ttl_ms": self.ttl_ms,
+                "slew_rate": self.slew_rate,
+                "host_request_ms": 0.0,
+            }
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=max(0.2, self.heartbeat_interval_ms / 1000.0 * 2))
         if token is not None:
             _LOGGER.info("program_output.released controller=%s", self.controller)
             self.client.request(
@@ -240,9 +337,11 @@ class ProgramGamepadOutput:
         the Host has already invalidated it.  The next ``start`` performs the
         normal pause/fresh-acquire handshake.
         """
-        self.token = None
-        self.limiter.reset()
-        self.start(requested_at_ms=requested_at_ms)
+        with self._io_lock:
+            self.token = None
+            self._session_expired = False
+            self.limiter.reset()
+            self._start_locked(requested_at_ms=requested_at_ms)
 
     def diagnostics(self) -> dict:
         """Return a read-only snapshot of the Host boundary for diagnostics.
@@ -271,6 +370,11 @@ class ProgramGamepadOutput:
             "diagnostics_elapsed_ms": self._last_diagnostics_ms,
             "status": status,
             "state": state,
+            "heartbeat_interval_ms": self.heartbeat_interval_ms,
+            "heartbeat_count": self._heartbeat_count,
+            "heartbeat_failures": self._heartbeat_failures,
+            "last_heartbeat_ms": self._last_heartbeat_ms,
+            "session_expired": self._session_expired,
         }
 
     def snapshot(self) -> dict:
@@ -287,6 +391,11 @@ class ProgramGamepadOutput:
             "last_host_request_ms": self._last_host_request_ms,
             "ttl_ms": self.ttl_ms,
             "slew_rate": self.slew_rate,
+            "heartbeat_interval_ms": self.heartbeat_interval_ms,
+            "heartbeat_count": self._heartbeat_count,
+            "heartbeat_failures": self._heartbeat_failures,
+            "last_heartbeat_ms": self._last_heartbeat_ms,
+            "session_expired": self._session_expired,
         }
 
     def close(self):
@@ -297,3 +406,12 @@ class ProgramGamepadOutput:
             close = getattr(self.client, "close", None)
             if callable(close):
                 close()
+
+
+def _is_session_expired(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return (
+        "session expired" in message
+        or ("session" in message and "revoked" in message)
+        or "explicit start is required" in message
+    )

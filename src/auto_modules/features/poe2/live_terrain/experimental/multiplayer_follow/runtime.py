@@ -139,6 +139,7 @@ class SimulatedFollowRuntime:
         local_lookahead: float = 18.0,
         prediction_horizon: float = 0.22,
         closed_loop_controller: ClosedLoopMotionController | None = None,
+        continuous_follow: bool = False,
     ) -> None:
         import cv2
         import numpy as np
@@ -175,6 +176,7 @@ class SimulatedFollowRuntime:
             3,
         )
         self.map_identity = map_identity
+        self.continuous_follow = bool(continuous_follow)
         self.arrival_radius = float(arrival_radius)
         self.resume_radius = float(arrival_radius if resume_radius is None else resume_radius)
         self.speed_units_per_second = float(speed_units_per_second)
@@ -462,7 +464,10 @@ class SimulatedFollowRuntime:
             follower.state = FollowState.MANUAL
             return self._observation(follower, target, reason="manual_control")
         if target is None:
-            follower.state = FollowState.WAITING_POSITION
+            follower.state = (
+                FollowState.FOLLOW_PREDICTING
+                if self.continuous_follow else FollowState.WAITING_POSITION
+            )
             return self._observation(follower, target, reason="target_not_seeded")
         if current is not None and follower.mode is ControlMode.SIMULATED and current.source == "simulated":
             # The deterministic actor is an active local source.  Refresh its
@@ -478,7 +483,10 @@ class SimulatedFollowRuntime:
             )
             follower.position = current
         if current is None:
-            follower.state = FollowState.WAITING_POSITION
+            follower.state = (
+                FollowState.FOLLOW_PREDICTING
+                if self.continuous_follow else FollowState.WAITING_POSITION
+            )
             return self._observation(follower, target, reason="follower_position_unseeded")
         if now_ms - current.captured_at_ms > self.position_ttl_ms:
             current = PositionSample(
@@ -492,10 +500,23 @@ class SimulatedFollowRuntime:
                 max(0.25, target.confidence * 0.5), "target_hold",
             )
         if current.map_identity != self.map_identity or target.map_identity != self.map_identity:
-            follower.state = FollowState.MAP_MISMATCH
+            follower.state = (
+                FollowState.FOLLOW_RELOCATING
+                if self.continuous_follow else FollowState.MAP_MISMATCH
+            )
             return self._observation(follower, target, reason="map_identity_mismatch")
         distance = point_distance(current.position, target.position)
         if target.source == "target_hold" and distance <= self.arrival_radius:
+            if self.continuous_follow:
+                follower.arrival_hold = True
+                follower.route = ()
+                follower.planned_target = None
+                follower.state = FollowState.FOLLOW_HOLD
+                self._clear_failed_plan(follower)
+                return self._observation(
+                    follower, target, distance=distance,
+                    reason="follow_hold_target_unconfirmed",
+                )
             follower.state = FollowState.WAITING_POSITION
             return self._observation(follower, target, distance=distance, reason="target_arrival_unconfirmed")
         if current.source == "command_prediction" and distance <= self.arrival_radius:
@@ -538,16 +559,19 @@ class SimulatedFollowRuntime:
                 reason="arrival_unconfirmed", vector=vector,
             )
         if follower.arrival_hold and distance < self.resume_radius:
-            follower.state = FollowState.ARRIVED
+            follower.state = FollowState.FOLLOW_HOLD if self.continuous_follow else FollowState.ARRIVED
             return self._observation(follower, target, distance=distance, reason="within_resume_radius")
         follower.arrival_hold = False
         if distance <= self.arrival_radius:
             follower.arrival_hold = True
             follower.route = ()
             follower.planned_target = None
-            follower.state = FollowState.ARRIVED
+            follower.state = FollowState.FOLLOW_HOLD if self.continuous_follow else FollowState.ARRIVED
             self._clear_failed_plan(follower)
-            return self._observation(follower, target, distance=distance, reason="within_arrival_radius")
+            return self._observation(
+                follower, target, distance=distance,
+                reason="follow_hold_within_radius" if self.continuous_follow else "within_arrival_radius",
+            )
 
         if (
             follower.local_contact_captured_at_ms is not None

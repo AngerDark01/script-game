@@ -70,6 +70,21 @@ public sealed partial class ControllerRegistry
                 return new { accepted = false, stale = true }; // old release must not revoke a newer owner
             if (lease is null || payload.GetProperty("token").GetString() != lease.Token)
                 throw new InvalidOperationException("Program session expired or was revoked. Explicit start is required.");
+            if (command == "program.heartbeat")
+            {
+                // A heartbeat renews the program ownership lease only.  It
+                // never changes the current stick state or its output TTL.
+                // Keeping this separate from StateStore.Heartbeat prevents a
+                // normal automation source heartbeat from accidentally
+                // keeping a revoked program token alive.
+                lease.Deadline = Environment.TickCount64 + 1000;
+                return new
+                {
+                    accepted = true,
+                    controller = number,
+                    remainingMs = 1000,
+                };
+            }
             if (command == "program.release")
             {
                 RevokeProgram(number);

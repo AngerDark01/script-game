@@ -37,6 +37,8 @@ class DualMotionFrameResult:
     tracking_ms: float
     candidate_ms: float = 0.0
     total_worker_ms: float = 0.0
+    recognition_wall_mask_ms: float = 0.0
+    recognition_marker_observation_ms: float = 0.0
     processed: Any | None = None
     candidates: tuple[Any, ...] = ()
 
@@ -187,14 +189,17 @@ class Poe2DualMotionWorker(QObject):
             combined = self.recognizer.extract_combined(
                 raw, player_pos=None, exclude_player=False, exclude_dynamic=False,
             )
+        recognition_wall_mask_ms = (time.perf_counter() - recognition_started) * 1000.0
         mask = combined[0] if isinstance(combined, (tuple, list)) else combined
         profiles = tuple(
             MarkerColorProfile.from_dict(item)
             for item in getattr(self.monitor_config, "dual_marker_profiles", ())
         )
+        marker_started = time.perf_counter()
         observation = detect_saturated_marker_observation(
             raw, captured_at_ms, profiles=profiles or None,
         )
+        recognition_marker_observation_ms = (time.perf_counter() - marker_started) * 1000.0
         recognition_ms = (time.perf_counter() - recognition_started) * 1000.0
         shape = getattr(mask, "shape", None)
         if shape is None or len(shape) != 2 or min(int(value) for value in shape) <= 0:
@@ -227,6 +232,8 @@ class Poe2DualMotionWorker(QObject):
             tracking_ms=tracking_ms,
             candidate_ms=candidate_ms,
             total_worker_ms=total_worker_ms,
+            recognition_wall_mask_ms=recognition_wall_mask_ms,
+            recognition_marker_observation_ms=recognition_marker_observation_ms,
             processed=processed,
             candidates=candidates,
         )

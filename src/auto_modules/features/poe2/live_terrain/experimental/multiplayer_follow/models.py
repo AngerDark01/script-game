@@ -67,6 +67,10 @@ class FollowState(StrEnum):
     BLOCKED = "blocked"
     MANUAL = "manual"
     MAP_MISMATCH = "map_mismatch"
+    FOLLOW_HOLD = "follow_hold"
+    FOLLOW_PREDICTING = "follow_predicting"
+    FOLLOW_RELOCATING = "follow_relocating"
+    FOLLOW_REARMING = "follow_rearming"
 
 
 @dataclass(frozen=True, slots=True)

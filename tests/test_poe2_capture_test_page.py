@@ -1548,8 +1548,8 @@ def test_live_role_follow_tracks_fresh_leader_and_only_controls_follower(
         (70.0, 10.0), captured_at_ms=captured_at_ms + 10,
     )
     page._tick_follow_experiment()
-    assert page._last_follow_observations[f"local-device:{follower_identity}"].state is FollowState.ARRIVED
-    assert outputs[controller].calls[-1] == "stop"
+    assert page._last_follow_observations[f"local-device:{follower_identity}"].state is FollowState.FOLLOW_HOLD
+    assert outputs[controller].calls[-1] != "stop"
 
     page._latest_dual_state = DualMotionState(
         "tracking", "visual", {leader_identity: (90.0, 10.0), follower_identity: (70.0, 10.0)}, transform,
@@ -1560,7 +1560,11 @@ def test_live_role_follow_tracks_fresh_leader_and_only_controls_follower(
         (90.0, 10.0), captured_at_ms=captured_at_ms + 20,
     )
     page._tick_follow_experiment()
-    assert outputs[controller].calls[-2] == "start"
+    assert "stop" not in outputs[controller].calls
+    assert any(
+        isinstance(call, tuple) and call[0] == "write" and call[1] != (0.0, 0.0)
+        for call in outputs[controller].calls
+    )
     page.stop_follow_experiment()
 
 
@@ -1621,7 +1625,7 @@ def test_live_role_follow_waits_when_roles_start_together_then_resumes_after_lea
     # A close initial spawn is a healthy arrival hold: no virtual-gamepad
     # lease or movement should be started, and no relocalization is needed.
     assert outputs[2].calls == []
-    assert page._last_follow_observations["local-device:role-b"].state is FollowState.ARRIVED
+    assert page._last_follow_observations["local-device:role-b"].state is FollowState.FOLLOW_HOLD
     assert reasons == []
 
     # Once the leader has moved beyond the 20-unit resume band, the same
@@ -1738,7 +1742,8 @@ def test_live_follow_reanchor_preserves_active_session(tmp_path):
     assert page._follow_session_id == session_id
     assert page._follow_recovery_pending is True
     assert restart_calls == [{"recovery": True, "preserve_follow": True}]
-    assert outputs[2].calls[-1] == "stop"
+    assert outputs[2].calls[-1][0] == "write"
+    assert outputs[2].calls[-1][1] == (0.0, 0.0)
     page.stop_follow_experiment()
 
 
@@ -1870,7 +1875,8 @@ def test_live_role_follow_holds_prediction_on_stale_frame_and_recovers_on_new_fr
     assert page._follow_runtime is not None
     assert page._follow_recovery_pending is True
     assert page._follow_timer.isActive()
-    assert outputs[2].calls[-1] == "stop"
+    assert outputs[2].calls[-1][0] == "write"
+    assert outputs[2].calls[-1][1] == (0.0, 0.0)
 
 
 def test_live_follow_stale_frame_requests_one_recovery_after_stall(tmp_path):
@@ -1947,7 +1953,7 @@ def test_shutdown_cancels_follow_recovery_callbacks_and_releases_output(tmp_path
     assert outputs[2].calls[-1] == "stop"
 
 
-def test_live_role_follow_releases_on_markerless_warmup_frame(tmp_path):
+def test_live_role_follow_holds_on_markerless_warmup_frame(tmp_path):
     page, outputs, transform = _dual_target_page(tmp_path)
     page.follow_p1_combo.setCurrentIndex(page.follow_p1_combo.findData("role-a"))
     page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("role-b"))
@@ -1967,7 +1973,8 @@ def test_live_role_follow_releases_on_markerless_warmup_frame(tmp_path):
     page._latest_dual_captured_at_ms = int(time.time() * 1000)
     page._tick_follow_experiment()
 
-    assert outputs[2].calls[-1] == "stop"
+    assert outputs[2].calls[-1][0] == "write"
+    assert outputs[2].calls[-1][1] == (0.0, 0.0)
     page.stop_follow_experiment()
 
 

@@ -58,6 +58,26 @@ public class ProgramOutputTests
     }
 
     [Fact]
+    public void ProgramHeartbeatRenewsOwnershipWithoutChangingOutput()
+    {
+        var registry = ControllerRegistry.CreateDefault(new NullXInputBackend());
+        var reply = JsonSerializer.SerializeToElement(registry.HandleProgram("program.acquire", StartPayload()));
+        var token = reply.GetProperty("token").GetString()!;
+        registry.HandleProgram("program.state", Payload(new {
+            controller = 1, token, ttlMs = 100, deadlineMs = Environment.TickCount64 + 100,
+            state = new GamepadState(0, 0, 0, 20000, 0, 0, 0) }));
+
+        var heartbeat = JsonSerializer.SerializeToElement(registry.HandleProgram(
+            "program.heartbeat", Payload(new { controller = 1, token })));
+
+        Assert.True(heartbeat.GetProperty("accepted").GetBoolean());
+        Assert.Equal(20000, registry.EffectiveState(1).LeftStickX);
+        registry.HandleProgram("program.state", Payload(new {
+            controller = 1, token, ttlMs = 100, deadlineMs = Environment.TickCount64 + 100,
+            state = GamepadState.Neutral }));
+    }
+
+    [Fact]
     public void QueuedStartBeforeEmergencyCannotRearm()
     {
         var registry = ControllerRegistry.CreateDefault(new NullXInputBackend());

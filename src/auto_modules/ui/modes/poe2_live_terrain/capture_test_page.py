@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,12 @@ from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow imp
 )
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow.command_role_tracker import (
     CommandRoleTracker,
+)
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow.recovery.recovery_coordinator import (
+    RecoveryCoordinator,
+)
+from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow.recovery.global_reanchor import (
+    GlobalReanchorBackend,
 )
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization import (
     DualFirstFrameExperiment,
@@ -333,6 +340,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._follow_command_arm_delay_ms = self._FOLLOW_COMMAND_ARM_DELAY_MS
         self._follow_output_not_before_ms: int | None = None
         self._follow_output_delay_last_log_at_ms: int | None = None
+        # Per-control-tick profiling is intentionally kept separate from the
+        # functional state.  It is finalized even when a tick returns early,
+        # so a stalled/recovery path is measurable rather than invisible.
+        self._follow_tick_timing: dict[str, float] | None = None
+        self._follow_tick_timing_sequence = 0
         self._follow_stop_reason: str | None = None
         # Recovery is a non-terminal transition for live follow.  The visual
         # worker may be rebuilt, while the follow timer, runtime, output lease
@@ -347,6 +359,18 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._follow_recovery_episode_active = False
         self._follow_recovery_episode_reason: str | None = None
         self._follow_recovery_episode_suppressed = 0
+        # Live follow uses the new frame-first recovery policy.  The legacy
+        # RecoveryController remains available for static/legacy experiments
+        # but must not schedule live-follow retries.
+        self._live_recovery_policy = RecoveryCoordinator()
+        self._live_memory_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="poe2-live-memory-reanchor"
+        )
+        self._live_memory_future: Future[Any] | None = None
+        self._live_memory_started_at_ms: int | None = None
+        self._live_global_reanchor = GlobalReanchorBackend(
+            lambda **kwargs: self._start_dual_motion(**kwargs)
+        )
         self._recovery_controller = RecoveryController()
         self._experiment_runtime = ExperimentRuntime()
         self._experiment_composition = build_experiment_composition()
@@ -985,6 +1009,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         force_memory_read: bool,
     ) -> Any:
         """Compute one dual registration without touching Qt widgets."""
+        compute_started = time.perf_counter()
         captured_at_ms = int(time.time() * 1000)
         self._logger.info(
             "step=dual_first_frame.compute_started instance=%s captured_at_ms=%s "
@@ -1004,7 +1029,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 registrar=build_poe2_dual_first_frame_registrar(self.monitor_config),
             )
         )
+        memory_started = time.perf_counter()
         anchors = experiment.read_anchors(snapshot.metadata.instance_id)
+        memory_ms = (time.perf_counter() - memory_started) * 1000.0
         self._logger.info(
             "step=dual_first_frame.memory_success read_count=%s identities=%s anchors=%s",
             anchor_provider.read_count, tuple(anchors),
@@ -1019,13 +1046,16 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         # method is invoked from the manual experiment button.
         capture_attempts = 1
         for attempt in range(1, capture_attempts + 1):
+            capture_started = time.perf_counter()
             candidate_frame = preview_provider(self.monitor_config)
+            capture_ms = (time.perf_counter() - capture_started) * 1000.0
             if candidate_frame is None:
                 self._logger.warning(
                     "step=dual_first_frame.capture_empty attempt=%s/%s",
                     attempt, capture_attempts,
                 )
             else:
+                recognition_started = time.perf_counter()
                 candidate_combined = recognizer.extract_combined(
                     candidate_frame, player_pos=None,
                     exclude_player=False, exclude_dynamic=False,
@@ -1040,6 +1070,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     candidate_frame, candidate_captured_at_ms,
                     profiles=profiles or None,
                 )
+                recognition_ms = (time.perf_counter() - recognition_started) * 1000.0
                 captured_frames.append({
                     "raw": candidate_frame,
                     "combined": candidate_combined,
@@ -1048,8 +1079,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     "captured_at_ms": candidate_captured_at_ms,
                 })
                 self._logger.info(
-                    "step=dual_first_frame.capture_success attempt=%s/%s shape=%s",
+                    "step=dual_first_frame.capture_success attempt=%s/%s shape=%s capture_ms=%.3f recognition_ms=%.3f",
                     attempt, capture_attempts, getattr(candidate_frame, "shape", None),
+                    capture_ms, recognition_ms,
                 )
                 self._logger.info(
                     "step=dual_first_frame.observation attempt=%s/%s candidates=%s positions=%s",
@@ -1082,6 +1114,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     "capture_attempt": len(registrations) + 1,
                 },
             )
+            registration_started = time.perf_counter()
             try:
                 candidate_result = experiment.register(
                     frame, reference=reference, anchors=anchors,
@@ -1093,15 +1126,17 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     len(registrations) + 1,
                 )
                 continue
+            registration_ms = (time.perf_counter() - registration_started) * 1000.0
             diagnostics = dict(getattr(candidate_result, "diagnostics", {}) or {})
             registrations.append((candidate_result, captured, frame, diagnostics))
             self._logger.info(
                 "step=dual_first_frame.candidate_result attempt=%s status=%s score=%s "
-                "pair_confidence=%s shape_quality=%s",
+                "pair_confidence=%s shape_quality=%s registration_ms=%.3f",
                 len(registrations), getattr(candidate_result, "status", None),
                 diagnostics.get("best_pair_confidence", diagnostics.get("best_score")),
                 diagnostics.get("best_pair_confidence"),
                 diagnostics.get("best_shape_quality", diagnostics.get("best_forward_coverage")),
+                registration_ms,
             )
         if not registrations:
             raise RuntimeError("所有首帧截图都无法生成有效匹配候选")
@@ -1118,9 +1153,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
 
         result, selected, frame, _diagnostics = max(registrations, key=registration_key)
         self._logger.info(
-            "step=dual_first_frame.consensus_selected candidates=%s selected_attempt=%s status=%s",
+            "step=dual_first_frame.consensus_selected candidates=%s selected_attempt=%s status=%s memory_ms=%.3f total_ms=%.3f",
             len(registrations), int(frame.diagnostics.get("capture_attempt", 0)),
             getattr(result, "status", None),
+            memory_ms, (time.perf_counter() - compute_started) * 1000.0,
         )
         return SimpleNamespace(
             result=result,
@@ -1464,6 +1500,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 arrival_radius=arrival_radius,
                 max_frame_age_ms=self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS,
             ),
+            continuous_follow=live_role_follow,
         )
 
     def start_follow_experiment(self, *, _sync_phase: str = "cold_start") -> None:
@@ -1558,7 +1595,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 outputs[role] = self.program_output_factory(1 if role.actor_id == p1_identity else 2)
             program_output = (
                 ProgramFollowOutput(
-                    outputs, vector_transform=self._native_route_vector_for_input,
+                    outputs,
+                    vector_transform=self._native_route_vector_for_input,
+                    continuous_roles=program_roles if live_mode else (),
                 )
                 if outputs else None
             )
@@ -2343,6 +2382,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     def _tick_follow_experiment(self) -> None:
         started = time.perf_counter()
         attempt = self._follow_tick_attempt_count + 1
+        self._follow_tick_timing_sequence += 1
+        self._follow_tick_timing = {
+            "attempt": float(attempt),
+            "sequence": float(self._follow_tick_timing_sequence),
+        }
         try:
             self._follow_tick_attempt_count = attempt
             self._tick_follow_experiment_impl()
@@ -2352,6 +2396,33 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 f"tick_exception:{type(exc).__name__}", exc,
             )
         finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            timing = self._follow_tick_timing or {}
+            timing["total_tick_ms"] = elapsed_ms
+            timing.setdefault("outcome", "exception")
+            # Debug contains every tick; info is sampled to keep diagnostics
+            # from becoming the bottleneck it is measuring.
+            message = (
+                "step=follow_experiment.timing attempt=%s total_tick_ms=%.3f "
+                "context_ms=%.3f foreground_gate_ms=%.3f command_delay_gate_ms=%.3f "
+                "live_context_ms=%.3f visual_state_ms=%.3f target_update_ms=%.3f "
+                "prediction_update_ms=%.3f runtime_tick_ms=%.3f output_apply_ms=%.3f "
+                "local_contact_ms=%.3f overlay_render_ms=%.3f diagnostic_log_ms=%.3f "
+                "outcome=%s"
+            )
+            args = (
+                attempt, elapsed_ms,
+                timing.get("context_ms", 0.0), timing.get("foreground_gate_ms", 0.0),
+                timing.get("command_delay_gate_ms", 0.0), timing.get("live_context_ms", 0.0),
+                timing.get("visual_state_ms", 0.0), timing.get("target_update_ms", 0.0),
+                timing.get("prediction_update_ms", 0.0), timing.get("runtime_tick_ms", 0.0),
+                timing.get("output_apply_ms", 0.0), timing.get("local_contact_ms", 0.0),
+                timing.get("overlay_render_ms", 0.0), timing.get("diagnostic_log_ms", 0.0),
+                timing.get("outcome", "unknown"),
+            )
+            self._logger.debug(message, *args)
+            if attempt <= 2 or attempt % 10 == 0 or timing.get("outcome") in {"reanchor", "exception"}:
+                self._logger.info(message, *args)
             self._logger.debug(
             "step=follow_experiment.tick_dispatch_end attempt=%s elapsed_ms=%.3f "
                 "active=%s timer_active=%s live=%s session_id=%s",
@@ -2362,6 +2433,21 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 self._follow_live_mode,
                 self._follow_session_id,
             )
+            self._follow_tick_timing = None
+
+    def _mark_follow_timing(self, name: str, started: float) -> None:
+        timing = self._follow_tick_timing
+        if timing is not None:
+            timing[name] = (time.perf_counter() - started) * 1000.0
+
+    def _add_follow_timing(self, name: str, started: float) -> None:
+        timing = self._follow_tick_timing
+        if timing is not None:
+            timing[name] = timing.get(name, 0.0) + (time.perf_counter() - started) * 1000.0
+
+    def _follow_timing_outcome(self, value: str) -> None:
+        if self._follow_tick_timing is not None:
+            self._follow_tick_timing["outcome"] = value
 
     def _continue_follow_after_runtime_failure(
         self, reason: str, error: Exception | None = None,
@@ -2572,7 +2658,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         not be promoted to a relocalization request merely because the
         follower marker is temporarily occluded.
         """
-        return observation.state is FollowState.ARRIVED or observation.reason in {
+        return observation.state in {FollowState.ARRIVED, FollowState.FOLLOW_HOLD} or observation.reason in {
             "within_arrival_radius",
             "within_resume_radius",
             "arrival_unconfirmed",
@@ -2589,8 +2675,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         )
 
     def _tick_follow_experiment_impl(self) -> None:
+        self._poll_live_memory_reanchor()
         tick_attempt = self._follow_tick_attempt_count
         tick_started = time.perf_counter()
+        context_started = time.perf_counter()
         runtime = self._follow_runtime
         source_size = self._dual_map_source_size
         transform = self._dual_map_transform
@@ -2611,6 +2699,8 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._follow_session_id,
         )
         if runtime is None or source_size is None or transform is None:
+            self._mark_follow_timing("context_ms", context_started)
+            self._follow_timing_outcome("missing_context")
             self._logger.warning(
                 "step=follow_experiment.tick_end attempt=%s outcome=missing_context "
                 "runtime=%s source_size=%s transform=%s",
@@ -2623,6 +2713,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 self.follow_status_label.setText("实时跟随：地图变换暂时不可用，跟随会话继续")
                 self._schedule_live_follow_recovery_retry("tick_map_context_missing")
             return
+        self._mark_follow_timing("context_ms", context_started)
         now_ms = int(time.time() * 1000)
         state = self._latest_dual_state
         live_samples: dict[str, PositionSample] = {}
@@ -2651,11 +2742,14 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         # the same foreground boundary to click-target follow as to live-role
         # follow; otherwise a map click made while the workbench is focused
         # arms the Host lease and immediately creates prediction drift.
+        gate_started = time.perf_counter()
         if self._follow_program_roles and not self._gate_live_follow_foreground(
             state=state,
             captured_at_ms=self._latest_dual_captured_at_ms,
             now_ms=now_ms,
         ):
+            self._mark_follow_timing("foreground_gate_ms", gate_started)
+            self._follow_timing_outcome("waiting_foreground")
             self._logger.debug(
                 "step=follow_experiment.tick_end attempt=%s outcome=waiting_foreground "
                 "foreground=%s pid=%s hwnd=%s",
@@ -2665,8 +2759,12 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 self._follow_game_hwnd,
             )
             return
+        self._mark_follow_timing("foreground_gate_ms", gate_started)
         not_before_ms = self._follow_output_not_before_ms
+        delay_started = time.perf_counter()
         if self._follow_program_roles and not_before_ms is not None and now_ms < not_before_ms:
+            self._mark_follow_timing("command_delay_gate_ms", delay_started)
+            self._follow_timing_outcome("command_delay")
             remaining_ms = max(0, int(not_before_ms) - now_ms)
             if (
                 self._follow_output_delay_last_log_at_ms is None
@@ -2692,6 +2790,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 tick_attempt, remaining_ms, not_before_ms,
             )
             return
+        self._mark_follow_timing("command_delay_gate_ms", delay_started)
         if self._follow_program_roles and not_before_ms is not None:
             self._follow_output_not_before_ms = None
             self._follow_output_delay_last_log_at_ms = None
@@ -2700,6 +2799,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 tuple(role.key for role in self._follow_program_roles),
             )
         if self._follow_live_mode:
+            live_context_started = time.perf_counter()
             captured_at_ms = self._latest_dual_captured_at_ms
             leader = self._follow_leader_role
             if (
@@ -2707,12 +2807,16 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 or runtime.map_identity.map_id != str(self._snapshot.metadata.area_id)
                 or runtime.map_identity.map_version != str(self._snapshot.metadata.instance_id)
             ):
+                self._mark_follow_timing("live_context_ms", live_context_started)
+                self._follow_timing_outcome("live_context_wait")
                 self._follow_recovery_pending = True
                 if self._follow_program_output is not None:
                     self._follow_program_output.release_all()
                 self.follow_status_label.setText("实时跟随：等待地图/定位上下文恢复，跟随会话继续")
                 self._schedule_live_follow_recovery_retry("tick_live_context_changed")
                 return
+            self._mark_follow_timing("live_context_ms", live_context_started)
+            visual_state_started = time.perf_counter()
             roles = (leader, *self._follow_program_roles)
             role_tracker = self._follow_role_tracker
             role_observations = state.diagnostics.get("role_observations", {})
@@ -2779,9 +2883,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     self._follow_stale_release_sent = False
                     self._follow_stale_recovery_requested = False
             if role_tracker is None or warmup_assumed_stationary:
+                self._mark_follow_timing("visual_state_ms", visual_state_started)
+                self._follow_timing_outcome("visual_state_wait")
                 if self._follow_program_output is not None:
                     self._follow_program_output.release_all()
-                self.follow_status_label.setText("实时跟随：等待可信双人位置，手柄已释放")
+                self.follow_status_label.setText("实时跟随：等待可信双人位置，当前保持中立并继续跟踪")
                 self._logger.warning(
                     "step=live_role_follow.waiting status=%s frame_age_ms=%s leader=%s",
                     state.status, frame_age_ms, leader.key,
@@ -2814,6 +2920,8 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     state.diagnostics,
                 )
                 self._request_live_follow_reanchor("wall_or_identity_tracking_lost")
+                self._mark_follow_timing("visual_state_ms", visual_state_started)
+                self._follow_timing_outcome("reanchor")
                 return
             if (
                 self._follow_sync_phase in {"cold_start", "recovery_sync"}
@@ -3242,6 +3350,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     "step=live_role_follow.tracker_compact attempt=%s tick=%s roles=%s",
                     tick_attempt, self._follow_tick_count + 1, compact_tracker,
                 )
+            target_update_started = time.perf_counter()
             sample = live_samples[leader.actor_id]
             previous_target = runtime.remote.position
             if runtime.set_target_sample(sample) is not None and (
@@ -3256,8 +3365,13 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     leader.key, sample.position, sample.captured_at_ms,
                     now_ms - sample.captured_at_ms,
                 )
+            self._mark_follow_timing("target_update_ms", target_update_started)
+            self._mark_follow_timing("visual_state_ms", visual_state_started)
         else:
+            target_update_started = time.perf_counter()
             runtime.refresh_simulated_target(now_ms=now_ms)
+            self._mark_follow_timing("target_update_ms", target_update_started)
+        prediction_update_started = time.perf_counter()
         if state is not None and self._follow_live_mode:
             for role in (self._follow_leader_role, *self._follow_program_roles):
                 if role is None:
@@ -3289,7 +3403,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                             "wall_estimate" if self._follow_live_mode and role_key in self._follow_occluded_roles else "visual",
                         )
                     )
+        self._mark_follow_timing("prediction_update_ms", prediction_update_started)
+        runtime_started = time.perf_counter()
         observations = runtime.tick(now_ms=now_ms)
+        self._mark_follow_timing("runtime_tick_ms", runtime_started)
         self._last_follow_observations = observations
         self._follow_tick_count += 1
         self._logger.debug(
@@ -3368,7 +3485,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     "role=%s reason=%s observation=%s",
                     tick_attempt, recovery.follower.key, recovery.reason, recovery.diagnostics,
                 )
-                self._start_dual_motion(recovery=True)
+                self._live_global_reanchor.start(
+                    recovery.reason, preserve_follow=True
+                )
                 return
             # A follower that is inside the arrival/resume band is expected
             # to produce a zero vector.  It may also be represented by a
@@ -3419,6 +3538,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     self._follow_occluded_roles,
                 )
         if self._follow_program_output is not None and not live_sync_pending:
+            output_started = time.perf_counter()
             try:
                 for role in self._follow_program_roles:
                     observation = observations[role.key]
@@ -3490,18 +3610,25 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                                 calibration_confidence=0.0 if calibration is None else calibration.confidence,
                             )
                     if self._follow_live_mode and role.actor_id not in self._follow_occluded_roles:
+                        contact_started = time.perf_counter()
                         self._update_follow_local_contact(
                             runtime, state, role, observation, log_step="live_role_follow",
                             emit_log=self._follow_tick_count == 1 or self._follow_tick_count % 5 == 0,
                         )
+                        self._add_follow_timing("local_contact_ms", contact_started)
+                self._mark_follow_timing("output_apply_ms", output_started)
             except Exception as exc:
+                self._mark_follow_timing("output_apply_ms", output_started)
                 self._logger.exception("step=follow_experiment.program_output_failed error=%s", exc)
                 self._continue_follow_after_runtime_failure(
                     f"program_output_exception:{type(exc).__name__}", exc,
                 )
                 return
         elif self._follow_program_output is not None and live_sync_pending:
+            output_started = time.perf_counter()
             self._follow_program_output.release_all()
+            self._mark_follow_timing("output_apply_ms", output_started)
+        diagnostic_started = time.perf_counter()
         if tick_attempt % 5 == 0:
             self._logger.info(
             "step=follow_experiment.diagnostic_snapshot attempt=%s tick=%s "
@@ -3635,9 +3762,12 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                     self._logger.exception(
                         "step=follow_experiment.program_diagnostics_failed error=%s", exc
                     )
+        self._mark_follow_timing("diagnostic_log_ms", diagnostic_started)
         if self._follow_live_mode:
             self._publish_follow_prediction_hints()
+        overlay_started = time.perf_counter()
         self._render_follow_overlay()
+        self._mark_follow_timing("overlay_render_ms", overlay_started)
         states = " | ".join(
             f"{role_key}={item.state.value}:{item.reason}" for role_key, item in observations.items()
         )
@@ -3656,6 +3786,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             live_sync_pending,
             states,
         )
+        self._follow_timing_outcome("tracking")
 
     def _enter_live_follow_sync(self, *, phase: str, now_ms: int, captured_at_ms: int) -> None:
         """Start a bounded visual synchronization barrier for live follow.
@@ -3758,7 +3889,61 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         return True
 
     def _request_live_follow_reanchor(self, reason: str) -> None:
+        reanchor_started = time.perf_counter()
         preserve_follow = bool(self._follow_live_mode and self._follow_runtime is not None)
+        if preserve_follow:
+            # Once an episode owns recovery, repeated timer ticks must not
+            # keep re-running policy or arm more backends for the same stale
+            # observation.  The next accepted frame or backend completion
+            # clears the episode.
+            if self._follow_recovery_episode_active:
+                self._follow_recovery_episode_suppressed += 1
+                if self._follow_recovery_episode_suppressed == 1 or (
+                    self._follow_recovery_episode_suppressed % 25 == 0
+                ):
+                    self._logger.info(
+                        "step=live_role_follow.recovery_episode_suppressed reason=%s count=%s",
+                        reason, self._follow_recovery_episode_suppressed,
+                    )
+                return
+            now_ms = int(time.time() * 1000)
+            captured_at_ms = self._latest_dual_captured_at_ms
+            frame_age_ms = (
+                None if captured_at_ms is None else max(0, now_ms - int(captured_at_ms))
+            )
+            stale_duration_ms = (
+                0 if self._follow_stale_since_ms is None
+                else max(0, now_ms - int(self._follow_stale_since_ms))
+            )
+            decision = self._live_recovery_policy.decide(
+                now_ms=now_ms,
+                frame_available=captured_at_ms is not None,
+                frame_age_ms=frame_age_ms,
+                visual_score=None,
+                local_score=None,
+                consecutive_visual_failures=(
+                    max(1, len(self._follow_rejected_visual))
+                    if stale_duration_ms <= 0
+                    else max(1, int(stale_duration_ms // 100))
+                ),
+                prediction_uncertainty=min(200.0, stale_duration_ms * 0.08),
+                last_memory_ms=self._dual_last_recovery_at_ms,
+            )
+            self._logger.info(
+                "step=live_role_follow.recovery_decision action=%s state=%s "
+                "reason=%s frame_age_ms=%s cooldown_remaining_ms=%s",
+                decision.action, decision.state.value, reason, frame_age_ms,
+                decision.cooldown_remaining_ms,
+            )
+            if decision.action == "predict":
+                self._follow_recovery_pending = True
+                if self._follow_program_output is not None:
+                    self._follow_program_output.release_all()
+                self.follow_status_label.setText("实时跟随：视觉恢复中，按预测继续")
+                return
+            if decision.action == "memory":
+                self._start_live_memory_reanchor(reason)
+                return
         if (
             preserve_follow
             and self._dual_motion_tracker is not None
@@ -3773,36 +3958,23 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 request_local()
                 self._logger.warning(
                     "step=live_role_follow.local_reanchor_requested reason=%s "
-                    "memory_read=False global_registration=False prediction_continues=True",
-                    reason,
+                    "memory_read=False global_registration=False prediction_continues=True request_ms=%.3f",
+                    reason, (time.perf_counter() - reanchor_started) * 1000.0,
                 )
                 self.follow_status_label.setText(
                     "实时跟随：局部墙体重锚中，按大地图预测继续"
                 )
                 return
-        if preserve_follow and self._follow_recovery_episode_active:
-            self._follow_recovery_episode_suppressed += 1
-            if self._follow_recovery_episode_suppressed == 1 or (
-                self._follow_recovery_episode_suppressed % 25 == 0
-            ):
-                self._logger.info(
-                    "step=live_role_follow.recovery_episode_suppressed reason=%s "
-                    "count=%s episode_reason=%s pending=%s",
-                    reason,
-                    self._follow_recovery_episode_suppressed,
-                    self._follow_recovery_episode_reason,
-                    self._follow_recovery_pending,
-                )
-            return
         if preserve_follow:
             self._begin_live_follow_recovery_episode(reason)
         if not self._claim_dual_recovery(reason=f"follow:{reason}"):
             self._logger.warning(
                 "step=live_role_follow.reanchor_rejected reason=%s "
-                "tick=%s attempts=%s last_observations=%s last_visual_positions=%s",
+                "tick=%s attempts=%s request_ms=%.3f last_observations=%s last_visual_positions=%s",
                 reason,
                 self._follow_tick_count,
                 self._follow_tick_attempt_count,
+                (time.perf_counter() - reanchor_started) * 1000.0,
                 self._last_follow_observations,
                 self._follow_last_visual_positions,
             )
@@ -3823,7 +3995,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._logger.warning(
             "step=live_role_follow.reanchor reason=%s tick=%s attempts=%s "
             "sync_phase=%s rejected_visual=%s occluded=%s observations=%s "
-            "last_visual_positions=%s output_snapshot=%s",
+            "last_visual_positions=%s output_snapshot=%s request_ms=%.3f",
             reason,
             self._follow_tick_count,
             self._follow_tick_attempt_count,
@@ -3833,15 +4005,114 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._last_follow_observations,
             self._follow_last_visual_positions,
             None if self._follow_program_output is None else self._follow_program_output.snapshot(),
+            (time.perf_counter() - reanchor_started) * 1000.0,
         )
+        if preserve_follow:
+            self._logger.warning(
+                "step=live_role_follow.reanchor_backend backend=global_async "
+                "policy=frame_first reason=%s legacy_direct_entry=False",
+                reason,
+            )
         self._follow_recovery_pending = preserve_follow
         self._save_dual_follow_recovery_context()
         if self._follow_program_output is not None:
             self._follow_program_output.release_all()
         if preserve_follow:
-            self._start_dual_motion(recovery=True, preserve_follow=True)
+            self._live_global_reanchor.start(reason, preserve_follow=True)
         else:
-            self._start_dual_motion(recovery=True)
+            self._live_global_reanchor.start(reason, preserve_follow=False)
+
+    def _start_live_memory_reanchor(self, reason: str) -> None:
+        """Start one non-blocking dual memory read for the live session."""
+        if self._live_memory_future is not None and not self._live_memory_future.done():
+            self._logger.info(
+                "step=live_role_follow.memory_reanchor_coalesced reason=%s", reason
+            )
+            return
+        if self._snapshot is None or self._follow_runtime is None:
+            self._logger.warning(
+                "step=live_role_follow.memory_reanchor_skipped reason=%s "
+                "missing_snapshot_or_runtime=True", reason
+            )
+            return
+        instance_id = str(self._snapshot.metadata.instance_id)
+        source = self.dual_player_position_source or Poe2DualPlayerPositionSource()
+        orientation = self._map_orientation()
+        native_shape = (int(self._snapshot.metadata.height), int(self._snapshot.metadata.width))
+        provider = Poe2DualMemoryAnchorProvider(source, orientation, native_shape)
+        self._follow_recovery_pending = True
+        self._live_memory_started_at_ms = int(time.time() * 1000)
+        self._dual_last_recovery_at_ms = self._live_memory_started_at_ms
+        self._logger.warning(
+            "step=live_role_follow.memory_reanchor_started reason=%s instance=%s",
+            reason, instance_id,
+        )
+        self._live_memory_future = self._live_memory_executor.submit(
+            provider.read_once, instance_id
+        )
+
+    def _poll_live_memory_reanchor(self) -> None:
+        future = self._live_memory_future
+        if future is None or not future.done():
+            return
+        self._live_memory_future = None
+        started_ms = self._live_memory_started_at_ms or int(time.time() * 1000)
+        elapsed_ms = max(0, int(time.time() * 1000) - started_ms)
+        try:
+            anchors = future.result()
+            tracker = self._follow_role_tracker
+            runtime = self._follow_runtime
+            if tracker is None or runtime is None:
+                raise RuntimeError("follow tracker/runtime unavailable")
+            roles = tuple(
+                role for role in (self._follow_leader_role, *self._follow_program_roles)
+                if role is not None
+            )
+            applied = 0
+            for role in roles:
+                anchor = anchors.get(role.actor_id)
+                if anchor is None:
+                    for key, candidate in anchors.items():
+                        if str(key).endswith(str(role.actor_id)):
+                            anchor = candidate
+                            break
+                if anchor is None:
+                    continue
+                tracker.seed(
+                    role.key,
+                    runtime.map_identity.map_version,
+                    tuple(float(value) for value in anchor.position),
+                    captured_at_ms=int(anchor.captured_at_ms),
+                )
+                self._follow_last_visual_positions[role.key] = tuple(
+                    float(value) for value in anchor.position
+                )
+                self._follow_last_visual_at_ms[role.key] = int(anchor.captured_at_ms)
+                applied += 1
+            if applied != len(roles):
+                raise RuntimeError(
+                    f"memory reanchor returned {applied} of {len(roles)} follow roles"
+                )
+            self._follow_recovery_pending = False
+            self._follow_recovery_retry_scheduled = False
+            self._logger.info(
+                "step=live_role_follow.memory_reanchor_success applied=%s elapsed_ms=%s",
+                applied, elapsed_ms,
+            )
+            self.follow_status_label.setText("实时跟随：内存快速校准完成，继续跟随")
+        except Exception as exc:
+            self._logger.exception(
+                "step=live_role_follow.memory_reanchor_failed elapsed_ms=%s error=%s "
+                "fallback=global_async",
+                elapsed_ms, exc,
+            )
+            # The old worker is now an explicit final global-recovery backend,
+            # reached only after the new frame/local/prediction/memory layers.
+            if self._follow_runtime is not None and self._follow_live_mode:
+                self._live_global_reanchor.start(
+                    f"memory_failed:{reason if 'reason' in locals() else 'unknown'}",
+                    preserve_follow=True,
+                )
 
     def _schedule_live_follow_recovery_retry(self, reason: str) -> None:
         """Retry visual recovery without terminating the active follow session."""
@@ -3854,8 +4125,19 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._follow_recovery_retry_scheduled = True
         # Global dual-player registration is expensive. Back off failed
         # attempts instead of starting another computation every second.
-        retry_decision = self._recovery_controller.schedule_retry(reason)
-        delay_ms = retry_decision.retry_after_ms or self._follow_recovery_retry_delay_ms or 5_000
+        if self._follow_live_mode:
+            # The live path deliberately does not call the legacy episode
+            # controller.  Its retry timer is only a bounded fallback after
+            # latest-frame/local attempts have been exhausted.
+            delay_ms = self._follow_recovery_retry_delay_ms or 5_000
+            self._logger.info(
+                "step=live_role_follow.recovery_policy policy=frame_first "
+                "legacy_controller_used=False reason=%s",
+                reason,
+            )
+        else:
+            retry_decision = self._recovery_controller.schedule_retry(reason)
+            delay_ms = retry_decision.retry_after_ms or self._follow_recovery_retry_delay_ms or 5_000
         delay_ms = min(15_000, max(5_000, int(delay_ms)))
         self._follow_recovery_retry_delay_ms = min(15_000, delay_ms * 2)
         self._logger.info(
@@ -3872,7 +4154,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 or self._follow_runtime is None
             ):
                 return
-            self._start_dual_motion(recovery=True, preserve_follow=True)
+            self._live_global_reanchor.start(reason, preserve_follow=True)
 
         QTimer.singleShot(delay_ms, retry)
 
@@ -3996,6 +4278,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self.stop_preview()
         self.stop_hybrid_localization()
         self.stop_multiframe_localization()
+        if self._live_memory_future is not None:
+            self._live_memory_future.cancel()
+            self._live_memory_future = None
 
     def shutdown(self) -> None:
         self._closing = True
@@ -4007,6 +4292,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self.stop_preview()
         self.stop_hybrid_localization()
         self.stop_multiframe_localization()
+        if self._live_memory_future is not None:
+            self._live_memory_future.cancel()
+            self._live_memory_future = None
+        self._live_memory_executor.shutdown(wait=False, cancel_futures=True)
         if self.capture_monitor_window is not None:
             self.capture_monitor_window.close()
         self.localization_control_dialog.close()

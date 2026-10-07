@@ -131,6 +131,54 @@ def test_hidden_target_cannot_confirm_arrival_at_last_known_position():
     assert result.reason == "target_arrival_unconfirmed"
 
 
+def test_continuous_follow_holds_near_hidden_target_without_entering_waiting():
+    identity = MapIdentity("area", "instance-1")
+    role = RoleId("local-device", "actor")
+    leader = RoleId("local-device", "leader")
+    runtime = SimulatedFollowRuntime(
+        wall_map=np.zeros((64, 64), dtype=np.uint8), map_identity=identity,
+        arrival_radius=3.0, resume_radius=8.0, position_ttl_ms=1000,
+        downsample_factor=2, continuous_follow=True,
+    )
+    runtime.add_follower(
+        role, PositionSample(role, identity, (20, 20), 100, 1.0, "visual"),
+        mode=ControlMode.PROGRAM,
+    )
+    runtime.set_target_sample(
+        PositionSample(leader, identity, (21, 20), 101, 0.7, "target_hold")
+    )
+
+    result = runtime.tick(now_ms=101)[role.key]
+
+    assert result.state is FollowState.FOLLOW_HOLD
+    assert result.reason == "follow_hold_target_unconfirmed"
+    assert result.vector == (0.0, 0.0)
+
+
+def test_continuous_follow_keeps_session_when_visual_position_is_near_target():
+    identity = MapIdentity("area", "instance-1")
+    role = RoleId("local-device", "actor")
+    leader = RoleId("local-device", "leader")
+    runtime = SimulatedFollowRuntime(
+        wall_map=np.zeros((64, 64), dtype=np.uint8), map_identity=identity,
+        arrival_radius=3.0, position_ttl_ms=1000, downsample_factor=2,
+        continuous_follow=True,
+    )
+    runtime.add_follower(
+        role, PositionSample(role, identity, (20, 20), 100, 1.0, "visual"),
+        mode=ControlMode.PROGRAM,
+    )
+    runtime.set_target_sample(
+        PositionSample(leader, identity, (21, 20), 101, 1.0, "visual")
+    )
+
+    result = runtime.tick(now_ms=101)[role.key]
+
+    assert result.state is FollowState.FOLLOW_HOLD
+    assert result.reason == "follow_hold_within_radius"
+    assert result.vector == (0.0, 0.0)
+
+
 def test_predicted_role_uses_short_reacquisition_pulse_without_false_stall():
     identity = MapIdentity("area", "instance-1")
     role = RoleId("local-device", "actor")
@@ -1096,7 +1144,100 @@ def test_program_output_is_explicitly_armed_and_released_on_manual_state():
     adapter.apply(observation.__class__(FollowState.MANUAL, role, observation.target), elapsed_ms=30)
     assert output.calls[-2][0] == "write"
     assert output.calls[-1] == ("stop",)
+
+
+def test_continuous_program_output_keeps_lease_for_follow_hold():
+    role = RoleId("local-device", "actor")
+    target = RoleId("local-device", "leader")
+
+    class _Output:
+        def __init__(self):
+            self.calls = []
+
+        def start(self):
+            self.calls.append(("start",))
+
+        def write(self, vector, *, elapsed_ms):
+            self.calls.append(("write", vector, elapsed_ms))
+
+        def stop(self):
+            self.calls.append(("stop",))
+
+    output = _Output()
+    adapter = ProgramFollowOutput({role: output}, continuous_roles={role})
+    adapter.arm(role)
+    observation = FollowObservation(
+        FollowState.FOLLOW_HOLD,
+        role,
+        target,
+        position=(20.0, 20.0),
+        target_position=(21.0, 20.0),
+        reason="follow_hold_within_radius",
+    )
+
+    adapter.apply(observation)
+
+    assert output.calls == [("start",), ("write", (0.0, 0.0), 20)]
+    assert adapter.is_armed(role)
+    adapter.release_all()
+    assert output.calls[-1] == ("write", (0.0, 0.0), 20)
+    assert adapter.is_armed(role)
+    adapter.apply(FollowObservation(
+        FollowState.BLOCKED,
+        role,
+        target,
+        position=(20.0, 20.0),
+        target_position=(21.0, 20.0),
+        reason="no_safe_route",
+    ))
+    assert adapter.is_armed(role)
+    adapter.close_all()
+    assert output.calls[-1] == ("stop",)
     assert not adapter.is_armed(role)
+
+
+def test_continuous_follow_rearms_expired_session_on_neutral_hold_frame():
+    role = RoleId("local-device", "actor")
+    target = RoleId("local-device", "leader")
+
+    class _Output:
+        def __init__(self):
+            self.calls = []
+            self.expire_next_write = True
+
+        def start(self):
+            self.calls.append(("start",))
+
+        def rearm(self):
+            self.calls.append(("rearm",))
+            self.expire_next_write = False
+
+        def write(self, vector, *, elapsed_ms):
+            if self.expire_next_write:
+                self.expire_next_write = False
+                raise RuntimeError("Program session expired or was revoked")
+            self.calls.append(("write", vector, elapsed_ms))
+
+        def stop(self):
+            self.calls.append(("stop",))
+
+    output = _Output()
+    adapter = ProgramFollowOutput({role: output}, continuous_roles={role})
+    adapter.arm(role)
+    adapter.apply(FollowObservation(
+        FollowState.FOLLOW_HOLD,
+        role,
+        target,
+        position=(20.0, 20.0),
+        target_position=(21.0, 20.0),
+    ))
+
+    assert output.calls == [
+        ("start",),
+        ("rearm",),
+        ("write", (0.0, 0.0), 20),
+    ]
+    assert adapter.is_armed(role)
 
 
 def test_program_output_uses_closed_loop_command_duration_when_present():

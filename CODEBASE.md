@@ -1088,6 +1088,14 @@ features/poe2/live_terrain/experimental/multiplayer_follow/complexity.py - 按 r
 features/poe2/live_terrain/experimental/multiplayer_follow/motion_calibration.py - 按 role 保存有界 stick→native 递归校准模型；拒绝低位移、方向失配和无效反馈。
 features/poe2/live_terrain/experimental/multiplayer_follow/sequential_motion.py - 将命令作为预测、视觉/native 位移作为观测的序贯位置/速度更新适配器。
 features/poe2/live_terrain/experimental/multiplayer_follow/closed_loop_controller.py - 通过同一快照组合复杂度、局部控制、序贯反馈与校准；开阔/受限/未知策略切换。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/__init__.py - 导出跟随恢复状态、诊断和策略基础契约。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/recovery_state.py - 定义视觉降级、局部/内存/全局重锚和动态保持状态及恢复等级。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/recovery_diagnostics.py - 保存恢复阶段、帧新鲜度、候选数量、各阶段耗时和 generation 诊断。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/recovery_coordinator.py - 无副作用地选择最新帧视觉、局部视觉、预测或内存恢复动作并执行冷却判断。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/local_reanchor.py - 提供局部 ROI 半径和局部评分接受门槛契约；尚未包含实际图像匹配。
+features/poe2/live_terrain/experimental/multiplayer_follow/recovery/memory_fast_reanchor.py - 一次读取双角色内存样本，校验地图实例并复用既有坐标 transform；带冷却、数量和二维坐标校验。
+features/poe2/live_terrain/experimental/multiplayer_follow/tracking/__init__.py - 跟踪数学模块的包入口。
+features/poe2/live_terrain/experimental/multiplayer_follow/tracking/prediction_model.py - 提供视觉速度/命令速度预测和预测观测加权融合纯函数。
 features/poe2/live_terrain/experimental/multiframe_localization/__init__.py - 多帧定位实验契约、策略、session、归档和导航适配的稳定导出入口。
 features/poe2/live_terrain/experimental/multiframe_localization/models.py - 只读多帧证据、候选区域、位置估计和运动状态 DTO。
 features/poe2/live_terrain/experimental/multiframe_localization/motion_gate.py - 基于 canonical wall 和有界 phase displacement 的移动/静止/未知分类与关键帧门。
@@ -6528,3 +6536,10 @@ ReplayFrame → HeadlessExperiment.ingest(captured_at_ms, payload)
 - **P1 `capture_test_page.start_follow_experiment` / `_tick_follow_experiment_impl`**：页面仍直接编排 runtime、窗口前台校验和输出，尚未完全收口到 controller/adapter；触发条件是 UI 页面运行而不是 headless composition。建议 C1 继续把 tick 编排提取为无 Qt controller。
 - **P1 `capture_test_page.start_dual_target_experiment`**：输出 factory 和窗口/地图状态仍由页面持有；adapter 契约已存在但尚未替换全部调用。建议 B2 后续把副作用调用改成显式 port。
 - **P2 `HeadlessExperiment.ingest`**：当前只验证生命周期和诊断，不执行真实定位/路径算法；它用于确定性状态回放，不能作为实机成功证明。
+## Current recovery-chain self-check
+
+The newly added recovery package is currently a tested policy layer, not yet the sole live runtime implementation. `capture_test_page.py` bypasses the legacy retry controller for live retry scheduling, but `_request_live_follow_reanchor()` still has an old global fallback when no local matcher is available. The new coordinator, real local ROI matcher, and warm memory reader must be wired before live-follow acceptance; static/legacy experiments remain intentionally separate.
+
+### Recovery backend boundary (current)
+
+`recovery/global_reanchor.py::GlobalReanchorBackend.start(reason, preserve_follow)` is the sole live-page adapter for the final asynchronous global worker. It records a request and invokes the injected worker starter; static/legacy page paths intentionally remain separate. `memory_anchors.py::Poe2DualPlayerPositionSource.read_many()` caches PID, descriptor, and layout for the current process/slot, invalidating the layout cache when the area instance changes. `_request_live_follow_reanchor()` suppresses repeated requests inside one recovery episode before evaluating policy, so a stale frame cannot repeatedly claim backends or release the follow lease. The remaining boundary is explicit local matcher feedback: `DualVisualTracker` performs the bounded local match on its next frame, while `RecoveryCoordinator` currently receives the policy-level local action rather than a measured local score.

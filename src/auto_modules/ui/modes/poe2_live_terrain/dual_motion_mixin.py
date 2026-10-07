@@ -632,6 +632,7 @@ class Poe2DualMotionMixin:
         )
 
     def _drain_dual_motion_worker(self) -> None:
+        drain_started = time.perf_counter()
         worker = self._dual_motion_worker
         if worker is None:
             return
@@ -663,6 +664,7 @@ class Poe2DualMotionMixin:
                     self._follow_program_output.release_all()
                 return
         state = result.state
+        state_apply_started = time.perf_counter()
         self._dual_motion_frame_count += 1
         self._latest_dual_state = state
         self._latest_dual_captured_at_ms = int(result.captured_at_ms)
@@ -672,14 +674,19 @@ class Poe2DualMotionMixin:
         self._record_dual_observation_evidence(
             state, result.raw, result.candidates, result.captured_at_ms,
         )
+        evidence_ms = (time.perf_counter() - state_apply_started) * 1000.0
         now = time.perf_counter()
         if now - self._dual_last_ui_render_at >= 1.0 / 12.0:
+            preview_started = time.perf_counter()
             self._dual_last_ui_render_at = now
             self._render_preview(
                 result.raw,
                 combined=result.combined,
                 processed=getattr(result, "processed", None),
             )
+            preview_ms = (time.perf_counter() - preview_started) * 1000.0
+        else:
+            preview_ms = 0.0
         source_size = self._dual_map_source_size
         if source_size is not None:
             # Control state is consumed every time, but map/overlay painting
@@ -690,8 +697,12 @@ class Poe2DualMotionMixin:
                 render_now - self._dual_last_overlay_render_at >= 1.0 / 12.0
                 or state.status != "tracking"
             ):
+                overlay_started = time.perf_counter()
                 self._dual_last_overlay_render_at = render_now
                 self._render_dual_motion_state(state, source_size)
+                overlay_ms = (time.perf_counter() - overlay_started) * 1000.0
+            else:
+                overlay_ms = 0.0
         if self._dual_motion_frame_count % 30 == 0 or state.status != "tracking":
             self._logger.info(
                 "step=dual_motion.tick frame=%s status=%s reason=%s quality=%.3f "
@@ -702,12 +713,16 @@ class Poe2DualMotionMixin:
             )
             self._logger.info(
                 "step=dual_motion.timing frame=%s capture_ms=%.1f recognition_ms=%.1f "
+                "recognition_wall_mask_ms=%.1f recognition_marker_observation_ms=%.1f "
                 "candidate_ms=%.1f tracking_ms=%.1f total_worker_ms=%.1f "
                 "processing_ema_ms=%.1f adaptive_interval_ms=%.1f effective_fps=%.1f "
-                "dropped_results=%s completed_frames=%s",
+                "dropped_results=%s completed_frames=%s evidence_ms=%.1f preview_ms=%.1f "
+                "overlay_ms=%.1f drain_total_ms=%.1f",
                 self._dual_motion_frame_count,
                 result.capture_ms,
                 result.recognition_ms,
+                getattr(result, "recognition_wall_mask_ms", 0.0),
+                getattr(result, "recognition_marker_observation_ms", 0.0),
                 getattr(result, "candidate_ms", 0.0),
                 result.tracking_ms,
                 getattr(result, "total_worker_ms", result.capture_ms + result.recognition_ms + result.tracking_ms),
@@ -716,6 +731,8 @@ class Poe2DualMotionMixin:
                 getattr(worker, "effective_fps", 0.0),
                 worker.dropped_results,
                 worker.completed_frames,
+                evidence_ms, preview_ms, overlay_ms,
+                (time.perf_counter() - drain_started) * 1000.0,
             )
         revision = worker.take_pending_recovery_revision()
         state_revision = int(getattr(state, "recovery_revision", 0) or 0)
