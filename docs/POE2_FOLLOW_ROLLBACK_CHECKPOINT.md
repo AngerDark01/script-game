@@ -1,5 +1,13 @@
 # PoE2 跟随优化回退断点（2026-10-07）
 
+## 本轮规划任务（2026-10-07）
+
+- `(requested)` 用户要求先冻结当前代码提交，再制定双通道/多进程跟随的完整实施方案，并拆成可独立验收的小目标。
+- `(confirmed)` 当前基线提交为 `ea72667`；设计提交为 `2eaeb38`。工作树中的 `data/events/events.json` 和 `data/poe2_live_terrain_test/occlusion_diagnostics/` 属于运行时用户数据，不加入本轮规划提交。
+- `(designed)` 详细执行计划已写入 `docs/plans/2026-10-07-poe2-follow-engine-execution-plan.md`，覆盖 M0–M8、文件边界、跨进程契约、测试命令、性能门槛、回滚点和实机验收。
+- `(decision)` 本轮只完成规划和基线冻结，不开始新架构实现；用户确认后从 M0.1/M0.2 回放夹具开始。
+- `(next)` 先建立离线回放 manifest 与不可发送真实输入的 harness；随后实现 M1 纯逻辑契约，再迁移 VisionProcess 和 FollowControlProcess。
+
 ## 最新测试异常调查（进行中）
 
 - 用户请求只读定位最新异常日志与图片，先分析原因，不改运行代码、不发送输入。

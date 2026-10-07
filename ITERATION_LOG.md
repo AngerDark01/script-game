@@ -10177,6 +10177,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(decision)` 未来拆为预测进程、latest-only 视觉进程、融合/输出控制线程；内存和全局恢复作为带 generation 的低频异步任务。
 - `(constraint)` 先建立共享快照/时间戳/退出契约，再迁移进程；不能直接跨进程传递 Qt 对象、MSS provider 或 Windows 进程句柄。
 
+## [执行计划] 2026-10-07 双通道跟随引擎小目标拆分
+
+- `(requested)` 用户要求先提交当前代码，再输出完整、可执行、按小目标拆分的双通道/多进程跟随重构方案。
+- `(verified)` 当前 HEAD 为 `2eaeb38 docs: plan dual-channel follow engine migration`，其代码基线为 `ea72667`；未跟踪 evidence 和用户事件数据未纳入提交。
+- `(designed)` 新增 `docs/plans/2026-10-07-poe2-follow-engine-execution-plan.md`，将任务细分为 M0–M8、每个阶段的文件、测试、验收、提交和回滚边界。
+- `(decision)` 规划阶段结束后暂不改运行代码；用户确认后从 M0 离线回放夹具开始，M1/M2 通过前不迁移真实输入。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标
