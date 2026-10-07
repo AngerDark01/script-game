@@ -120,3 +120,18 @@ def test_memory_recovery_is_submitted_async_and_seed_is_consumed_later():
         raise AssertionError("memory recovery result was not consumed")
     assert recovered.session_active is True
     backend.close()
+
+
+def test_transport_and_map_signals_keep_session_and_select_recovery_state():
+    token = GenerationClock().begin("map-a")
+    runtime = FollowControlRuntime(token, {"p2": 2})
+    runtime.apply_visual(_visual(1, p2=(10, 0)))
+    runtime.signal_recovery("host_session_expired")
+    host_snapshot = runtime.tick(now_ms=33)
+    assert host_snapshot.recovery_state == "follow_rearming"
+    assert host_snapshot.session_active is True
+
+    runtime.signal_recovery("map_changed")
+    map_snapshot = runtime.tick(now_ms=66)
+    assert map_snapshot.recovery_state == "global_reanchor_pending"
+    assert map_snapshot.session_active is True

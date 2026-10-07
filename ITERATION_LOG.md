@@ -10337,3 +10337,16 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **修订的旧结论：** 压力测试不再只看单元门控，而是覆盖“高频视觉 + 高频控制 + 重复启停”的组合边界；当前结果仍是离线，不等同真实图像处理 FPS。
 **验证结果：** `pytest -q tests/poe2_live_terrain` 为 `503 passed`，compileall 通过。
 **下一步计划：** 增加 replay runner，将 M0 场景映射到 `FollowEnginePort` 的 visual/control/output fake 组合，验证异常链路全程保持 session；再决定旧页面默认入口迁移。
+
+## [SYNC] 2026-10-07 — M7 offline replay runner
+
+### A. SYNC 范围声明
+**触发任务：** 将 M0 的 8 类场景加载并运行到新控制 runtime，补 Host session/map instance 信号，不连接真实输入。
+**直接变更文件：** `follow_engine/replay.py`、`follow_engine/__init__.py`、`follow_control_process.py`、`test_follow_engine_replays.py`、`test_follow_engine_control_runtime.py` 及文档。
+**预计连带影响：** recovery signal 进入控制进程消息边界；离线回放对视觉丢失、Host 失效和地图变化的 session 保持断言。
+
+### C. 本轮发现
+**关键发现：** `(verified)` `OfflineReplayRunner` 能加载 fixture 中嵌套 scenarios 并逐事件构造 `VisualObservation`；`host_session_expired` 和 `map_changed` 通过显式 recovery signal 进入策略，分别得到 `follow_rearming`/`global_reanchor_pending`，二者都不释放 session。
+**修订的旧结论：** 原先 M0 fixture 只验证 JSON 结构/签名；现在已能实际跑过新控制 runtime，但 memory/global 的真实 backend 仍使用 fake/未在该 runner 内启动。
+**验证结果：** replay、control runtime、control process 聚焦 `9 passed`；全目录此前 `503 passed`，本轮新增信号后需再跑一次全量。
+**下一步计划：** 完成 M8 验收文档与离线发布审计，标明当前页面未切换、真实 Host/内存仍 opt-in；全量回归后再做最终自检。

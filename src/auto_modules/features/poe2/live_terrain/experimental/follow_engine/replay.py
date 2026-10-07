@@ -9,6 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .contracts import ObservationSource, RoleVisualObservation, VisualObservation
+from .control.follow_control_process import FollowControlRuntime
+from .generation import GenerationClock
+
 
 def _finite_point(value: Any, field: str) -> tuple[float, float]:
     if not isinstance(value, (list, tuple)) or len(value) != 2:
@@ -128,3 +132,100 @@ def load_replay_manifest(path: str | Path) -> ReplayManifest:
         events=tuple(events),
         real_input_allowed=payload.get("real_input_allowed", False),
     )
+
+
+def load_replay_scenarios(path: str | Path) -> tuple[ReplayManifest, ...]:
+    """Load the scenario collection used by the offline follow gate."""
+    source = Path(path)
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError("unsupported replay manifest schema")
+    common = {
+        "map_instance": payload.get("map_instance", ""),
+        "roles": tuple(payload.get("roles", ())),
+        "real_input_allowed": payload.get("real_input_allowed", False),
+    }
+    scenarios = payload.get("scenarios", ())
+    if not isinstance(scenarios, list) or not scenarios:
+        raise ValueError("replay scenarios must be a non-empty list")
+    manifests = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            raise ValueError("replay scenario must be an object")
+        events = []
+        for item in scenario.get("events", ()):
+            expected = item.get("expected", {})
+            if not isinstance(expected, dict):
+                raise ValueError("replay event expected must be an object")
+            events.append(
+                ReplayEvent(
+                    captured_at_ms=item.get("captured_at_ms", 0),
+                    kind=item.get("kind", ""),
+                    roles=item.get("roles", {}),
+                    expected_state=expected.get("state", ""),
+                    keep_session=expected.get("keep_session", True),
+                )
+            )
+        manifests.append(ReplayManifest(name=scenario.get("name", ""), events=tuple(events), **common))
+    return tuple(manifests)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayRunResult:
+    name: str
+    signature: str
+    states: tuple[str, ...]
+    session_kept: bool
+    expected_keep_session: bool
+
+
+class OfflineReplayRunner:
+    """Run replay events through the process-safe control runtime only."""
+
+    def run(self, manifest: ReplayManifest) -> ReplayRunResult:
+        if manifest.real_input_allowed:
+            raise ValueError("offline replay cannot allow real input")
+        token = GenerationClock().begin(manifest.map_instance)
+        runtime = FollowControlRuntime(token, {role: index + 1 for index, role in enumerate(manifest.roles)})
+        states: list[str] = []
+        expected_keep = True
+        for sequence, event in enumerate(manifest.events, start=1):
+            roles = {
+                role: RoleVisualObservation(
+                    role,
+                    point,
+                    confidence=1.0 if point is not None else 0.0,
+                    uncertainty_native=1.0 if point is not None else 0.0,
+                    visible=point is not None,
+                    last_visual_at_ms=event.captured_at_ms if point is not None else None,
+                )
+                for role, point in event.roles.items()
+            }
+            runtime.apply_visual(
+                VisualObservation(
+                    generation=token.generation,
+                    sequence=sequence,
+                    captured_at_ms=event.captured_at_ms,
+                    map_instance=token.map_instance,
+                    roles=roles,
+                    source=ObservationSource.VISUAL if event.kind == "visual" else ObservationSource.PARTIAL,
+                )
+            )
+            if event.kind in {"host_session_expired", "map_changed"}:
+                runtime.signal_recovery(event.kind)
+            snapshot = runtime.tick(now_ms=event.captured_at_ms)
+            states.append(snapshot.recovery_state)
+            expected_keep = expected_keep and event.keep_session
+            if not snapshot.session_active:
+                raise AssertionError(f"replay released session: {manifest.name}/{event.kind}")
+        return ReplayRunResult(manifest.name, manifest.signature(), tuple(states), runtime.session_active, expected_keep)
+
+
+__all__ = [
+    "OfflineReplayRunner",
+    "ReplayEvent",
+    "ReplayManifest",
+    "ReplayRunResult",
+    "load_replay_manifest",
+    "load_replay_scenarios",
+]

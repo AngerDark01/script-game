@@ -505,6 +505,14 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(boundary)` 当前 route controller 是可替换的直线路由骨架，尚未接入现有地图 PathFinder/局部 steering；输出 scheduler 尚未绑定真实 Host。
 - `(next)` M4 实现 memory fast reanchor/global async backend 的新 port，并为控制进程接入恢复结果。
 
+### M7 offline replay runner（2026-10-07）
+
+- `(implemented)` `follow_engine/replay.py` 新增 scenario loader、`OfflineReplayRunner` 和 `ReplayRunResult`；M0 fixture 的 8 个场景均构造真实 control observations 并运行 tick。
+- `(implemented)` `FollowControlRuntime.signal_recovery()` 与 spawn command `recovery_signal` 支持 Host session expired、map changed、transform invalid；信号只改变恢复状态，不释放动态 session。
+- `(verified)` replay/control 聚焦测试 `9 passed`；未连接真实游戏/内存/Host。
+- `(boundary)` replay runner 使用 fake observations，memory/global worker 仍需在 M8 前用注入 fake backend 单独验证；页面旧入口尚未切换。
+- `(next)` 创建 M8 acceptance 文档，明确离线门槛、真实输入 opt-in 检查和当前迁移开关；完成最终全量回归与文档审计。
+
 ### M5.2/M6.1 页面 adapter 与阶段计时（2026-10-07）
 
 - `(implemented)` 新增 `ui/modes/poe2_live_terrain/follow_engine_adapter.py`，页面侧只暴露 start、target_clicked、poll、stop 和状态回调，不复制控制/恢复逻辑。

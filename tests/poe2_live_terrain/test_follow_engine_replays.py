@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 
 from auto_modules.features.poe2.live_terrain.experimental.follow_engine.replay import (
+    OfflineReplayRunner,
     ReplayEvent,
     ReplayManifest,
+    load_replay_scenarios,
 )
 
 
@@ -61,3 +63,12 @@ def test_offline_replay_manifests_are_ordered_and_deterministic():
         == sorted(event.captured_at_ms for event in manifest.events)
         for manifest in manifests
     )
+
+
+def test_scenario_loader_runs_all_events_without_releasing_follow_session():
+    manifests = load_replay_scenarios(FIXTURE)
+    results = [OfflineReplayRunner().run(manifest) for manifest in manifests]
+    assert len(results) == 8
+    assert all(result.session_kept for result in results)
+    assert all(result.expected_keep_session for result in results)
+    assert all(result.states for result in results)

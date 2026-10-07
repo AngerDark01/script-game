@@ -81,6 +81,9 @@ class FollowControlRuntime:
         self._global_failed_tick = False
         self._memory_elapsed_tick = 0.0
         self._global_elapsed_tick = 0.0
+        self._host_session_expired = False
+        self._map_instance_valid = True
+        self._transform_valid = True
         self._last_tick_ms: int | None = None
         self._tick_sequence = 0
         self._session_active = True
@@ -98,6 +101,18 @@ class FollowControlRuntime:
     def update_target(self, role_id: str, target: tuple[float, float] | None) -> None:
         role = self._roles[str(role_id)]
         role.target = None if target is None else (float(target[0]), float(target[1]))
+
+    def signal_recovery(self, kind: str) -> None:
+        """Inject a transport/map boundary signal without stopping the session."""
+        normalized = str(kind).strip().lower()
+        if normalized == "host_session_expired":
+            self._host_session_expired = True
+        elif normalized == "map_changed":
+            self._map_instance_valid = False
+        elif normalized == "transform_invalid":
+            self._transform_valid = False
+        else:
+            raise ValueError(f"unknown recovery signal: {kind}")
 
     def apply_visual(self, observation: VisualObservation, *, frame: object | None = None) -> bool:
         if not self.gate.accept(observation):
@@ -281,6 +296,9 @@ class FollowControlRuntime:
                     global_in_flight=bool(self.global_recovery and self.global_recovery.in_flight),
                     global_succeeded=self._global_succeeded_tick,
                     global_failed=self._global_failed_tick,
+                    host_session_expired=self._host_session_expired,
+                    map_instance_valid=self._map_instance_valid,
+                    transform_valid=self._transform_valid,
                     consecutive_misses=control.misses,
                     prediction_uncertainty=control.state.uncertainty_native,
                 )
@@ -306,6 +324,9 @@ class FollowControlRuntime:
                         global_in_flight=bool(self.global_recovery and self.global_recovery.in_flight),
                         global_succeeded=self._global_succeeded_tick,
                         global_failed=self._global_failed_tick,
+                        host_session_expired=self._host_session_expired,
+                        map_instance_valid=self._map_instance_valid,
+                        transform_valid=self._transform_valid,
                         consecutive_misses=control.misses,
                         prediction_uncertainty=control.state.uncertainty_native,
                     )
@@ -340,6 +361,9 @@ class FollowControlRuntime:
             )
             intents.append(OutputIntent(role_id, control.controller, vector, duration, neutral=vector == (0.0, 0.0)))
         self._last_tick_ms = now
+        self._host_session_expired = False
+        self._map_instance_valid = True
+        self._transform_valid = True
         active_decisions = [decision for decision in decisions if decision.keep_session]
         chosen = max(active_decisions, key=lambda decision: int(decision.level), default=None)
         state = chosen.state.value if chosen is not None else "follow_hold"
@@ -422,6 +446,8 @@ def control_process_entry(
                     runtime.apply_visual(command["observation"])
                 elif kind == "target":
                     runtime.update_target(command["role_id"], command.get("target"))
+                elif kind == "recovery_signal":
+                    runtime.signal_recovery(command["signal"])
                 elif kind == "stop":
                     runtime.stop()
                     should_stop = True
@@ -476,6 +502,9 @@ class FollowControlProcessHandle:
 
     def update_target(self, role_id: str, target: tuple[float, float] | None) -> None:
         self._send({"kind": "target", "role_id": str(role_id), "target": target})
+
+    def send_recovery_signal(self, signal: str) -> None:
+        self._send({"kind": "recovery_signal", "signal": str(signal)})
 
     def poll_latest(self) -> ControlProcessEvent | None:
         latest = None

@@ -6545,9 +6545,9 @@ The newly added recovery package is currently a tested policy layer, not yet the
 `recovery/global_reanchor.py::GlobalReanchorBackend.start(reason, preserve_follow)` is the sole live-page adapter for the final asynchronous global worker. It records a request and invokes the injected worker starter; static/legacy page paths intentionally remain separate. `memory_anchors.py::Poe2DualPlayerPositionSource.read_many()` caches PID, descriptor, and layout for the current process/slot, invalidating the layout cache when the area instance changes. `_request_live_follow_reanchor()` suppresses repeated requests inside one recovery episode before evaluating policy, so a stale frame cannot repeatedly claim backends or release the follow lease. The remaining boundary is explicit local matcher feedback: `DualVisualTracker` performs the bounded local match on its next frame, while `RecoveryCoordinator` currently receives the policy-level local action rather than a measured local score.
 ### `features/poe2/live_terrain/experimental/follow_engine/replay.py`（implemented 2026-10-07）
 
-职责：提供双人跟随重构使用的离线回放 manifest，不连接 Qt、游戏进程、内存或虚拟手柄。
-关键导出：`ReplayEvent`、`ReplayManifest`、`load_replay_manifest()`。
-算法：加载器验证 schema、角色集合、时间戳单调性和事件角色合法性；`ReplayManifest.signature()` 对规范化 JSON 计算 SHA-256，保证同一回放输入可重复识别。
+职责：提供双人跟随重构使用的离线回放 manifest 和 runner，不连接 Qt、游戏进程、内存或虚拟手柄。
+关键导出：`ReplayEvent`、`ReplayManifest`、`load_replay_manifest()`、`load_replay_scenarios()`、`OfflineReplayRunner`、`ReplayRunResult`。
+算法：加载器验证 schema、角色集合、时间戳单调性和事件角色合法性；scenario loader 将共享元数据复制到每个子场景；runner 为每个事件构造带 generation/sequence/instance 的 `VisualObservation`，对 Host/map 边界发送显式 recovery signal，然后调用控制 runtime tick，若任何 snapshot 释放 session 立即失败；`ReplayManifest.signature()` 对规范化 JSON 计算 SHA-256，保证同一回放输入可重复识别。
 对应夹具：`tests/poe2_live_terrain/fixtures/follow_replays/scenarios.json`，覆盖正常双人、单帧失配、短/长视觉丢失、局部恢复、内存恢复、Host session 失效和地图变化。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/contracts.py` 与 `generation.py`（implemented 2026-10-07）
@@ -6611,6 +6611,10 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `tests/poe2_live_terrain/test_follow_engine_control_runtime.py`（M4 扩展 2026-10-07）
 
 职责：验证控制 runtime 对新帧优先 local ROI、异步 memory submit/poll、恢复后 tracker seed 和动态 session 保持；覆盖局部恢复耗时字段。失败分支断言不产生 stop。
+
+### `tests/poe2_live_terrain/test_follow_engine_replays.py`（M7 扩展 2026-10-07）
+
+职责：验证 M0 scenario loader 可加载全部 8 类场景，并通过 `OfflineReplayRunner` 实际运行到控制 runtime；Host session 失效和地图变化只改变 recovery state，不允许 session 被自动释放。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/engine.py`（M5.1 implemented 2026-10-07）
 
