@@ -10231,6 +10231,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_vision_processors.py`：`4 passed`。
 - `(next)` 补齐 VisionProcess 的组合处理器输出，再进入 M3 FollowControlProcess。
 
+## [M3.1–M3.3 完成] 2026-10-07 控制进程与输出租约
+
+- `(implemented)` 新增纯控制 runtime、spawn 控制进程、latest snapshot 事件和目标更新消息。
+- `(implemented)` 新增有界路线控制器和独立 output scheduler；heartbeat 与 control tick 解耦，Host session 过期只 rearm。
+- `(verified)` 控制 runtime `3 passed`、spawn process `1 passed`、output scheduler `2 passed`。
+- `(boundary)` 仍未接入真实地图规划和真实 Host；下一阶段先完成恢复 backend 的 generation/冷却契约。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标

@@ -471,3 +471,12 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` `test_follow_engine_vision_processors.py`：`4 passed`；覆盖墙体位移、颜色候选、双人颜色污染和 ROI 扩展。
 - `(boundary)` 这些组件已具备独立契约，但还未把 PoE2 现有 `DualVisualTracker` 全量搬进 VisionProcess；下一步接入控制进程前先建立组合处理器。
 - `(next)` M2 阶段收尾：增加视觉处理组合器，把最新帧→墙体→人物→关联→局部 ROI 输出为 `VisualObservation`。
+
+## M3.1–M3.3 控制进程与输出调度器（2026-10-07）
+
+- `(implemented)` 新增 `control/follow_control_process.py`：纯 `FollowControlRuntime` 和 spawn-safe `FollowControlProcessHandle`；父进程只发送视觉/目标消息，子进程发布最新融合快照。
+- `(implemented)` 新增 `control/route_controller.py`：输出有界方向和 `FOLLOW_HOLD` 语义；目标进入半径只发中立意图，不释放 session。
+- `(implemented)` 新增 `control/output_scheduler.py`：输出提交、连续角色租约、Host heartbeat、session 过期 rearm 分开处理。
+- `(verified)` 控制运行时 `3 passed`、spawn 控制进程 `1 passed`、输出调度 `2 passed`。
+- `(boundary)` 当前 route controller 是可替换的直线路由骨架，尚未接入现有地图 PathFinder/局部 steering；输出 scheduler 尚未绑定真实 Host。
+- `(next)` M4 实现 memory fast reanchor/global async backend 的新 port，并为控制进程接入恢复结果。

@@ -6571,3 +6571,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 职责：定义 capture/processor adapter 和 spawn-safe `VisionProcessHandle`。视觉子进程只拥有 capture 与 processor，发布带 generation/sequence 的 `VisualObservation`，异常包含 traceback，停止有界 join/terminate；不导入 Qt、内存 reader、路径规划或手柄输出。
 
 `vision/wall_processor.py` 以统一的 frame displacement 估计墙体位移并拒绝尺寸/质量异常；`vision/marker_processor.py` 复用 PoE2 HSV profile 候选提取并记录候选耗时；`vision/dual_association.py` 在已有运动关联器上增加“部分匹配时无颜色几何回退”；`vision/local_roi_matcher.py` 只负责预测点附近的 80/140/220 半径搜索契约，失败不产生停止副作用。
+
+### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
+
+`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。
