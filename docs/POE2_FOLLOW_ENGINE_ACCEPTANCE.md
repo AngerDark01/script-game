@@ -16,7 +16,7 @@
 - 动态跟随异常只进入预测/保持/恢复，不自动释放 session；
 - `FollowEnginePort`、页面 adapter、阶段耗时和离线 replay runner；
 - 页面 adapter 的显式迁移桥接和控制进程 `runtime_factory` 注入；
-- 当前 PoE2/页面离线聚焦测试 `617 passed`。
+- 当前 PoE2/页面离线聚焦测试 `618 passed`。
 
 当前明确未完成：
 

@@ -426,6 +426,8 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(found)` 全量回归暴露 latest-only 控制事件队列会用正常 stopped marker 覆盖同一 turn 的 factory error；3 个同时出现的旧 Qt/时间敏感失败单独重跑均通过。
 - `(fixed)` 增加 `terminal_error` 门控，结构化 error 保持可见；factory failure 单测和 3 个旧页面用例单独通过。
 - `(next)` 重新执行完整套件；若稳定通过，再提交错误边界修复。
+- `(verified)` 完整套件重新执行：`618 passed in 82.81s`；compileall 与 diff check 通过。
+- `(committed)` 错误边界修复提交为 `10a5407 fix(follow-engine): preserve control startup errors`；用户事件配置和运行 evidence 未纳入提交。
 
 - `(implemented)` live 全局恢复统一通过 `recovery/global_reanchor.py::GlobalReanchorBackend`，页面 live 分支不再直接调用旧 worker。
 - `(implemented)` 双人内存 source 缓存 layout，并在地图实例变化时失效重解析。

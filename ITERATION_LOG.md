@@ -10437,4 +10437,5 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 #### C. 追加发现与修复
 - `(found)` 首次全量回归中 factory error 测试暴露 latest-only 控制事件队列会在同一 turn 用 `stopped` 覆盖 `error`，导致父页面看不到真正异常；另 3 个旧 Qt/时间敏感用例单独重跑均通过，属于全量运行时抖动而非本轮逻辑失败。
 - `(fixed)` `control_process_entry` 增加 `terminal_error` 门控：异常发布后不再发布覆盖性的 stopped marker。
-- `(verified)` factory failure 单测 `1 passed`；3 个受影响旧页面用例单独 `3 passed`。需再次执行完整套件确认。
+- `(verified)` factory failure 单测 `1 passed`；3 个受影响旧页面用例单独 `3 passed`；完整套件最终 `618 passed in 82.81s`，compileall 与 diff check 通过。
+- `(committed)` 错误边界修复提交为 `10a5407 fix(follow-engine): preserve control startup errors`。
