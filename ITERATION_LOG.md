@@ -10350,3 +10350,16 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **修订的旧结论：** 原先 M0 fixture 只验证 JSON 结构/签名；现在已能实际跑过新控制 runtime，但 memory/global 的真实 backend 仍使用 fake/未在该 runner 内启动。
 **验证结果：** replay、control runtime、control process 聚焦 `9 passed`；全目录此前 `503 passed`，本轮新增信号后需再跑一次全量。
 **下一步计划：** 完成 M8 验收文档与离线发布审计，标明当前页面未切换、真实 Host/内存仍 opt-in；全量回归后再做最终自检。
+
+## [SYNC] 2026-10-07 — M8 离线验收文档与最终自检
+
+### A. SYNC 范围声明
+**触发任务：** 完成 M0–M8 离线阶段的发布前审计，记录未迁移的真实页面/Host/内存边界，不启动真实输入。
+**直接变更文件：** `docs/POE2_FOLLOW_ENGINE_ACCEPTANCE.md`、`docs/POE2_FOLLOW_ROLLBACK_CHECKPOINT.md`、`ITERATION_LOG.md`。
+**预计连带影响：** 只影响验收和回滚文档，不改变运行代码。
+
+### C. 本轮发现
+**关键发现：** `(verified)` M0–M7 的离线模块、恢复层、port、adapter、压力、spawn 和 replay 场景均有独立提交与测试；M8 文档明确只有用户停止释放 session，且真实输入仍 opt-in。
+**修订的旧结论：** 不能把“新引擎离线链路闭合”表述成“正式页面已切换/实机已验证”；当前页面迁移被明确列为下一项独立工作。
+**验证结果：** M7 后全量 `tests/poe2_live_terrain` 为 `505 passed`；compileall、diff check 待提交前再次执行。
+**下一步计划：** 执行最终全量回归、文档同步检查和工作树审计；若无失败，提交 M8 文档提交并向用户汇报当前完成边界。

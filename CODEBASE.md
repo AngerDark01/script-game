@@ -6639,3 +6639,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `tests/poe2_live_terrain/test_follow_engine_windows_lifecycle.py`（M6.3 implemented 2026-10-07）
 
 职责：用 Windows spawn context 重复启动/发送/停止控制进程，断言每轮都有事件、stop 后 process 引用清空；不连接真实 Host 或游戏窗口。
+
+### `docs/POE2_FOLLOW_ENGINE_ACCEPTANCE.md`（M8 implemented 2026-10-07）
+
+职责：记录 M0–M8 的离线交付边界、505 个测试的验收命令、真实输入 opt-in 前置检查、R1–R10 实机分级场景和回滚点。注意事项：明确旧 `capture_test_page.py` 默认入口尚未切换，离线通过不能当作实机发布。

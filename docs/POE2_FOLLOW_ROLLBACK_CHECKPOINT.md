@@ -513,6 +513,13 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(boundary)` replay runner 使用 fake observations，memory/global worker 仍需在 M8 前用注入 fake backend 单独验证；页面旧入口尚未切换。
 - `(next)` 创建 M8 acceptance 文档，明确离线门槛、真实输入 opt-in 检查和当前迁移开关；完成最终全量回归与文档审计。
 
+### M8 离线验收与发布前审计（2026-10-07）
+
+- `(implemented)` 新增 `docs/POE2_FOLLOW_ENGINE_ACCEPTANCE.md`，记录 M0–M7 交付边界、离线门槛、真实输入 opt-in、R1–R10 实机顺序和回滚边界。
+- `(verified)` 当前 M0–M7 代码提交链连续存在：`57b850a`→`394b9a5`→`0cabe65`→`366b975`→`4e8155d`→`cdfa2f4`→`527d946`→`f858d84`→`f830537`→`3d656d1`→`791e68c`→`82f204e`；用户运行数据未加入提交。
+- `(boundary)` 旧 `capture_test_page.py` 默认入口仍未切换，真实内存/Host/游戏窗口未连接；因此本阶段结论是离线引擎完成，不是实机发布完成。
+- `(next)` 如继续执行，应单独安排页面入口迁移和用户明确授权的 R1 实机测试；在此之前保持新 port 离线可用且不发送真实输入。
+
 ### M5.2/M6.1 页面 adapter 与阶段计时（2026-10-07）
 
 - `(implemented)` 新增 `ui/modes/poe2_live_terrain/follow_engine_adapter.py`，页面侧只暴露 start、target_clicked、poll、stop 和状态回调，不复制控制/恢复逻辑。
