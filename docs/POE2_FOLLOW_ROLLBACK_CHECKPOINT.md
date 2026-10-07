@@ -415,6 +415,7 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` `pytest -q tests/poe2_live_terrain tests/test_poe2_capture_test_page.py`：`617 passed`；compileall、diff check 通过。
 - `(boundary)` 真实 PoE2 capture/processor、warm memory source、Host output 尚未组合；新入口仍是显式 opt-in，不能据此宣称实机可用或已默认切换。
 - `(next)` 下一阶段只在用户明确授权实机测试后，构造 spawn-safe 真实 composition，并先完成 R1 静止双人验收；期间保留旧入口回滚开关。
+- `(committed)` 本轮提交为 `0039495 feat(follow-engine): add reversible page bridge`；提交未包含 `data/events/events.json` 或运行 evidence。
 
 - `(implemented)` live 全局恢复统一通过 `recovery/global_reanchor.py::GlobalReanchorBackend`，页面 live 分支不再直接调用旧 worker。
 - `(implemented)` 双人内存 source 缓存 layout，并在地图实例变化时失效重解析。
