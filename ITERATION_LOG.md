@@ -10210,6 +10210,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_generation.py`：`2 passed`。
 - `(next)` M1.3 开始实现预测、速度校准和视觉融合纯逻辑。
 
+## [M1.3/M1.4 完成] 2026-10-07 预测融合与恢复策略
+
+- `(implemented)` 新增 `follow_engine/tracking/`，实现命令里程计、速度校准、预测/视觉融合、创新距离门控和不确定度增长。
+- `(implemented)` 新增 `follow_engine/recovery/recovery_policy.py`，恢复顺序固定为新帧/局部 → 预测 → 内存 → 全局；Host rearm 与地图恢复分离。
+- `(verified)` fusion `7 passed`，recovery policy `7 passed`；发现并修复非法 pulse duration 静默截断。
+- `(next)` 运行 M0/M1 全套测试并提交，然后开始 M2 latest-only 帧环和独立 VisionProcess。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标

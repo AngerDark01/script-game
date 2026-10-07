@@ -444,3 +444,11 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` `tests/poe2_live_terrain/test_follow_engine_generation.py`：`2 passed`；覆盖停止/重启代际、重复帧、逆序帧、旧代际和地图实例不一致。
 - `(boundary)` 门控只处理消息生命周期，不改变人物预测、视觉算法或输出行为。
 - `(next)` M1.3 实现 command odometry、速度校准、位置融合和预测不确定度增长。
+
+## M1.3/M1.4 预测融合与恢复策略完成（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/tracking/`：命令里程计、实际速度校准、预测/观测融合、创新门控、不确定度增长和角色跟踪状态。
+- `(implemented)` 新增 `follow_engine/recovery/recovery_policy.py`：L0–L3 恢复决策、局部优先、内存冷却、全局单次异步语义、Host rearm 分支和动态 session 保持。
+- `(verified)` `test_follow_engine_fusion.py`：`7 passed`；`test_follow_engine_recovery_policy.py`：`7 passed`。
+- `(fixed)` odometry 发现并修复负数/NaN pulse duration 会被静默截断的问题；tracking state 同步拒绝非有限位置、速度和不确定度。
+- `(next)` 运行 M0/M1 聚焦全套并提交本批次；之后进入 M2 latest-only 帧环和 VisionProcess。

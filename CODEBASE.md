@@ -6549,3 +6549,15 @@ The newly added recovery package is currently a tested policy layer, not yet the
 关键导出：`ReplayEvent`、`ReplayManifest`、`load_replay_manifest()`。
 算法：加载器验证 schema、角色集合、时间戳单调性和事件角色合法性；`ReplayManifest.signature()` 对规范化 JSON 计算 SHA-256，保证同一回放输入可重复识别。
 对应夹具：`tests/poe2_live_terrain/fixtures/follow_replays/scenarios.json`，覆盖正常双人、单帧失配、短/长视觉丢失、局部恢复、内存恢复、Host session 失效和地图变化。
+
+### `features/poe2/live_terrain/experimental/follow_engine/contracts.py` 与 `generation.py`（implemented 2026-10-07）
+
+职责：定义 Vision/Prediction/Fusion/Output 之间的不可变消息，以及异步 worker 的 generation、sequence、map instance 门控。DTO 构造时拒绝 NaN、越界置信度、非法帧元数据和角色键错配；`SequenceGate` 拒绝重复、逆序、旧代际和地图不一致结果，防止迟退 worker 覆盖新会话。
+
+### `features/poe2/live_terrain/experimental/follow_engine/tracking/`（implemented 2026-10-07）
+
+职责：纯预测和视觉融合。`command_odometry.py` 积分手柄脉冲并累积不确定度；`velocity_calibrator.py` 从可信位置差校准速度；`position_fusion.py` 提供预测、sigma 融合、创新门控和不确定度增长；`tracking_state.py` 保存通用角色状态，不包含 P1/P2 业务规则。
+
+### `features/poe2/live_terrain/experimental/follow_engine/recovery/recovery_policy.py`（implemented 2026-10-07）
+
+职责：纯 L0–L3 恢复策略。新帧先走局部 ROI，短时失配继续预测，达到连续失配/不确定度门槛才允许内存，内存失败后才允许全局异步；Host session 失效只返回 rearm；临时异常保持动态跟随 session，只有用户停止返回 stop。
