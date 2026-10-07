@@ -10363,3 +10363,16 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **修订的旧结论：** 不能把“新引擎离线链路闭合”表述成“正式页面已切换/实机已验证”；当前页面迁移被明确列为下一项独立工作。
 **验证结果：** M7 后全量 `tests/poe2_live_terrain` 为 `505 passed`；compileall、diff check 待提交前再次执行。
 **下一步计划：** 执行最终全量回归、文档同步检查和工作树审计；若无失败，提交 M8 文档提交并向用户汇报当前完成边界。
+
+## [SYNC] 2026-10-07 — M2.4 vision process supervisor补齐
+
+### A. SYNC 范围声明
+**触发任务：** 补齐计划中尚未落地的视觉 worker supervisor，覆盖异常退出、generation 隔离、有界重启和退避；不接真实游戏。
+**直接变更文件：** `follow_engine/process_supervisor.py`、`tests/poe2_live_terrain/test_follow_engine_supervisor.py` 及三份文档。
+**预计连带影响：** VisionProcessHandle 的生命周期包装、迟退 worker 结果过滤和页面未来的 engine port 装配；不改变视觉识别算法。
+
+### C. 本轮发现
+**关键发现：** `(verified)` `ProcessSupervisor.poll()` 只接受当前 generation；worker error/意外 stopped 会按固定退避重启，超过 `max_restarts` 进入 FAILED，显式 stop 之后不会自动拉起。
+**修订的旧结论：** M2.4 原先只在计划中，现已补齐通用 supervisor 和 fake worker 回归；页面旧 worker 尚未接入该 supervisor。
+**验证结果：** supervisor 测试 `2 passed`；最终全量回归将在本轮提交前执行。
+**下一步计划：** 更新 M8 文档的 supervisor 状态，执行全量测试、compileall、diff check，提交补齐阶段。

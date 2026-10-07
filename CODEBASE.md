@@ -6624,6 +6624,10 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 职责：提供页面可消费的无 Qt `FollowEngineUiAdapter` 和只读 `FollowUiState`，隐藏 engine poll/diagnostics 细节。关键导出：`start(config)`、`update_target(role_id,target)`、`poll()`、`state()`、`stop(reason)`。不持有 timer、不规划路线、不访问真实输入。
 
+### `features/poe2/live_terrain/experimental/follow_engine/process_supervisor.py`（M2.4 implemented 2026-10-07）
+
+职责：为 VisionProcess 等长期 worker 提供 generation 隔离、异常退出识别、有界重启和退避。关键导出：`ProcessSupervisor`、`SupervisorState`、`SupervisorStatus`。算法：`poll()` 只接受当前 token generation 的事件；error 或非用户 stopped 先停止旧 handle，再按重启次数计算 backoff；超过预算进入 `FAILED`，不会无限重启；显式 `stop()` 将状态置为 `STOPPED` 并禁止重新拉起。副作用：只调用注入 handle 的 start/poll/stop，不创建 Qt 或游戏输入。
+
 ### `tests/poe2_live_terrain/test_follow_engine_port.py`（M5.1 implemented 2026-10-07）
 
 职责：用 fake vision/control/output 验证端口事件流、目标更新、启动失败回滚和多角色目标必须显式 role；不创建真实进程、不发送输入。
@@ -6631,6 +6635,10 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `tests/poe2_live_terrain/test_follow_engine_page_adapter.py`（M5.2 implemented 2026-10-07）
 
 职责：验证页面 adapter 只转译目标/轮询/停止事件，并通过 callback 发布只读状态；不导入 Qt 控件、不接入旧页面内部 runtime。
+
+### `tests/poe2_live_terrain/test_follow_engine_supervisor.py`（M2.4 implemented 2026-10-07）
+
+职责：验证 worker error/异常 stopped 的退避重启、generation 迟到事件过滤、重启预算和 terminal stop；只使用 fake worker。
 
 ### `tests/poe2_live_terrain/test_follow_engine_stress.py`（M6.2 implemented 2026-10-07）
 

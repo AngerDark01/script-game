@@ -520,6 +520,13 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(boundary)` 旧 `capture_test_page.py` 默认入口仍未切换，真实内存/Host/游戏窗口未连接；因此本阶段结论是离线引擎完成，不是实机发布完成。
 - `(next)` 如继续执行，应单独安排页面入口迁移和用户明确授权的 R1 实机测试；在此之前保持新 port 离线可用且不发送真实输入。
 
+### M2.4 VisionProcess supervisor 补齐（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/process_supervisor.py`：当前 generation 事件过滤、异常/意外停止识别、有界重启、退避和 FAILED 终态；显式 stop 后不会自动重启。
+- `(verified)` supervisor 聚焦测试 `2 passed`；不连接真实 VisionProcess 或游戏。
+- `(boundary)` supervisor 尚未替换页面旧 worker 的直接生命周期管理，需在页面 port 迁移时装配。
+- `(next)` 最终全量回归后提交该补齐阶段；实机页面迁移仍单独 opt-in。
+
 ### M5.2/M6.1 页面 adapter 与阶段计时（2026-10-07）
 
 - `(implemented)` 新增 `ui/modes/poe2_live_terrain/follow_engine_adapter.py`，页面侧只暴露 start、target_clicked、poll、stop 和状态回调，不复制控制/恢复逻辑。

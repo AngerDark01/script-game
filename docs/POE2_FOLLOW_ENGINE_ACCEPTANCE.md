@@ -8,6 +8,7 @@
 本阶段已经完成 M0–M7 的离线引擎基础设施：
 
 - latest-only 视觉帧通道和 Windows spawn-safe VisionProcess；
+- worker supervisor 的 generation 隔离、有界重启和退避终态；
 - 独立控制进程、预测/融合、路径输出和 Host heartbeat 调度；
 - 新帧优先的局部 ROI 恢复；
 - 带 generation、地图实例和冷却的异步内存快速重锚；
