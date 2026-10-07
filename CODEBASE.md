@@ -6561,3 +6561,11 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/recovery_policy.py`（implemented 2026-10-07）
 
 职责：纯 L0–L3 恢复策略。新帧先走局部 ROI，短时失配继续预测，达到连续失配/不确定度门槛才允许内存，内存失败后才允许全局异步；Host session 失效只返回 rearm；临时异常保持动态跟随 session，只有用户停止返回 stop。
+
+### `features/poe2/live_terrain/experimental/follow_engine/latest_frame_buffer.py`、`shared_frame_ring.py`（implemented 2026-10-07）
+
+职责：提供进程内和共享内存的 bounded latest-only 帧传输。消费者按最高 sequence 取帧，旧帧直接丢弃；共享 ring 以固定 slot 保存 bytes、generation、sequence 和 timestamp，并把 map instance 固定在 ring spec 中。
+
+### `features/poe2/live_terrain/experimental/follow_engine/vision/`（M2.1/M2.2 implemented 2026-10-07）
+
+职责：定义 capture/processor adapter 和 spawn-safe `VisionProcessHandle`。视觉子进程只拥有 capture 与 processor，发布带 generation/sequence 的 `VisualObservation`，异常包含 traceback，停止有界 join/terminate；不导入 Qt、内存 reader、路径规划或手柄输出。

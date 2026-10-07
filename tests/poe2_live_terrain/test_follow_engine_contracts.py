@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import pickle
 
 import pytest
 
@@ -46,6 +47,8 @@ def test_contracts_are_immutable_and_validate_process_headers():
     assert observation.timing.total_ms == 3.0
     with pytest.raises(TypeError):
         observation.roles["p1"] = _visual("p1", (0, 0))
+    restored = pickle.loads(pickle.dumps(observation))
+    assert restored.roles["p1"].position_native == (10.0, 20.0)
 
     slot = FrameSlot(4, 8, 100, "map-a", 200, 200, 0, 40000, FrameSlotStatus.READY)
     assert slot.status is FrameSlotStatus.READY

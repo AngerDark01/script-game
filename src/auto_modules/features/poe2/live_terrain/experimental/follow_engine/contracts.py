@@ -5,8 +5,32 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
-from types import MappingProxyType
 from typing import Any, Mapping
+
+
+class _FrozenMapping(dict):
+    """Pickle-safe read-only mapping for multiprocessing messages."""
+
+    def __readonly(self, *args, **kwargs):
+        raise TypeError("mapping is read-only")
+
+    __setitem__ = __readonly
+    __delitem__ = __readonly
+    clear = __readonly
+    pop = __readonly
+    popitem = __readonly
+    setdefault = __readonly
+    update = __readonly
+    __ior__ = __readonly
+
+    def __reduce__(self):
+        return (_restore_frozen_mapping, (dict(self),))
+
+
+def _restore_frozen_mapping(values: Mapping[str, Any]) -> _FrozenMapping:
+    restored = dict.__new__(_FrozenMapping)
+    dict.update(restored, values)
+    return restored
 
 
 def _number(value: Any, field_name: str, *, minimum: float | None = None) -> float:
@@ -25,7 +49,7 @@ def _point(value: Any, field_name: str) -> tuple[float, float]:
     return point
 
 
-def _role_map(value: Mapping[str, Any], field_name: str) -> MappingProxyType:
+def _role_map(value: Mapping[str, Any], field_name: str) -> _FrozenMapping:
     if not isinstance(value, Mapping):
         raise ValueError(f"{field_name} must be a mapping")
     normalized: dict[str, Any] = {}
@@ -34,7 +58,7 @@ def _role_map(value: Mapping[str, Any], field_name: str) -> MappingProxyType:
         if not key:
             raise ValueError(f"{field_name} contains an empty role")
         normalized[key] = item
-    return MappingProxyType(normalized)
+    return _restore_frozen_mapping(normalized)
 
 
 class FrameSlotStatus(StrEnum):
@@ -296,7 +320,7 @@ class FusionSnapshot:
         object.__setattr__(self, "recovery_reason", reason)
         object.__setattr__(self, "route", tuple(_point(point, "route point") for point in self.route))
         vectors = _role_map(self.control_vectors, "control_vectors")
-        object.__setattr__(self, "control_vectors", MappingProxyType({key: _point(value, "control vector") for key, value in vectors.items()}))
+        object.__setattr__(self, "control_vectors", _restore_frozen_mapping({key: _point(value, "control vector") for key, value in vectors.items()}))
         object.__setattr__(self, "output_intents", tuple(self.output_intents))
         if any(not isinstance(item, OutputIntent) for item in self.output_intents):
             raise ValueError("output_intents must contain OutputIntent values")

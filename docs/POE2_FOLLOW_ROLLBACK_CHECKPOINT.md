@@ -452,3 +452,12 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` `test_follow_engine_fusion.py`：`7 passed`；`test_follow_engine_recovery_policy.py`：`7 passed`。
 - `(fixed)` odometry 发现并修复负数/NaN pulse duration 会被静默截断的问题；tracking state 同步拒绝非有限位置、速度和不确定度。
 - `(next)` 运行 M0/M1 聚焦全套并提交本批次；之后进入 M2 latest-only 帧环和 VisionProcess。
+
+## M2.1/M2.2 latest-only 帧通道与视觉进程骨架（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/latest_frame_buffer.py` 和 `shared_frame_ring.py`；固定容量、最高 sequence 优先、旧帧丢弃，不使用无界图片队列。
+- `(implemented)` 新增 `follow_engine/vision/capture_adapter.py` 与 `vision_process.py`；VisionProcess 使用 Windows spawn-safe 入口、bounded event queue、显式 stop/join/terminate 和 generation/map instance 校验。
+- `(fixed)` 首次跨进程测试发现 `mappingproxy` 无法 pickle；DTO 已改为 pickle-safe 的只读字典，契约测试和 spawn 视觉进程测试均覆盖此边界。
+- `(verified)` 帧环、视觉进程、契约聚焦测试：`10 passed`。
+- `(boundary)` 当前视觉进程只验证 capture/processor 生命周期和消息传输，尚未接入 PoE2 墙体、人物候选、局部 ROI 算法。
+- `(next)` M2.3 拆出 wall processor、marker processor、双人关联和 local ROI matcher，保持视觉进程不访问 Qt、内存和手柄。

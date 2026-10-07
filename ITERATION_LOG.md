@@ -10217,6 +10217,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` fusion `7 passed`，recovery policy `7 passed`；发现并修复非法 pulse duration 静默截断。
 - `(next)` 运行 M0/M1 全套测试并提交，然后开始 M2 latest-only 帧环和独立 VisionProcess。
 
+## [M2.1/M2.2 进行中] 2026-10-07 latest-only 帧通道
+
+- `(implemented)` 新增 latest-only buffer、固定容量 shared-memory ring 和 spawn-safe VisionProcess 生命周期包装。
+- `(fixed)` 发现跨进程传输 `mappingproxy` 失败，改为 pickle-safe 只读映射并补充序列化回归。
+- `(verified)` 帧环、视觉进程和契约聚焦测试 `10 passed`。
+- `(next)` 实现 M2.3 视觉处理拆分和局部 ROI matcher。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标
