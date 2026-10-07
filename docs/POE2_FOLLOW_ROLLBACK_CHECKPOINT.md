@@ -504,3 +504,11 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` 控制运行时 `3 passed`、spawn 控制进程 `1 passed`、输出调度 `2 passed`。
 - `(boundary)` 当前 route controller 是可替换的直线路由骨架，尚未接入现有地图 PathFinder/局部 steering；输出 scheduler 尚未绑定真实 Host。
 - `(next)` M4 实现 memory fast reanchor/global async backend 的新 port，并为控制进程接入恢复结果。
+
+### M5.2/M6.1 页面 adapter 与阶段计时（2026-10-07）
+
+- `(implemented)` 新增 `ui/modes/poe2_live_terrain/follow_engine_adapter.py`，页面侧只暴露 start、target_clicked、poll、stop 和状态回调，不复制控制/恢复逻辑。
+- `(implemented)` `StageTiming` 新增 prediction/recovery/memory/global 字段；控制 runtime 记录预测、ROI、恢复轮询、内存/全局 future、路线和总 tick 耗时。
+- `(verified)` page adapter、contracts、runtime 聚焦测试 `15 passed`，compileall 通过。
+- `(boundary)` 该 adapter 尚未替换现有 `capture_test_page.py` 的默认旧跟随入口；实际页面切换需要先完成压力和生命周期回归。
+- `(next)` 实现 M6.2 latest-only/控制压力回放和 M6.3 spawn 启停回归；之后再决定页面默认入口的迁移点。

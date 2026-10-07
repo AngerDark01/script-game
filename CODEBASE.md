@@ -6552,7 +6552,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/contracts.py` 与 `generation.py`（implemented 2026-10-07）
 
-职责：定义 Vision/Prediction/Fusion/Output 之间的不可变消息，以及异步 worker 的 generation、sequence、map instance 门控。DTO 构造时拒绝 NaN、越界置信度、非法帧元数据和角色键错配；`SequenceGate` 拒绝重复、逆序、旧代际和地图不一致结果，防止迟退 worker 覆盖新会话。
+职责：定义 Vision/Prediction/Fusion/Output 之间的不可变消息，以及异步 worker 的 generation、sequence、map instance 门控。DTO 构造时拒绝 NaN、越界置信度、非法帧元数据和角色键错配；`SequenceGate` 拒绝重复、逆序、旧代际和地图不一致结果，防止迟退 worker 覆盖新会话。`StageTiming` 统一记录 capture/wall/marker/association/local/prediction/recovery/memory/global/fusion/route/output/heartbeat/UI/total 阶段毫秒数，所有值在构造时要求有限且非负。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/tracking/`（implemented 2026-10-07）
 
@@ -6574,7 +6574,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
 
-`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。
+`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/__init__.py`（M4 implemented 2026-10-07）
 

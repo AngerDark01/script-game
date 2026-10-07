@@ -61,6 +61,19 @@
 **验证结果：** `test_follow_engine_port.py` 与 control process 聚焦测试 `4 passed`；未连接真实进程或 Host。
 **下一轮计划：** M5.2 为 capture page 提供 adapter 构造/轮询 facade，先增加 fake page composition 回归，确认旧双人同目标链不受影响。
 
+## [SYNC] 2026-10-07 — M5.2/M6.1 page adapter 与阶段计时
+
+### A. SYNC 范围声明
+**触发任务：** 为页面提供独立 `Poe2FollowEnginePageAdapter`，并把预测/恢复/内存/全局/路径耗时纳入 `StageTiming`。
+**直接变更文件：** `ui/modes/poe2_live_terrain/follow_engine_adapter.py`、`follow_engine/contracts.py`、`control/follow_control_process.py`、`recovery/global_recovery.py` 及相关测试/文档。
+**预计连带影响：** 页面 timer 未来只调用 adapter；FusionSnapshot timing 字段向 UI/日志暴露，但不改变控制决策。
+
+### C. 本轮发现
+**关键发现：** `(verified)` 页面 adapter 只翻译 start/target/poll/stop，不拥有计时器或业务算法；控制 runtime 现在分别累计 prediction、bounded local、memory/global result、route 和 total 时长，恢复 backend 的耗时保持在 future 结果中。
+**修订的旧结论：** 原先 StageTiming 只能看到 local/fusion/total；现在已补齐 prediction/recovery/memory/global/route 字段，但真实页面尚未消费这些字段。
+**验证结果：** page adapter、contracts、runtime 聚焦 `15 passed`；compileall 通过。
+**下一步：** 补压力回放与生命周期回归，确认 latest-only 不积压、控制 tick 不因异步恢复阻塞，再进入 M5 页面默认入口切换评估。
+
 
 ## [第 2026-10-07-39 轮] 2026-10-07 — 快速内存重锚耗时与分层方案核对
 

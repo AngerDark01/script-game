@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+import time
 from typing import Any, Callable
 
 from ..generation import GenerationToken
@@ -15,6 +16,7 @@ class GlobalRecoveryResult:
     map_instance: str
     value: Any = None
     error: str = ""
+    elapsed_ms: float = 0.0
 
 
 class GlobalRecoveryBackend:
@@ -24,6 +26,7 @@ class GlobalRecoveryBackend:
         self._owns_executor = executor is None
         self._future: Future | None = None
         self._generation: int | None = None
+        self._submitted_at: float | None = None
 
     @property
     def in_flight(self) -> bool:
@@ -43,6 +46,7 @@ class GlobalRecoveryBackend:
         if self.in_flight:
             return False
         self._generation = token.generation
+        self._submitted_at = time.perf_counter()
         self._future = self._executor.submit(self._worker, **kwargs)
         return True
 
@@ -51,12 +55,25 @@ class GlobalRecoveryBackend:
         if future is None or not future.done():
             return None
         self._future = None
+        started = self._submitted_at or time.perf_counter()
+        self._submitted_at = None
         if self._generation != token.generation:
-            return GlobalRecoveryResult(token.generation, token.map_instance, error="stale_global_result")
+            return GlobalRecoveryResult(token.generation, token.map_instance, error="stale_global_result", elapsed_ms=0.0)
         try:
-            return GlobalRecoveryResult(token.generation, token.map_instance, value=future.result())
+            value = future.result()
+            return GlobalRecoveryResult(
+                token.generation,
+                token.map_instance,
+                value=value,
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
         except Exception as exc:
-            return GlobalRecoveryResult(token.generation, token.map_instance, error=f"{type(exc).__name__}: {exc}")
+            return GlobalRecoveryResult(
+                token.generation,
+                token.map_instance,
+                error=f"{type(exc).__name__}: {exc}",
+                elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            )
 
     def close(self) -> None:
         if self._owns_executor:

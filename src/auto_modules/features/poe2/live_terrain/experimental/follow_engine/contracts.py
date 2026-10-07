@@ -82,6 +82,10 @@ class StageTiming:
     marker_ms: float = 0.0
     association_ms: float = 0.0
     local_ms: float = 0.0
+    prediction_ms: float = 0.0
+    recovery_ms: float = 0.0
+    memory_ms: float = 0.0
+    global_ms: float = 0.0
     fusion_ms: float = 0.0
     route_ms: float = 0.0
     output_ms: float = 0.0

@@ -79,6 +79,8 @@ class FollowControlRuntime:
         self._memory_failed_tick = False
         self._global_succeeded_tick = False
         self._global_failed_tick = False
+        self._memory_elapsed_tick = 0.0
+        self._global_elapsed_tick = 0.0
         self._last_tick_ms: int | None = None
         self._tick_sequence = 0
         self._session_active = True
@@ -158,12 +160,15 @@ class FollowControlRuntime:
             applied = True
         return applied
 
-    def _poll_recovery_backends(self, *, now_ms: int) -> None:
+    def _poll_recovery_backends(self, *, now_ms: int) -> float:
+        started = time.perf_counter()
         self._memory_succeeded_tick = self._memory_failed_tick = False
         self._global_succeeded_tick = self._global_failed_tick = False
+        self._memory_elapsed_tick = self._global_elapsed_tick = 0.0
         if self.memory_recovery is not None:
             result = self.memory_recovery.poll(self.token)
             if result is not None:
+                self._memory_elapsed_tick = float(result.elapsed_ms)
                 if result.error:
                     self._memory_failed_tick = True
                 else:
@@ -173,6 +178,7 @@ class FollowControlRuntime:
         if self.global_recovery is not None:
             result = self.global_recovery.poll(self.token)
             if result is not None:
+                self._global_elapsed_tick = float(result.elapsed_ms)
                 if result.error:
                     self._global_failed_tick = True
                 else:
@@ -182,6 +188,7 @@ class FollowControlRuntime:
                         self._global_succeeded_tick = self._apply_recovery_positions(
                             positions, now_ms=now_ms, source="global_reanchor"
                         )
+        return (time.perf_counter() - started) * 1000.0
 
     def _run_local_recovery(self, role_id: str, *, now_ms: int) -> tuple[bool, float]:
         if self.local_recovery is None or self.local_search is None or self._latest_frame is None:
@@ -215,7 +222,7 @@ class FollowControlRuntime:
         if now < 0:
             raise ValueError("now_ms must be non-negative")
         self._tick_sequence += 1
-        self._poll_recovery_backends(now_ms=now)
+        recovery_poll_ms = self._poll_recovery_backends(now_ms=now)
         visual = self._latest_visual
         roles: dict[str, RoleFusedState] = {}
         vectors: dict[str, tuple[float, float]] = {}
@@ -223,12 +230,15 @@ class FollowControlRuntime:
         route_points: list[tuple[float, float]] = []
         decisions = []
         local_ms = 0.0
+        prediction_ms = 0.0
+        route_ms = 0.0
         memory_requested = False
         global_requested = False
         for role_id, control in self._roles.items():
             if control.state is None:
                 continue
             if control.odometry is not None and self._last_tick_ms is not None and control.last_duration_ms > 0:
+                prediction_started = time.perf_counter()
                 elapsed = max(0, now - self._last_tick_ms)
                 if elapsed > 0 and control.last_vector != (0.0, 0.0):
                     estimate = control.odometry.step(
@@ -248,6 +258,7 @@ class FollowControlRuntime:
                         now,
                         "command_prediction",
                     )
+                prediction_ms += (time.perf_counter() - prediction_started) * 1000.0
             visual_item: RoleVisualObservation | None = visual.roles.get(role_id) if visual is not None else None
             evidence_at = self._last_evidence_at_ms.get(role_id, control.state.last_visual_at_ms)
             age = float("inf") if evidence_at is None else max(0.0, now - evidence_at)
@@ -306,7 +317,9 @@ class FollowControlRuntime:
             decisions.append(decision)
             route: RouteDecision | None = None
             if control.target is not None:
+                route_started = time.perf_counter()
                 route = self.route_controller.plan(control.state.position_native, control.target)
+                route_ms += (time.perf_counter() - route_started) * 1000.0
                 route_points.extend(route.route)
             if route is None or route.arrived:
                 vector = (0.0, 0.0)
@@ -342,7 +355,16 @@ class FollowControlRuntime:
             control_vectors=vectors,
             output_intents=tuple(intents),
             session_active=self._session_active,
-            timing=StageTiming(local_ms=local_ms, fusion_ms=total_ms, total_ms=total_ms),
+            timing=StageTiming(
+                local_ms=local_ms,
+                prediction_ms=prediction_ms,
+                recovery_ms=recovery_poll_ms + local_ms,
+                memory_ms=self._memory_elapsed_tick,
+                global_ms=self._global_elapsed_tick,
+                route_ms=route_ms,
+                fusion_ms=total_ms,
+                total_ms=total_ms,
+            ),
         )
         self._last_snapshot = snapshot
         return snapshot
