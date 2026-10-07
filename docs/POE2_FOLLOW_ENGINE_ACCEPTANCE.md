@@ -1,7 +1,7 @@
 # PoE2 双通道跟随引擎验收清单
 
 更新时间：2026-10-07  
-当前代码基线：`97aefca fix(follow-engine): harden lifecycle cleanup`（本轮页面桥接尚未提交）
+当前代码基线：`ca56dd9 docs(follow-engine): record final offline verification`
 
 ## 1. 当前交付边界
 
