@@ -155,11 +155,16 @@ class FollowEnginePort:
             try:
                 self.control.stop()
             finally:
-                self.output.stop(force=True)
-                self._active = False
-                self.clock.stop()
-                self.token = None
-                self._last_error = "" if reason == "user" else str(reason)
+                try:
+                    self.output.stop(force=True)
+                finally:
+                    # State cleanup must happen even if one adapter reports a
+                    # stop failure; otherwise a later start is blocked by a
+                    # stale active token and the page appears stuck.
+                    self._active = False
+                    self.clock.stop()
+                    self.token = None
+                    self._last_error = "" if reason == "user" else str(reason)
 
 
 __all__ = ["ControlPort", "FollowEnginePort", "FollowEngineStart", "OutputPort", "VisionPort"]

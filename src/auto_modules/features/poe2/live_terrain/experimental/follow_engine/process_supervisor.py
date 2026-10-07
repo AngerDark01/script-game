@@ -98,9 +98,11 @@ class ProcessSupervisor:
         self.handle = None
         self._state = SupervisorState.STOPPED
         self._next_restart_at_ms = None
-        if handle is not None:
-            handle.stop()
-        self.token = None
+        try:
+            if handle is not None:
+                handle.stop()
+        finally:
+            self.token = None
 
     def _start_handle(self) -> None:
         if self.token is None:

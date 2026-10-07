@@ -6618,7 +6618,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/engine.py`（M5.1 implemented 2026-10-07）
 
-职责：定义无 UI 的 `FollowEnginePort` 组合边界，统一 VisionProcess、FollowControlProcess、OutputScheduler 的启动、latest poll、目标更新和用户停止生命周期。关键导出：`FollowEngineStart`、`FollowEnginePort` 及 `VisionPort`/`ControlPort`/`OutputPort` 协议。算法：`start()` 先创建 generation token，再按 control→vision→output 顺序启动；任一步失败按已启动组件逆序清理并停止 clock；`poll()` 每次只取最新视觉事件、转发观察，再取最新控制快照并交给输出；`stop(reason)` 只在显式调用时释放 output。副作用：调用注入的进程/输出适配器，不直接导入 Qt、截图、内存或 Host 实现。失败行为：旧 generation 由 `GenerationClock.stop()` 失效，视觉/控制 error 只记录诊断，不自动释放动态 session。
+职责：定义无 UI 的 `FollowEnginePort` 组合边界，统一 VisionProcess、FollowControlProcess、OutputScheduler 的启动、latest poll、目标更新和用户停止生命周期。关键导出：`FollowEngineStart`、`FollowEnginePort` 及 `VisionPort`/`ControlPort`/`OutputPort` 协议。算法：`start()` 先创建 generation token，再按 control→vision→output 顺序启动；任一步失败按已启动组件逆序清理并停止 clock；`poll()` 每次只取最新视觉事件、转发观察，再取最新控制快照并交给输出；`stop(reason)` 只在显式调用时释放 output，并在任一 adapter stop 抛错时仍清空 active/token。副作用：调用注入的进程/输出适配器，不直接导入 Qt、截图、内存或 Host 实现。失败行为：旧 generation 由 `GenerationClock.stop()` 失效，视觉/控制 error 只记录诊断，不自动释放动态 session。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/ui_adapter.py`（M5.1 implemented 2026-10-07）
 

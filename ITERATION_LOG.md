@@ -56,6 +56,12 @@
 **预计连带影响：** generation/worker/output 生命周期、页面后续 start/poll/stop 入口；不改变现有 capture_test_page 行为。
 
 ### C. 本轮发现
+**关键发现：** `(verified)` 端口/worker 的 stop 是外部副作用边界，不能因为 adapter 报错就保留 active token；现在清理状态放进最内层 finally，异常仍向调用方传播但下一次 start 不会被旧会话锁死。
+**修订的旧结论：** 原先只验证正常 stop 和启动失败回滚；现在补上 stop 自身失败的清理回归。
+**验证结果：** 新增端口/supervisor stop-failure 测试通过，最终全量回归待执行。
+**下一步计划：** 执行最终全量回归、compileall、diff check，提交生命周期加固。
+
+### C. 本轮发现
 **关键发现：** `(verified)` 端口启动顺序为 control→vision→output，任一环节异常都会逆序清理；poll 只转发 latest observation 和 snapshot，不等待 worker；stop 由调用方显式触发，内部 error 只保留诊断，不把动态跟随误判为用户停止。
 **修订的旧结论：** 原先页面需要直接管理 tracker/future/output；现在已形成可注入 composition 边界，但旧页面尚未迁移，不能宣称 live 入口已切换。
 **验证结果：** `test_follow_engine_port.py` 与 control process 聚焦测试 `4 passed`；未连接真实进程或 Host。
@@ -10376,3 +10382,10 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **修订的旧结论：** M2.4 原先只在计划中，现已补齐通用 supervisor 和 fake worker 回归；页面旧 worker 尚未接入该 supervisor。
 **验证结果：** supervisor 测试 `2 passed`；最终全量回归将在本轮提交前执行。
 **下一步计划：** 更新 M8 文档的 supervisor 状态，执行全量测试、compileall、diff check，提交补齐阶段。
+
+## [SYNC] 2026-10-07 — final lifecycle cleanup hardening
+
+### A. SYNC 范围声明
+**触发任务：** 加固 `FollowEnginePort.stop()` 和 `ProcessSupervisor.stop()` 的异常清理，防止输出/worker stop 抛错后残留 active token。
+**直接变更文件：** `follow_engine/engine.py`、`follow_engine/process_supervisor.py`、对应端口/supervisor 测试和断点文档。
+**预计连带影响：** 用户停止、页面关闭、worker 退役后的 generation/token 清理；不改变恢复策略和真实输入边界。

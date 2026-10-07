@@ -116,3 +116,18 @@ def test_port_requires_explicit_role_for_multi_role_target():
             engine.update_target((1.0, 2.0))
     finally:
         engine.stop()
+
+
+def test_port_clears_active_state_even_when_output_stop_reports_error():
+    vision, control, output = FakeVision(), FakeControl(), FakeOutput()
+    engine = FollowEnginePort(vision=vision, control=control, output=output)
+    engine.start(FollowEngineStart("map-a", {"p2": 2}))
+
+    def failing_stop(*, force=True):
+        raise RuntimeError("output stop failed")
+
+    output.stop = failing_stop
+    with pytest.raises(RuntimeError, match="output stop failed"):
+        engine.stop()
+    assert engine.active is False
+    assert engine.token is None

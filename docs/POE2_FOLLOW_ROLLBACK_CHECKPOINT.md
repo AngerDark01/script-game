@@ -527,6 +527,11 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(boundary)` supervisor 尚未替换页面旧 worker 的直接生命周期管理，需在页面 port 迁移时装配。
 - `(next)` 最终全量回归后提交该补齐阶段；实机页面迁移仍单独 opt-in。
 
+### final lifecycle cleanup hardening（2026-10-07）
+
+- `(fixed)` `FollowEnginePort.stop()` 和 `ProcessSupervisor.stop()` 现在在 adapter/worker stop 抛异常时仍清空 active、generation/token 和 restart 状态，避免页面被陈旧会话锁死。
+- `(verified)` 新增端口/supervisor stop-failure 回归；下一步执行最终全量测试并提交。
+
 ### M5.2/M6.1 页面 adapter 与阶段计时（2026-10-07）
 
 - `(implemented)` 新增 `ui/modes/poe2_live_terrain/follow_engine_adapter.py`，页面侧只暴露 start、target_clicked、poll、stop 和状态回调，不复制控制/恢复逻辑。

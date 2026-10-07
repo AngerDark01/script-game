@@ -67,3 +67,20 @@ def test_supervisor_enters_failed_after_restart_budget_and_stop_is_terminal():
     assert supervisor.status.state is SupervisorState.FAILED
     supervisor.stop()
     assert supervisor.status.state is SupervisorState.STOPPED
+
+
+def test_supervisor_clears_token_even_when_worker_stop_reports_error():
+    class FailingWorker(FakeWorker):
+        def stop(self):
+            raise RuntimeError("worker stop failed")
+
+    worker = FailingWorker([])
+    supervisor = ProcessSupervisor(lambda: worker)
+    token = GenerationClock().begin("map-a")
+    supervisor.start(token)
+    try:
+        supervisor.stop()
+    except RuntimeError as exc:
+        assert str(exc) == "worker stop failed"
+    assert supervisor.status.state is SupervisorState.STOPPED
+    assert supervisor.status.generation is None
