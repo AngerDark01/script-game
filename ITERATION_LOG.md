@@ -10421,3 +10421,20 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **剩余边界：**真实 PoE2 capture/processor、warm memory source、Host output adapter 尚未组合；因此新入口仍必须显式注入，不能默认切换，也未发送真实输入。
 
 **下一步：**提交本轮源码、测试和文档；保留用户运行数据 `data/events/events.json` 与 evidence 不变。
+
+### [SYNC] 2026-10-07 — harden runtime-factory failure reporting
+
+#### A. SYNC 范围声明
+**触发任务：** 复核页面迁移桥接后发现控制子进程 runtime factory 构造异常可能发生在结构化 error 捕获边界之外。
+**直接变更文件：** `control/follow_control_process.py`、`tests/poe2_live_terrain/test_follow_engine_control_process.py`、本断点文档。
+**预计连带影响：** spawn 子进程启动失败的 error event、页面诊断和停止清理；不改变默认 runtime、真实输入或恢复策略。
+
+#### C. SYNC 结果
+- `(fixed)` runtime factory/token 构造纳入 `control_process_entry` 的 `try/except BaseException`，失败会发布包含异常类型和 traceback 的 `ControlProcessEvent("error")`，不再只表现为子进程静默退出。
+- `(verified)` 控制进程专项测试 `3 passed`；完整 PoE2/页面套件需重新执行。
+- `(next)` 运行完整测试、compileall/diff check，更新计数后提交。
+
+#### C. 追加发现与修复
+- `(found)` 首次全量回归中 factory error 测试暴露 latest-only 控制事件队列会在同一 turn 用 `stopped` 覆盖 `error`，导致父页面看不到真正异常；另 3 个旧 Qt/时间敏感用例单独重跑均通过，属于全量运行时抖动而非本轮逻辑失败。
+- `(fixed)` `control_process_entry` 增加 `terminal_error` 门控：异常发布后不再发布覆盖性的 stopped marker。
+- `(verified)` factory failure 单测 `1 passed`；3 个受影响旧页面用例单独 `3 passed`。需再次执行完整套件确认。

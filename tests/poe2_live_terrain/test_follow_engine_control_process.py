@@ -16,6 +16,10 @@ def _runtime_factory(token, roles):
     return FollowControlRuntime(token, roles)
 
 
+def _broken_runtime_factory(token, roles):
+    raise RuntimeError("runtime composition failed")
+
+
 def _observation() -> VisualObservation:
     return VisualObservation(
         generation=1,
@@ -66,5 +70,26 @@ def test_spawned_control_process_accepts_spawn_safe_runtime_factory():
         assert event is not None
         assert event.snapshot is not None
         assert event.snapshot.session_active is True
+    finally:
+        handle.stop()
+
+
+def test_runtime_factory_failure_is_published_as_structured_error():
+    handle = FollowControlProcessHandle(
+        {"p2": 2}, interval_ms=10, context=mp.get_context("spawn"),
+        runtime_factory=_broken_runtime_factory,
+    )
+    handle.start(generation=1, map_instance="map-a")
+    try:
+        deadline = time.monotonic() + 5.0
+        event = None
+        while time.monotonic() < deadline and event is None:
+            candidate = handle.poll_latest()
+            if candidate is not None and candidate.kind == "error":
+                event = candidate
+            time.sleep(0.01)
+        assert event is not None
+        assert "runtime composition failed" in event.error
+        assert "RuntimeError" in event.traceback_text
     finally:
         handle.stop()

@@ -430,19 +430,21 @@ def control_process_entry(
     interval_ms: int,
     runtime_factory: Callable[[GenerationToken, Mapping[str, int]], FollowControlRuntime] | None = None,
 ) -> None:
-    token = GenerationToken(int(generation), str(map_instance))
-    # The default remains the pure offline runtime.  A caller that has a
-    # spawn-safe composition (for example one with a warm memory backend and
-    # a bounded local search) can inject it without making this process know
-    # about Qt, PoE2 or Host adapters.
-    runtime = (
-        runtime_factory(token, roles)
-        if runtime_factory is not None
-        else FollowControlRuntime(token, roles)
-    )
-    if not isinstance(runtime, FollowControlRuntime):
-        raise TypeError("runtime_factory must return FollowControlRuntime")
+    runtime: FollowControlRuntime | None = None
+    terminal_error = False
     try:
+        token = GenerationToken(int(generation), str(map_instance))
+        # The default remains the pure offline runtime.  A caller that has a
+        # spawn-safe composition (for example one with a warm memory backend
+        # and a bounded local search) can inject it without making this
+        # process know about Qt, PoE2 or Host adapters.
+        runtime = (
+            runtime_factory(token, roles)
+            if runtime_factory is not None
+            else FollowControlRuntime(token, roles)
+        )
+        if not isinstance(runtime, FollowControlRuntime):
+            raise TypeError("runtime_factory must return FollowControlRuntime")
         while not stop_event.is_set():
             should_stop = False
             while True:
@@ -466,12 +468,16 @@ def control_process_entry(
             _put_latest(output_queue, ControlProcessEvent("snapshot", snapshot=snapshot))
             stop_event.wait(max(0.001, int(interval_ms) / 1000.0))
     except BaseException as exc:  # pragma: no cover - exercised in spawned process
+        terminal_error = True
         _put_latest(
             output_queue,
             ControlProcessEvent("error", error=f"{type(exc).__name__}: {exc}", traceback_text=traceback.format_exc()),
         )
     finally:
-        _put_latest(output_queue, ControlProcessEvent("stopped"))
+        # Keep the structured error observable.  A latest-only queue must not
+        # overwrite an error with the normal stopped marker in the same turn.
+        if not terminal_error:
+            _put_latest(output_queue, ControlProcessEvent("stopped"))
 
 
 class FollowControlProcessHandle:

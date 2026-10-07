@@ -6574,7 +6574,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
 
-`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；handle 支持可 pickling 的 `runtime_factory(token, roles)`，因此页面/port 可以显式注入 warm memory、局部搜索和全局恢复组合，未注入时仍使用无副作用默认 runtime。`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
+`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；handle 支持可 pickling 的 `runtime_factory(token, roles)`，因此页面/port 可以显式注入 warm memory、局部搜索和全局恢复组合，未注入时仍使用无副作用默认 runtime。runtime factory/token 构造也在子进程结构化错误边界内，异常会发布包含 traceback 的 `ControlProcessEvent("error")`，且不会被同一 turn 的 stopped marker 覆盖。`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/__init__.py`（M4 implemented 2026-10-07）
 

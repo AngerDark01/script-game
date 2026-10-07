@@ -417,6 +417,16 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(next)` 下一阶段只在用户明确授权实机测试后，构造 spawn-safe 真实 composition，并先完成 R1 静止双人验收；期间保留旧入口回滚开关。
 - `(committed)` 本轮提交为 `0039495 feat(follow-engine): add reversible page bridge`；提交未包含 `data/events/events.json` 或运行 evidence。
 
+### runtime factory 错误边界加固（2026-10-07）
+
+- `(fixed)` `control_process_entry` 已将 token/runtime factory 构造纳入结构化异常捕获；spawn-safe factory 失败会发布 `ControlProcessEvent(kind="error", error, traceback_text)`，而不是静默子进程退出。
+- `(verified)` `tests/poe2_live_terrain/test_follow_engine_control_process.py`：`3 passed`。
+- `(next)` 完整套件通过后提交该独立修复，并更新最终测试计数。
+
+- `(found)` 全量回归暴露 latest-only 控制事件队列会用正常 stopped marker 覆盖同一 turn 的 factory error；3 个同时出现的旧 Qt/时间敏感失败单独重跑均通过。
+- `(fixed)` 增加 `terminal_error` 门控，结构化 error 保持可见；factory failure 单测和 3 个旧页面用例单独通过。
+- `(next)` 重新执行完整套件；若稳定通过，再提交错误边界修复。
+
 - `(implemented)` live 全局恢复统一通过 `recovery/global_reanchor.py::GlobalReanchorBackend`，页面 live 分支不再直接调用旧 worker。
 - `(implemented)` 双人内存 source 缓存 layout，并在地图实例变化时失效重解析。
 - `(implemented)` recovery episode 在策略决策前去重；聚焦页面/恢复/内存测试 `111 passed`，新增 backend 契约测试。
