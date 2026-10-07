@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "follow-engine-offline-scenarios",
+  "map_instance": "offline-map-v1",
+  "roles": ["p1", "p2"],
+  "real_input_allowed": false,
+  "scenarios": [
+    {
+      "name": "normal_dual",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 33, "kind": "visual", "roles": {"p1": [104, 100], "p2": [116, 100]}, "expected": {"state": "tracking", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "single_frame_mismatch",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 33, "kind": "partial", "roles": {"p1": [104, 100], "p2": null}, "expected": {"state": "visual_degraded", "keep_session": true}},
+        {"captured_at_ms": 66, "kind": "visual", "roles": {"p1": [108, 100], "p2": [120, 100]}, "expected": {"state": "tracking", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "p2_short_occlusion",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 33, "kind": "none", "roles": {"p1": [104, 100], "p2": null}, "expected": {"state": "predicting", "keep_session": true}},
+        {"captured_at_ms": 99, "kind": "local_roi", "roles": {"p1": [112, 100], "p2": [124, 100]}, "expected": {"state": "tracking", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "p2_long_occlusion",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 700, "kind": "none", "roles": {"p1": [140, 100], "p2": null}, "expected": {"state": "local_reanchor_pending", "keep_session": true}},
+        {"captured_at_ms": 1600, "kind": "none", "roles": {"p1": [180, 100], "p2": null}, "expected": {"state": "memory_reanchor_pending", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "local_recovery_success",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 700, "kind": "local_roi", "roles": {"p1": [140, 100], "p2": [152, 100]}, "expected": {"state": "tracking", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "memory_reanchor_success",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 1800, "kind": "memory", "roles": {"p1": [180, 100], "p2": [192, 100]}, "expected": {"state": "tracking", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "host_session_expired",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 500, "kind": "host_session_expired", "roles": {"p1": [120, 100], "p2": [132, 100]}, "expected": {"state": "follow_rearming", "keep_session": true}}
+      ]
+    },
+    {
+      "name": "map_instance_changed",
+      "events": [
+        {"captured_at_ms": 0, "kind": "visual", "roles": {"p1": [100, 100], "p2": [112, 100]}, "expected": {"state": "tracking", "keep_session": true}},
+        {"captured_at_ms": 1000, "kind": "map_changed", "roles": {"p1": null, "p2": null}, "expected": {"state": "global_reanchor_pending", "keep_session": true}}
+      ]
+    }
+  ]
+}

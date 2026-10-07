@@ -10184,6 +10184,20 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(designed)` 新增 `docs/plans/2026-10-07-poe2-follow-engine-execution-plan.md`，将任务细分为 M0–M8、每个阶段的文件、测试、验收、提交和回滚边界。
 - `(decision)` 规划阶段结束后暂不改运行代码；用户确认后从 M0 离线回放夹具开始，M1/M2 通过前不迁移真实输入。
 
+## [执行开始] 2026-10-07 M0/M1 双通道引擎
+
+- `(started)` 用户已授权按 `2026-10-07-poe2-follow-engine-execution-plan.md` 开始实现。
+- `(scope)` 当前批次只做离线回放 manifest、无副作用契约、generation 校验、预测/融合和恢复策略。
+- `(safety)` 本批次不连接游戏进程、不读取实时内存、不创建虚拟手柄、不改正式定位/绘图页面。
+- `(next)` M0 通过后提交；再执行 M1.1–M1.4 并分别运行聚焦测试。
+
+## [M0 完成] 2026-10-07 离线回放夹具
+
+- `(implemented)` 新增 `follow_engine/replay.py` 的 `ReplayEvent`、`ReplayManifest` 和稳定签名，加载过程无 Qt/内存/手柄副作用。
+- `(implemented)` 建立 8 类跟随异常场景的离线 manifest，显式禁止真实输入。
+- `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_replays.py`：`2 passed`。
+- `(next)` M1.1 实现 `contracts.py` 的跨进程 DTO 和严格字段校验。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标

@@ -6543,3 +6543,9 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### Recovery backend boundary (current)
 
 `recovery/global_reanchor.py::GlobalReanchorBackend.start(reason, preserve_follow)` is the sole live-page adapter for the final asynchronous global worker. It records a request and invokes the injected worker starter; static/legacy page paths intentionally remain separate. `memory_anchors.py::Poe2DualPlayerPositionSource.read_many()` caches PID, descriptor, and layout for the current process/slot, invalidating the layout cache when the area instance changes. `_request_live_follow_reanchor()` suppresses repeated requests inside one recovery episode before evaluating policy, so a stale frame cannot repeatedly claim backends or release the follow lease. The remaining boundary is explicit local matcher feedback: `DualVisualTracker` performs the bounded local match on its next frame, while `RecoveryCoordinator` currently receives the policy-level local action rather than a measured local score.
+### `features/poe2/live_terrain/experimental/follow_engine/replay.py`（implemented 2026-10-07）
+
+职责：提供双人跟随重构使用的离线回放 manifest，不连接 Qt、游戏进程、内存或虚拟手柄。
+关键导出：`ReplayEvent`、`ReplayManifest`、`load_replay_manifest()`。
+算法：加载器验证 schema、角色集合、时间戳单调性和事件角色合法性；`ReplayManifest.signature()` 对规范化 JSON 计算 SHA-256，保证同一回放输入可重复识别。
+对应夹具：`tests/poe2_live_terrain/fixtures/follow_replays/scenarios.json`，覆盖正常双人、单帧失配、短/长视觉丢失、局部恢复、内存恢复、Host session 失效和地图变化。

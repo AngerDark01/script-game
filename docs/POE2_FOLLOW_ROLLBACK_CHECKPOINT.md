@@ -8,6 +8,12 @@
 - `(decision)` 本轮只完成规划和基线冻结，不开始新架构实现；用户确认后从 M0.1/M0.2 回放夹具开始。
 - `(next)` 先建立离线回放 manifest 与不可发送真实输入的 harness；随后实现 M1 纯逻辑契约，再迁移 VisionProcess 和 FollowControlProcess。
 
+## 开发启动（2026-10-07）
+
+- `(started)` 用户已授权按执行计划开始开发，当前从 M0 离线回放夹具和 M1 纯逻辑契约开始。
+- `(boundary)` 本轮首先只新增无副作用 DTO、代际校验、预测/融合和恢复策略；不启动真实游戏、不读取实时内存、不发送手柄输入。
+- `(next)` 先提交 M0 回放 manifest 与离线 harness；随后提交 M1.1–M1.4，每一组都有独立测试和提交。
+
 ## 最新测试异常调查（进行中）
 
 - 用户请求只读定位最新异常日志与图片，先分析原因，不改运行代码、不发送输入。
@@ -417,3 +423,10 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(decision)` 采用两个长期业务进程：`VisionProcess` 负责截图/墙体/人物/局部 ROI，`FollowControlProcess` 负责预测/融合/路径/恢复/输出；Qt 只做 UI，Host 保持独立。
 - `(design)` 内存快速重锚和全局恢复作为控制进程内的低频单次任务，不为每种异常创建独立进程；进程间使用 latest-only shared frame ring 和带 generation/sequence/instance 的结构化快照。
 - `(next)` M0 先冻结回放和纯逻辑契约，随后按 M1→M7 迁移；在 M1/M2 离线回归通过前不迁移实机输入。
+
+## M0 离线回放夹具完成（2026-10-07）
+
+- `(implemented)` 新增 `experimental/follow_engine/replay.py`，提供无副作用的 `ReplayEvent`、`ReplayManifest` 和 manifest 加载/稳定签名。
+- `(implemented)` 新增 `tests/poe2_live_terrain/fixtures/follow_replays/scenarios.json`，覆盖正常双人、单帧失配、短/长视觉丢失、局部恢复、内存恢复、Host session 失效和地图变化。
+- `(verified)` `tests/poe2_live_terrain/test_follow_engine_replays.py`：`2 passed`；回放明确 `real_input_allowed=false`，不连接游戏、内存或 Host。
+- `(next)` 进入 M1.1：实现跨进程不可变 DTO 和输入校验；完成后再实现 generation/sequence 门控。
