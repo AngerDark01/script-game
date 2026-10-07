@@ -9,6 +9,11 @@ from auto_modules.features.poe2.live_terrain.experimental.follow_engine.contract
     VisualObservation,
 )
 from auto_modules.features.poe2.live_terrain.experimental.follow_engine.control.follow_control_process import FollowControlProcessHandle
+from auto_modules.features.poe2.live_terrain.experimental.follow_engine.control.follow_control_process import FollowControlRuntime
+
+
+def _runtime_factory(token, roles):
+    return FollowControlRuntime(token, roles)
 
 
 def _observation() -> VisualObservation:
@@ -39,5 +44,27 @@ def test_spawned_control_process_consumes_visual_and_publishes_snapshot():
         assert event.snapshot is not None
         assert event.snapshot.session_active is True
         assert event.snapshot.output_intents[0].controller == 2
+    finally:
+        handle.stop()
+
+
+def test_spawned_control_process_accepts_spawn_safe_runtime_factory():
+    handle = FollowControlProcessHandle(
+        {"p2": 2}, interval_ms=10, context=mp.get_context("spawn"),
+        runtime_factory=_runtime_factory,
+    )
+    handle.start(generation=1, map_instance="map-a")
+    try:
+        handle.send_visual(_observation())
+        deadline = time.monotonic() + 5.0
+        event = None
+        while time.monotonic() < deadline and event is None:
+            candidate = handle.poll_latest()
+            if candidate is not None and candidate.kind == "snapshot":
+                event = candidate
+            time.sleep(0.01)
+        assert event is not None
+        assert event.snapshot is not None
+        assert event.snapshot.session_active is True
     finally:
         handle.stop()

@@ -54,6 +54,7 @@ from auto_modules.ui.modes.poe2_live_terrain.presenter import (
     localization_display_point,
     localization_source_point,
 )
+from auto_modules.features.poe2.live_terrain.experimental.follow_engine.ui_adapter import FollowUiState
 
 
 def _snapshot() -> TerrainSnapshot:
@@ -186,8 +187,91 @@ class FakeHybridFactory:
         )
 
 
+class FakePageFollowEngineAdapter:
+    """Side-effect-free page bridge used to verify the migration switch."""
+
+    def __init__(self):
+        self.starts = []
+        self.targets = []
+        self.stops = []
+        self.active = False
+
+    def start(self, config):
+        self.starts.append(config)
+        self.active = True
+
+    def target_clicked(self, role_id, target):
+        self.targets.append((role_id, target))
+        return self._state()
+
+    def poll(self):
+        return self._state()
+
+    def stop(self, *, reason="user"):
+        self.stops.append(reason)
+        self.active = False
+        return self._state()
+
+    def _state(self):
+        return FollowUiState(active=self.active, snapshot=None, diagnostics={})
+
+
 def _app():
     return QApplication.instance() or QApplication([])
+
+
+def test_modular_follow_page_bridge_is_explicit_and_mutually_exclusive(tmp_path):
+    _app()
+    adapter = FakePageFollowEngineAdapter()
+    page = Poe2CaptureTestPage(
+        FakeService(),
+        archive=FakeArchive(tmp_path),
+        monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
+        preview_provider=None,
+        follow_engine_page_adapter=adapter,
+    )
+    page._snapshot = _snapshot()
+    page._dual_map_transform = SimpleNamespace()
+    page._dual_follow_reference = SimpleNamespace()
+    page._dual_motion_tracker = object()
+    page.follow_mode_combo.setCurrentIndex(page.follow_mode_combo.findData("single_p2_program"))
+    page.follow_p1_combo.addItem("p1", "p1")
+    page.follow_p2_combo.addItem("p2", "p2")
+    page.follow_p2_combo.setCurrentIndex(page.follow_p2_combo.findData("p2"))
+
+    page.start_follow_experiment()
+    assert page._modular_follow_active is True
+    assert page._follow_runtime is None
+    assert page._follow_program_output is None
+    assert len(adapter.starts) == 1
+    assert adapter.starts[0].roles == {"p2": 2}
+
+    page.stop_follow_experiment()
+    assert adapter.stops == ["requested"]
+    assert page._modular_follow_active is False
+    assert not page._follow_timer.isActive()
+
+
+def test_modular_follow_poll_failure_does_not_enter_legacy_stop_path(tmp_path):
+    _app()
+
+    class BrokenAdapter(FakePageFollowEngineAdapter):
+        def poll(self):
+            raise RuntimeError("temporary poll failure")
+
+    adapter = BrokenAdapter()
+    page = Poe2CaptureTestPage(
+        FakeService(),
+        archive=FakeArchive(tmp_path),
+        monitor_config=SimpleNamespace(sample_interval_ms=100, binding=None),
+        preview_provider=None,
+        follow_engine_page_adapter=adapter,
+    )
+    page._modular_follow_active = True
+    page._poll_modular_follow_engine()
+    assert page._modular_follow_active is True
+    assert page._follow_runtime is None
+    assert "保持会话" in page.follow_status_label.text()
 
 
 def test_capture_test_page_lifecycle_and_explicit_save(tmp_path):

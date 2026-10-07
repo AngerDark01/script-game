@@ -399,6 +399,23 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 
 ## 当前实现进展（2026-10-07）
 
+### 页面迁移审查（2026-10-07，本轮）
+
+- `(confirmed)` 新 `FollowEnginePort`、`FollowEngineUiAdapter` 和 `Poe2FollowEnginePageAdapter` 只由独立离线测试使用；`capture_test_page.py` 没有注入或调用它们。
+- `(confirmed)` 页面跟随入口仍由 `start_follow_experiment()` 直接创建旧 `SimulatedFollowRuntime`/`ProgramFollowOutput`，由 `_follow_timer` 调用旧 `_tick_follow_experiment_impl()`，停止时直接释放旧 output；页面还同时拥有旧双人视觉 worker 和恢复 future。
+- `(confirmed)` 直接把页面切到新 port 目前不安全：`FollowEngineStart` 没有初始角色 seed/视觉发布接口，现有新视觉进程也没有真实 PoE2 capture/processor 组合，真实内存和 Host adapter 未注入。
+- `(decision)` 本轮先实现可选、显式、互斥的页面 adapter 桥接：默认保持旧入口；只有调用方注入新 `Poe2FollowEnginePageAdapter` 并打开 flag 时走新入口。新入口失败只回滚本次 port，不触碰旧 runtime；旧入口 active 时拒绝启动新 port，禁止两个链路同时持有 controller lease。
+- `(next)` 补页面桥接单元测试、fake adapter 生命周期测试和文档；离线通过后再考虑真实 capture/memory/Host composition。
+
+### 页面迁移桥接与控制 factory（2026-10-07，本轮完成）
+
+- `(implemented)` `capture_test_page.py` 接受可选 `follow_engine_page_adapter`；注入后按钮、timer、目标点击和停止只访问模块化 adapter，默认 `None` 仍走旧链路。
+- `(implemented)` 模块化入口先停旧 probe/双人目标/旧跟随，再启动 `FollowEngineStart(map_instance, roles)`；启动失败不回退创建旧 runtime，poll 异常保持模块化会话。
+- `(implemented)` `FollowControlProcessHandle` 支持 spawn-safe `runtime_factory`，可将 warm memory/local/global backend 组合注入控制子进程；未注入时兼容原纯 runtime。
+- `(verified)` `pytest -q tests/poe2_live_terrain tests/test_poe2_capture_test_page.py`：`617 passed`；compileall、diff check 通过。
+- `(boundary)` 真实 PoE2 capture/processor、warm memory source、Host output 尚未组合；新入口仍是显式 opt-in，不能据此宣称实机可用或已默认切换。
+- `(next)` 下一阶段只在用户明确授权实机测试后，构造 spawn-safe 真实 composition，并先完成 R1 静止双人验收；期间保留旧入口回滚开关。
+
 - `(implemented)` live 全局恢复统一通过 `recovery/global_reanchor.py::GlobalReanchorBackend`，页面 live 分支不再直接调用旧 worker。
 - `(implemented)` 双人内存 source 缓存 layout，并在地图实例变化时失效重解析。
 - `(implemented)` recovery episode 在策略决策前去重；聚焦页面/恢复/内存测试 `111 passed`，新增 backend 契约测试。

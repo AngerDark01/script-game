@@ -1,7 +1,7 @@
 # PoE2 双通道跟随引擎验收清单
 
 更新时间：2026-10-07  
-当前代码基线：`82f204e test(follow-engine): m7 offline replay gates`
+当前代码基线：`97aefca fix(follow-engine): harden lifecycle cleanup`（本轮页面桥接尚未提交）
 
 ## 1. 当前交付边界
 
@@ -15,11 +15,12 @@
 - 单 generation 全局恢复 single-flight；
 - 动态跟随异常只进入预测/保持/恢复，不自动释放 session；
 - `FollowEnginePort`、页面 adapter、阶段耗时和离线 replay runner；
-- 505 个 PoE2 离线聚焦测试通过。
+- 页面 adapter 的显式迁移桥接和控制进程 `runtime_factory` 注入；
+- 当前 PoE2/页面离线聚焦测试 `617 passed`。
 
 当前明确未完成：
 
-1. `capture_test_page.py` 默认入口仍使用旧页面编排，尚未切换到 `FollowEnginePort`；
+1. `capture_test_page.py` 默认入口仍使用旧页面编排；新入口已具备注入式 feature flag，但未默认开启；
 2. 真实 PoE2 内存 source 尚未注入新 `MemoryRecoveryBackend`；
 3. 真实 VirtualGamepad/Host 尚未由新 port 接管；
 4. 本文之外不允许把离线通过描述成实机通过。
@@ -53,7 +54,7 @@ git diff --check
 2. Host 支持当前 `program.heartbeat` 和 session rearm 协议；
 3. 当前地图实例、首帧 transform、角色身份均已记录；
 4. 新旧输出链只有一个拥有 controller lease；
-5. 页面 adapter 已由 fake composition 通过，且旧 `capture_test_page` 入口已显式关闭或 feature flag 隔离；
+5. 页面 adapter 已由 fake composition 通过；注入式 feature flag 已隔离旧入口，但真实 composition 尚未接入；
 6. 日志包含 capture、wall、marker、association、local、prediction、memory、global、route、output、heartbeat、UI drain、total 各阶段耗时；
 7. 用户知道测试期间可能发送手柄输入，并在游戏内准备安全位置。
 
@@ -86,4 +87,4 @@ git diff --check
 
 ## 6. 本次审计结论
 
-离线引擎链路已闭合并通过测试；真实页面迁移和实机验收是下一项独立工作，不能在没有用户明确启动测试的情况下自动进行。
+离线引擎链路和页面的可回滚桥接已通过测试；真实 capture/memory/Host composition 以及默认切换仍是下一项独立工作，不能在没有用户明确启动测试的情况下自动进行。

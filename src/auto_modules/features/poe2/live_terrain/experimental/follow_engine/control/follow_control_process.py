@@ -428,11 +428,20 @@ def control_process_entry(
     output_queue,
     stop_event,
     interval_ms: int,
+    runtime_factory: Callable[[GenerationToken, Mapping[str, int]], FollowControlRuntime] | None = None,
 ) -> None:
-    runtime = FollowControlRuntime(
-        GenerationToken(int(generation), str(map_instance)),
-        roles,
+    token = GenerationToken(int(generation), str(map_instance))
+    # The default remains the pure offline runtime.  A caller that has a
+    # spawn-safe composition (for example one with a warm memory backend and
+    # a bounded local search) can inject it without making this process know
+    # about Qt, PoE2 or Host adapters.
+    runtime = (
+        runtime_factory(token, roles)
+        if runtime_factory is not None
+        else FollowControlRuntime(token, roles)
     )
+    if not isinstance(runtime, FollowControlRuntime):
+        raise TypeError("runtime_factory must return FollowControlRuntime")
     try:
         while not stop_event.is_set():
             should_stop = False
@@ -474,11 +483,13 @@ class FollowControlProcessHandle:
         *,
         interval_ms: int = 33,
         context: mp.context.BaseContext | None = None,
+        runtime_factory: Callable[[GenerationToken, Mapping[str, int]], FollowControlRuntime] | None = None,
     ) -> None:
         if int(interval_ms) < 1:
             raise ValueError("interval_ms must be positive")
         self.roles = dict(roles)
         self.interval_ms = int(interval_ms)
+        self.runtime_factory = runtime_factory
         self.context = context or mp.get_context("spawn")
         self.stop_event = self.context.Event()
         self.commands = self.context.Queue(maxsize=16)
@@ -491,7 +502,10 @@ class FollowControlProcessHandle:
         self.stop_event.clear()
         self.process = self.context.Process(
             target=control_process_entry,
-            args=(self.roles, int(generation), str(map_instance), self.commands, self.events, self.stop_event, self.interval_ms),
+            args=(
+                self.roles, int(generation), str(map_instance), self.commands,
+                self.events, self.stop_event, self.interval_ms, self.runtime_factory,
+            ),
             name=f"poe2-follow-control-{generation}",
             daemon=True,
         )

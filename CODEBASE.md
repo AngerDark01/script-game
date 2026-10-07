@@ -144,7 +144,7 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 
 ### `ui/modes/poe2_live_terrain/capture_test_page.py`（verified）
 
-职责：PoE2 数据采集与混合定位实验页；拥有唯一 hybrid experiment、唯一 hybrid QTimer 和地图 overlay，仍与正式 `Poe2LocalizationRuntime` 隔离。定位定时器使用 `localization_fps` 计算有效周期，并把旧 `sample_interval_ms` 作为兼容上限；预览使用独立 `preview_fps` 周期。双人首帧在一次内存锚点读取下采集最多三张短间隔截图，对每张独立注册后按接受状态、pair confidence、形状质量和锚点误差选最强候选。关键导出：`Poe2CaptureTestPage`。对外依赖：terrain service/archive、preview/recognizer、可选 hybrid factory、`Poe2CaptureMonitorWindow`、`AspectPreviewLabel` 和 presenter。注意事项：没有 terrain 时开始按钮禁用；重新抓图、reset、shutdown 都先停止实验。实验页主区/侧栏、预览/地图以及三个预览格使用可拖动分隔条；窗口大小变化不改变原始截图、地图坐标或路线。
+职责：PoE2 数据采集与混合定位实验页；拥有唯一 hybrid experiment、唯一 hybrid QTimer 和地图 overlay，仍与正式 `Poe2LocalizationRuntime` 隔离。定位定时器使用 `localization_fps` 计算有效周期，并把旧 `sample_interval_ms` 作为兼容上限；预览使用独立 `preview_fps` 周期。双人首帧在一次内存锚点读取下采集最多三张短间隔截图，对每张独立注册后按接受状态、pair confidence、形状质量和锚点误差选最强候选。新增可选 `follow_engine_page_adapter` 迁移开关：注入时开始/轮询/目标点击/停止走模块化 `FollowEnginePort`，默认 `None` 时旧实验链保持不变，启动前清理旧 probe/target/runtime 以防双重 output lease。关键导出：`Poe2CaptureTestPage`。对外依赖：terrain service/archive、preview/recognizer、可选 hybrid factory、`Poe2CaptureMonitorWindow`、`AspectPreviewLabel`、`Poe2FollowEnginePageAdapter` 和 presenter。注意事项：没有 terrain 时开始按钮禁用；重新抓图、reset、shutdown 都先停止实验。真实视觉/内存/Host composition 尚未默认注入；模块化入口必须显式提供可用 adapter。实验页主区/侧栏、预览/地图以及三个预览格使用可拖动分隔条；窗口大小变化不改变原始截图、地图坐标或路线。
 
 `start_hybrid_localization()` 校验 snapshot/factory，停止旧 session，按当前 snapshot/config 创建 experiment，注册 listener 并启动 timer，然后立即 tick 一帧；构造或首 tick 异常会停 timer、清 experiment 并显示错误。
 
@@ -6574,7 +6574,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
 
-`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
+`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；handle 支持可 pickling 的 `runtime_factory(token, roles)`，因此页面/port 可以显式注入 warm memory、局部搜索和全局恢复组合，未注入时仍使用无副作用默认 runtime。`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/__init__.py`（M4 implemented 2026-10-07）
 
@@ -6603,6 +6603,8 @@ The newly added recovery package is currently a tested policy layer, not yet the
 - **P1 `FollowControlRuntime._run_local_recovery`**：注入的 search 若超过控制周期会拖慢 tick；应保持 ROI matcher 有界并由 M6 计时门槛监测。
 - **P1 `MemoryRecoveryBackend.submit/read`**：底层 source 若不是线程安全的，后台读取会与旧页面 reader 竞争；接入真实 source 前必须使用独占 reader 或显式锁，并验证实例一致。
 - **P1 `GlobalRecoveryBackend.poll`**：只有 poll 才释放 single-flight 槽；调用方若长期不 poll 会保持 HOLD，但不会重复启动任务。控制 runtime 必须每 tick 轮询。
+- **P1 `Poe2CaptureTestPage._start_modular_follow_experiment`**：只有注入 adapter 时才启用模块化入口，且 adapter 内部必须组合真实 capture/processor/memory/Host；若调用方误把 fake 或不可 pickling 的 factory 用于实机，启动会失败但不会自动切换旧链路。建议在 R1 前增加 composition contract 检查和显式 opt-in 配置。
+- **P1 `FollowControlProcessHandle.start`**：`runtime_factory` 运行于 Windows spawn 子进程，闭包、lambda 或持有 Qt/句柄的对象无法 pickle。触发时子进程可能在启动阶段报 pickle/TypeError；建议只传模块级函数或 spawn-safe callable，并在 composition 构造时预检。
 
 ### `tests/poe2_live_terrain/test_follow_engine_recovery_backends.py`（M4 implemented 2026-10-07）
 
@@ -6623,6 +6625,14 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `features/poe2/live_terrain/experimental/follow_engine/ui_adapter.py`（M5.1 implemented 2026-10-07）
 
 职责：提供页面可消费的无 Qt `FollowEngineUiAdapter` 和只读 `FollowUiState`，隐藏 engine poll/diagnostics 细节。关键导出：`start(config)`、`update_target(role_id,target)`、`poll()`、`state()`、`stop(reason)`。不持有 timer、不规划路线、不访问真实输入。
+
+### `ui/modes/poe2_live_terrain/follow_engine_adapter.py`（M5.2 bridge implemented 2026-10-07）
+
+职责：把 Qt 页面事件翻译为 `FollowEngineUiAdapter` 操作，提供 `start`、`target_clicked`、`poll` 和 `stop`，通过可选 callback 发布只读 `FollowUiState`。对外依赖：`FollowEngineStart`、follow-engine UI adapter；不导入 Qt 控件，也不直接访问截图、内存、路径或 Host。注意事项：页面只有显式注入该 adapter 才启用新入口，默认旧页面链路不变。
+
+### `tests/test_poe2_capture_test_page.py`（module bridge coverage 2026-10-07）
+
+职责：覆盖采集页注入模块化 adapter 后的互斥启动、目标/轮询边界和异常保持会话行为；fake adapter 只记录调用，不启动真实进程或发送手柄。关键回归：模块化启动不创建旧 `SimulatedFollowRuntime`/`ProgramFollowOutput`；poll 异常不调用 legacy stop。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/process_supervisor.py`（M2.4 implemented 2026-10-07）
 

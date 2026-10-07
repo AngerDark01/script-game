@@ -10389,3 +10389,35 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 **触发任务：** 加固 `FollowEnginePort.stop()` 和 `ProcessSupervisor.stop()` 的异常清理，防止输出/worker stop 抛错后残留 active token。
 **直接变更文件：** `follow_engine/engine.py`、`follow_engine/process_supervisor.py`、对应端口/supervisor 测试和断点文档。
 **预计连带影响：** 用户停止、页面关闭、worker 退役后的 generation/token 清理；不改变恢复策略和真实输入边界。
+## [SYNC] 2026-10-07 — audit and finish follow-engine page integration
+
+### A. 本轮目标（阅读前声明）
+**目标文件：**
+- `src/auto_modules/ui/modes/poe2_live_terrain/capture_test_page.py`（确认旧跟随入口、timer、worker、recovery 和输出所有权）
+- `src/auto_modules/ui/modes/poe2_live_terrain/follow_engine_adapter.py`（确认页面适配器实际契约与可接入点）
+- `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/engine.py`（确认 port 生命周期和 fake/真实组合边界）
+- `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/vision/vision_process.py`（确认视觉进程输入输出是否可被页面组合）
+- `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/control/follow_control_process.py`（确认控制进程默认 backend/output 是否仍为 fake）
+
+**本轮想弄清楚：**新引擎已经完成离线模块，但页面默认入口仍可能绕过它；需要找出最小、可回滚的 feature flag 接入方式，并补离线页面启动/目标更新/停止回归，禁止新旧链路同时持有输出租约。
+
+### C. 本轮发现（初步）
+**关键发现：** `(verified)` `Poe2CaptureTestPage.start_follow_experiment()`、`_tick_follow_experiment()`、`stop_follow_experiment()` 仍直接创建和管理 `SimulatedFollowRuntime`、`ProgramFollowOutput`、`QTimer` 与旧视觉 worker；页面构造函数没有 `Poe2FollowEnginePageAdapter`/`FollowEnginePort` 注入位。新 port、视觉进程和控制进程目前只在离线测试中组合，尚未有页面可回滚入口。
+
+`(verified)` 新 port 的 `FollowEngineStart` 只描述 map/roles，页面已有首帧角色状态、目标来源和真实 adapter，但 port 没有页面级“seed 初始角色/发布视觉快照”的入口；直接替换旧入口会丢掉首帧上下文。因此本轮应先做显式 feature flag + 注入式 adapter 桥接，保持旧入口默认和输出租约互斥，再逐步补真实组合。
+
+**修订的旧结论：** 之前把“页面 adapter 已存在”当成迁移准备完成；实际只存在独立 adapter 文件，页面完全没有调用它。
+
+**下一步：**先新增页面级 `follow_engine_adapter` 可选注入、统一状态轮询/目标/停止边界和 feature flag 测试；不在没有真实视觉/内存/Host 组合适配器的情况下切换默认入口。
+### C. 本轮实现结果（页面迁移审查）
+**已实现：**
+- `(implemented)` `Poe2CaptureTestPage` 新增可选 `follow_engine_page_adapter`。注入时，开始/轮询/地图目标/停止均走模块化 port；默认参数为 `None`，旧入口行为不变。
+- `(implemented)` 模块化启动前会清理旧 probe/双人目标/旧跟随，且启动失败不会创建旧 runtime；模块化轮询异常只显示保持会话，不调用 legacy stop。
+- `(implemented)` 模块化目标只向当前程序控制角色转发，页面保留 P1/P2 业务选择，port 不感知业务名称。
+- `(implemented)` `FollowControlProcessHandle` 新增 spawn-safe `runtime_factory` 注入；默认仍构造纯 runtime，注入时可把 warm memory/local/global backend 组合带进控制进程。
+
+**验证：**页面模块化桥接与控制进程 factory 回归包含在 `pytest -q tests/poe2_live_terrain tests/test_poe2_capture_test_page.py` 的 `617 passed` 中；compileall 与 diff check 通过。
+
+**剩余边界：**真实 PoE2 capture/processor、warm memory source、Host output adapter 尚未组合；因此新入口仍必须显式注入，不能默认切换，也未发送真实输入。
+
+**下一步：**提交本轮源码、测试和文档；保留用户运行数据 `data/events/events.json` 与 evidence 不变。
