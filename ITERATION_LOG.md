@@ -10224,6 +10224,13 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` 帧环、视觉进程和契约聚焦测试 `10 passed`。
 - `(next)` 实现 M2.3 视觉处理拆分和局部 ROI matcher。
 
+## [M2.3 完成] 2026-10-07 视觉处理拆分
+
+- `(implemented)` 新增 wall processor、marker processor、dual association 和 local ROI matcher。
+- `(fixed)` 颜色冲突造成部分角色关联时，facade 会重新执行无颜色几何关联，避免 P1/P2 被直接丢掉。
+- `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_vision_processors.py`：`4 passed`。
+- `(next)` 补齐 VisionProcess 的组合处理器输出，再进入 M3 FollowControlProcess。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标

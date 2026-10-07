@@ -461,3 +461,13 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` 帧环、视觉进程、契约聚焦测试：`10 passed`。
 - `(boundary)` 当前视觉进程只验证 capture/processor 生命周期和消息传输，尚未接入 PoE2 墙体、人物候选、局部 ROI 算法。
 - `(next)` M2.3 拆出 wall processor、marker processor、双人关联和 local ROI matcher，保持视觉进程不访问 Qt、内存和手柄。
+
+## M2.3 视觉处理组件完成（2026-10-07）
+
+- `(implemented)` 新增 `vision/wall_processor.py`：墙体位移低频处理和质量/形状门控。
+- `(implemented)` 新增 `vision/marker_processor.py`：复用现有 HSV profile 候选提取，单独记录候选数和处理耗时。
+- `(implemented)` 新增 `vision/dual_association.py`：位置、速度、双人相对几何为主；颜色冲突造成部分匹配时自动进行无颜色几何回退。
+- `(implemented)` 新增 `vision/local_roi_matcher.py`：按 `80/140/220` 半径逐级局部匹配，失败只返回结果，不产生停止动作。
+- `(verified)` `test_follow_engine_vision_processors.py`：`4 passed`；覆盖墙体位移、颜色候选、双人颜色污染和 ROI 扩展。
+- `(boundary)` 这些组件已具备独立契约，但还未把 PoE2 现有 `DualVisualTracker` 全量搬进 VisionProcess；下一步接入控制进程前先建立组合处理器。
+- `(next)` M2 阶段收尾：增加视觉处理组合器，把最新帧→墙体→人物→关联→局部 ROI 输出为 `VisualObservation`。
