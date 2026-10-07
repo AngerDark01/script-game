@@ -48,6 +48,19 @@
 
 **CODEBASE.md updated:** follow_engine M4 文件职责、控制数据流、算法边界和风险登记已同步。
 
+## [SYNC] 2026-10-07 — M5.1 engine port 与 UI adapter
+
+### A. SYNC 范围声明
+**触发任务：** 开始 M5 引擎组合，建立页面不得越过的 `FollowEnginePort` 与只读 UI adapter。
+**直接变更文件：** `follow_engine/engine.py`、`follow_engine/ui_adapter.py`、`follow_engine/__init__.py`、`tests/poe2_live_terrain/test_follow_engine_port.py` 及三份项目文档。
+**预计连带影响：** generation/worker/output 生命周期、页面后续 start/poll/stop 入口；不改变现有 capture_test_page 行为。
+
+### C. 本轮发现
+**关键发现：** `(verified)` 端口启动顺序为 control→vision→output，任一环节异常都会逆序清理；poll 只转发 latest observation 和 snapshot，不等待 worker；stop 由调用方显式触发，内部 error 只保留诊断，不把动态跟随误判为用户停止。
+**修订的旧结论：** 原先页面需要直接管理 tracker/future/output；现在已形成可注入 composition 边界，但旧页面尚未迁移，不能宣称 live 入口已切换。
+**验证结果：** `test_follow_engine_port.py` 与 control process 聚焦测试 `4 passed`；未连接真实进程或 Host。
+**下一轮计划：** M5.2 为 capture page 提供 adapter 构造/轮询 facade，先增加 fake page composition 回归，确认旧双人同目标链不受影响。
+
 
 ## [第 2026-10-07-39 轮] 2026-10-07 — 快速内存重锚耗时与分层方案核对
 

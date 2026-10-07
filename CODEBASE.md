@@ -6611,3 +6611,15 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `tests/poe2_live_terrain/test_follow_engine_control_runtime.py`（M4 扩展 2026-10-07）
 
 职责：验证控制 runtime 对新帧优先 local ROI、异步 memory submit/poll、恢复后 tracker seed 和动态 session 保持；覆盖局部恢复耗时字段。失败分支断言不产生 stop。
+
+### `features/poe2/live_terrain/experimental/follow_engine/engine.py`（M5.1 implemented 2026-10-07）
+
+职责：定义无 UI 的 `FollowEnginePort` 组合边界，统一 VisionProcess、FollowControlProcess、OutputScheduler 的启动、latest poll、目标更新和用户停止生命周期。关键导出：`FollowEngineStart`、`FollowEnginePort` 及 `VisionPort`/`ControlPort`/`OutputPort` 协议。算法：`start()` 先创建 generation token，再按 control→vision→output 顺序启动；任一步失败按已启动组件逆序清理并停止 clock；`poll()` 每次只取最新视觉事件、转发观察，再取最新控制快照并交给输出；`stop(reason)` 只在显式调用时释放 output。副作用：调用注入的进程/输出适配器，不直接导入 Qt、截图、内存或 Host 实现。失败行为：旧 generation 由 `GenerationClock.stop()` 失效，视觉/控制 error 只记录诊断，不自动释放动态 session。
+
+### `features/poe2/live_terrain/experimental/follow_engine/ui_adapter.py`（M5.1 implemented 2026-10-07）
+
+职责：提供页面可消费的无 Qt `FollowEngineUiAdapter` 和只读 `FollowUiState`，隐藏 engine poll/diagnostics 细节。关键导出：`start(config)`、`update_target(role_id,target)`、`poll()`、`state()`、`stop(reason)`。不持有 timer、不规划路线、不访问真实输入。
+
+### `tests/poe2_live_terrain/test_follow_engine_port.py`（M5.1 implemented 2026-10-07）
+
+职责：用 fake vision/control/output 验证端口事件流、目标更新、启动失败回滚和多角色目标必须显式 role；不创建真实进程、不发送输入。

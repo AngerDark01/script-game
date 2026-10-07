@@ -167,6 +167,14 @@
 - `(boundary)` 当前 `FollowControlProcessHandle` 仍使用默认无 backend runtime，页面/真实 VisionProcess 尚未通过 M5 port 注入 backend；真实内存 source 尚未接入 warm reader。
 - `(next)` M5 建立 `FollowEnginePort` 与 UI adapter，禁止页面直接持有 tracker/backend/future；随后将 fake vision/control/host 组合跑离线回放。
 
+### M5.1 FollowEnginePort 与 UI adapter（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/engine.py`：`FollowEngineStart`、`FollowEnginePort` 与三类端口协议，统一 generation、control/vision/output 启停、latest poll、target 更新和显式 user stop。
+- `(implemented)` 新增 `follow_engine/ui_adapter.py`：页面只消费 `FollowUiState`，不直接管理 process/future/tracker。
+- `(verified)` `test_follow_engine_port.py` 覆盖 latest 事件转发、输出快照、启动失败逆序回滚、多角色 target 显式 role；聚焦 `4 passed`。
+- `(boundary)` `capture_test_page.py` 尚未切换到该 port；现有页面仍保留旧业务编排，下一阶段只接 adapter，不改静态/正式定位链。
+- `(next)` M5.2 建立页面适配层的构造与轮询接口，先以 fake composition 验证再考虑替换 live follow 入口。
+
 - `(implemented)` 已建立 `recovery_state.py`、`recovery_diagnostics.py`，显式定义视觉降级、局部/内存/全局重锚和动态保持状态；新增状态诊断回归，`2 passed`。
 - `(implemented)` 已建立纯策略 `recovery_coordinator.py`：新帧优先视觉/局部，帧过期或无帧且预测超限才允许内存，冷却期间继续预测；新增策略回归，累计相关测试 `5 passed`。
 - `(implemented)` 已建立 `memory_fast_reanchor.py` 封装双人一次读取、实例校验、transform 复用和冷却；新增注入 reader 回归 `2 passed`。当前仍未把 reader/layout 缓存接入真实 `Poe2DualPlayerPositionSource`，实机 3.6s 冷读成本尚未下降。

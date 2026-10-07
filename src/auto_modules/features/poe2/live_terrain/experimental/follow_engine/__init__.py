@@ -5,5 +5,6 @@ effects.  Those integrations are added later through explicit adapters.
 """
 
 from .replay import ReplayEvent, ReplayManifest, load_replay_manifest
+from .engine import FollowEnginePort, FollowEngineStart
 
-__all__ = ["ReplayEvent", "ReplayManifest", "load_replay_manifest"]
+__all__ = ["FollowEnginePort", "FollowEngineStart", "ReplayEvent", "ReplayManifest", "load_replay_manifest"]
