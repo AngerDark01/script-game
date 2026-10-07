@@ -6623,3 +6623,15 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `tests/poe2_live_terrain/test_follow_engine_port.py`（M5.1 implemented 2026-10-07）
 
 职责：用 fake vision/control/output 验证端口事件流、目标更新、启动失败回滚和多角色目标必须显式 role；不创建真实进程、不发送输入。
+
+### `tests/poe2_live_terrain/test_follow_engine_page_adapter.py`（M5.2 implemented 2026-10-07）
+
+职责：验证页面 adapter 只转译目标/轮询/停止事件，并通过 callback 发布只读状态；不导入 Qt 控件、不接入旧页面内部 runtime。
+
+### `tests/poe2_live_terrain/test_follow_engine_stress.py`（M6.2 implemented 2026-10-07）
+
+职责：模拟 30Hz 视觉、60Hz 控制和 latest-only 高速发布；断言旧帧被丢弃、槽容量保持 1、控制 session 不因压力自动释放，并检查离线 tick 总耗时有界。
+
+### `tests/poe2_live_terrain/test_follow_engine_windows_lifecycle.py`（M6.3 implemented 2026-10-07）
+
+职责：用 Windows spawn context 重复启动/发送/停止控制进程，断言每轮都有事件、stop 后 process 引用清空；不连接真实 Host 或游戏窗口。

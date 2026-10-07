@@ -512,3 +512,11 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(verified)` page adapter、contracts、runtime 聚焦测试 `15 passed`，compileall 通过。
 - `(boundary)` 该 adapter 尚未替换现有 `capture_test_page.py` 的默认旧跟随入口；实际页面切换需要先完成压力和生命周期回归。
 - `(next)` 实现 M6.2 latest-only/控制压力回放和 M6.3 spawn 启停回归；之后再决定页面默认入口的迁移点。
+
+### M6.2/M6.3 压力与生命周期回归（2026-10-07）
+
+- `(implemented)` 新增 latest-only 压力回归：模拟 300 帧高速发布，槽只保留最新值，旧帧有界丢弃；控制 runtime 模拟 30Hz 视觉/60Hz tick，检查 session 保持与 tick 总耗时。
+- `(implemented)` 新增 spawn 控制进程重复启停回归，覆盖 5 轮 generation，确认 stop 后没有残留 process 引用。
+- `(verified)` `pytest -q tests/poe2_live_terrain` 为 `503 passed`；compileall 通过；未发送真实输入。
+- `(boundary)` 压力门槛是离线结构/耗时门，不代表真实 PoE2 图像识别耗时；实机验收仍需在 M8 分级执行。
+- `(next)` 补离线 replay runner，把 M0 场景接到新 port，验证 visual miss/local/memory/global/host-expired 不释放 session；随后再评估旧页面入口迁移。

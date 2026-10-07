@@ -10324,3 +10324,16 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(decision)` 两个长期业务进程：视觉 latest-only 进程、预测/融合/控制进程；Qt UI 和 VirtualGamepad Host 保持独立。
 - `(constraint)` 预测与融合放同一控制进程，内存/全局恢复使用低频单次任务，避免进程数量膨胀；共享帧使用固定 ring，消息使用 generation/sequence/map instance 校验。
 - `(next)` 执行前先完成 M0 回放夹具和 M1 纯逻辑契约，验证双通道融合后再迁移视觉进程。
+
+## [SYNC] 2026-10-07 — M6.2/M6.3 压力与生命周期回归
+
+### A. SYNC 范围声明
+**触发任务：** 验证 30Hz 视觉输入、60Hz 控制 tick、latest-only 丢帧和 Windows spawn 控制进程的重复启停边界。
+**直接变更文件：** `tests/poe2_live_terrain/test_follow_engine_stress.py`、`tests/poe2_live_terrain/test_follow_engine_windows_lifecycle.py`，必要时只修复发现的生命周期缺陷，并同步三份文档。
+**预计连带影响：** `LatestFrameBuffer`、`FollowControlRuntime`、`FollowControlProcessHandle` 的无界队列/退出语义；不发送真实输入。
+
+### C. 本轮发现
+**关键发现：** `(verified)` latest-only 槽在高于消费速率时只保留最新 sequence，旧帧计数增加但不会形成无界队列；控制 runtime 在 30Hz/60Hz 离线负载下保持 session，阶段计时可读；spawn 控制进程重复启停未留下 process 引用。
+**修订的旧结论：** 压力测试不再只看单元门控，而是覆盖“高频视觉 + 高频控制 + 重复启停”的组合边界；当前结果仍是离线，不等同真实图像处理 FPS。
+**验证结果：** `pytest -q tests/poe2_live_terrain` 为 `503 passed`，compileall 通过。
+**下一步计划：** 增加 replay runner，将 M0 场景映射到 `FollowEnginePort` 的 visual/control/output fake 组合，验证异常链路全程保持 session；再决定旧页面默认入口迁移。
