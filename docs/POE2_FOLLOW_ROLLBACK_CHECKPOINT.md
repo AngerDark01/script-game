@@ -430,3 +430,10 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(implemented)` 新增 `tests/poe2_live_terrain/fixtures/follow_replays/scenarios.json`，覆盖正常双人、单帧失配、短/长视觉丢失、局部恢复、内存恢复、Host session 失效和地图变化。
 - `(verified)` `tests/poe2_live_terrain/test_follow_engine_replays.py`：`2 passed`；回放明确 `real_input_allowed=false`，不连接游戏、内存或 Host。
 - `(next)` 进入 M1.1：实现跨进程不可变 DTO 和输入校验；完成后再实现 generation/sequence 门控。
+
+## M1.1 纯契约完成（2026-10-07）
+
+- `(implemented)` 新增 `follow_engine/contracts.py`：`FrameSlot`、`VisualObservation`、`PredictionSnapshot`、`FusionSnapshot`、`OutputIntent`、角色状态 DTO 和 `StageTiming`。
+- `(boundary)` 所有 DTO 都是 frozen/slots，不包含 Qt、游戏内存、截图 provider 或手柄副作用；角色映射和消息头在构造时校验。
+- `(verified)` `tests/poe2_live_terrain/test_follow_engine_contracts.py`：`7 passed`，覆盖不可变映射、有限数值、归一化输出、错误角色和非法帧元数据。
+- `(next)` M1.2 实现 generation/sequence/map instance 门控，确保迟到进程结果不能覆盖新会话。

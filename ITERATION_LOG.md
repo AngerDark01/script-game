@@ -10198,6 +10198,12 @@ claim/restart，成功 fresh sync 后可重新申请独立恢复。
 - `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_replays.py`：`2 passed`。
 - `(next)` M1.1 实现 `contracts.py` 的跨进程 DTO 和严格字段校验。
 
+## [M1.1 完成] 2026-10-07 跨进程纯契约
+
+- `(implemented)` 新增 `follow_engine/contracts.py`，完成帧槽、视觉观测、预测、融合、输出意图和阶段耗时 DTO。
+- `(verified)` `pytest -q tests/poe2_live_terrain/test_follow_engine_contracts.py`：`7 passed`。
+- `(next)` M1.2 实现 generation/sequence/map instance 的结果门控。
+
 ## [设计计划] 2026-10-07 双通道跟随引擎重构
 
 ### A. 本轮目标
