@@ -151,6 +151,22 @@
 
 ## 实施进度（2026-10-07，进行中）
 
+### M4 backend single-flight 修复（2026-10-07）
+
+- `(fixed)` `follow_engine/recovery/global_recovery.py::GlobalRecoveryBackend.in_flight` 现在把“future 已完成但尚未 poll 消费”视为仍占用 single-flight；修复快速 worker 在控制 tick 之间被重复 submit 的竞态。
+- `(verified)` `tests/poe2_live_terrain/test_follow_engine_recovery_backends.py` 新增 completed-unpolled 回归；backend 聚焦测试 `4 passed`。
+- `(boundary)` M4 backend 仍未接入 `FollowControlRuntime`；当前 control process 只调用策略，不提交/轮询 memory/local/global backend。
+- `(next)` 扩展 memory backend 为异步 submit/poll，接入 runtime 的局部 ROI、内存快速重锚和全局异步恢复；恢复成功只 seed 角色状态并保持 session。
+
+### M4 backend 接入控制 runtime（2026-10-07）
+
+- `(implemented)` `MemoryRecoveryBackend` 增加单线程异步 `submit/poll`、generation 校验、冷却查询和结构化 error；`MemoryFastReanchor.cooldown_ready()` 只读检查冷却，不触发进程读取。
+- `(implemented)` `FollowControlRuntime` 接入 local/memory/global backend：最新帧先按角色执行 bounded ROI；内存/全局只异步提交，后续 tick 轮询并以已有 transform/结果 seed tracker 与 odometry；恢复不清除目标、不释放 session。
+- `(implemented)` `StageTiming.local_ms` 记录局部恢复耗时；局部/内存/全局失败仍交给 `RecoveryPolicy`，不会转成用户停止。
+- `(verified)` runtime/backend 聚焦测试 `12 passed`；PoE2 全目录回归 `496 passed`；compileall 与 diff check 通过。
+- `(boundary)` 当前 `FollowControlProcessHandle` 仍使用默认无 backend runtime，页面/真实 VisionProcess 尚未通过 M5 port 注入 backend；真实内存 source 尚未接入 warm reader。
+- `(next)` M5 建立 `FollowEnginePort` 与 UI adapter，禁止页面直接持有 tracker/backend/future；随后将 fake vision/control/host 组合跑离线回放。
+
 - `(implemented)` 已建立 `recovery_state.py`、`recovery_diagnostics.py`，显式定义视觉降级、局部/内存/全局重锚和动态保持状态；新增状态诊断回归，`2 passed`。
 - `(implemented)` 已建立纯策略 `recovery_coordinator.py`：新帧优先视觉/局部，帧过期或无帧且预测超限才允许内存，冷却期间继续预测；新增策略回归，累计相关测试 `5 passed`。
 - `(implemented)` 已建立 `memory_fast_reanchor.py` 封装双人一次读取、实例校验、transform 复用和冷却；新增注入 reader 回归 `2 passed`。当前仍未把 reader/layout 缓存接入真实 `Poe2DualPlayerPositionSource`，实机 3.6s 冷读成本尚未下降。

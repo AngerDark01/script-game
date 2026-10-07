@@ -1,5 +1,54 @@
 # Iteration Log
 
+## [SYNC] 2026-10-07 — M4 recovery backend single-flight repair
+
+### A. SYNC 范围声明
+**触发任务：** 按双通道跟随执行计划继续实现 M4，先修复全局恢复后端重复提交，再接入控制运行时。
+**直接变更文件：** `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/recovery/global_recovery.py`、`tests/poe2_live_terrain/test_follow_engine_recovery_backends.py`（后续将扩展恢复协调与控制运行时）。
+**预计连带影响：** `GlobalRecoveryBackend.submit/poll` 的 single-flight 生命周期、恢复策略的全局任务门控、M4–M5 引擎组合边界。
+
+### C. 本轮发现
+**关键发现：** `(verified)` `GlobalRecoveryBackend.in_flight` 原先只在 future 未完成时返回 true；当快速 worker 已完成但控制 tick 尚未 `poll()` 时，第二次 `submit()` 会重复创建全局恢复任务，违反“提交到消费前单飞”的契约。`poll()` 负责消费并清理 future，因此修复点应在 backend 状态定义，而不是调用方加时间阈值。
+**修订的旧结论：** 原先认为测试只覆盖“执行中重复提交”；现在确认还必须覆盖“已完成但未消费”的竞态窗口。
+**验证结果：** 新增完成未消费回归，`pytest -q tests/poe2_live_terrain/test_follow_engine_recovery_backends.py` 为 `4 passed`。
+**下一步：** 将 memory/local/global backend 接入 `FollowControlRuntime`：局部匹配在控制 tick 内有界执行，内存与全局恢复只提交异步任务并在后续 tick 轮询；恢复成功只 seed tracker，不释放 follow session。
+
+### 受影响文件覆盖更新
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/recovery/global_recovery.py` | (partial) | (partial) | 1 | 确认 future 提交/消费生命周期，修复 completed-unpolled 仍可重复 submit。 |
+| `tests/poe2_live_terrain/test_follow_engine_recovery_backends.py` | (partial) | (partial) | 1 | 增加快速完成 future 的单飞回归，覆盖 poll 前竞态。 |
+| `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/control/follow_control_process.py` | (partial) | (partial) | 1 | 确认当前 runtime 仅调用 RecoveryPolicy，尚未执行 local/memory/global backend。 |
+| `src/auto_modules/features/poe2/live_terrain/experimental/follow_engine/recovery/recovery_policy.py` | 深度完整 | 深度完整 | 2 | 确认新帧优先 local、再 prediction/memory/global 且所有非用户异常保持 session。 |
+
+**CODEBASE.md 更新了：** 将在 backend 接入批次完成后同步新增 recovery backend 文件和控制 runtime 数据流。
+
+## [SYNC] 2026-10-07 — M4 recovery backend 接入完成
+
+### A. SYNC 范围声明
+**触发任务：** 完成 M4.1 warm memory、M4.2 bounded local ROI、M4.3 global async backend 与控制 runtime 的离线组合。
+**直接变更文件：** `recovery/memory_recovery.py`、`recovery/local_recovery.py`、`recovery/global_recovery.py`、`recovery/__init__.py`、`control/follow_control_process.py`、`multiplayer_follow/recovery/memory_fast_reanchor.py`、对应测试和三份项目文档。
+**预计连带影响：** `FollowControlRuntime.tick/apply_visual` 恢复顺序、StageTiming、RecoveryPolicy 输入、控制进程未来的 backend 注入边界。
+
+### C. 本轮发现
+**关键发现：** `(verified)` 新帧存在时 runtime 先尝试 local ROI；local 失败只保留预测；达到策略门槛后 memory 以单线程 future 提交，global 以单线程单飞提交；结果在后续 tick 轮询并校验 generation，成功位置只 seed tracking state/odometry，目标和 session 保持不变。
+**修订的旧结论：** 原先 M4 只完成独立 backend 契约；现在已接入纯控制 runtime，但页面和实际进程仍未注入这些 backend，不能宣称已替换 live 旧链。
+**验证结果：** `pytest -q tests/poe2_live_terrain/test_follow_engine_control_runtime.py tests/poe2_live_terrain/test_follow_engine_recovery_backends.py tests/poe2_live_terrain/test_memory_fast_reanchor.py` 为 `12 passed`；`pytest -q tests/poe2_live_terrain` 为 `496 passed`；compileall、diff check 通过。
+**新风险：** 真实 source 的线程安全和 warm reader 仍未验证；控制进程默认构造仍无 backend，需在 M5 port 中显式装配，避免页面直接管理 future。
+**下一轮计划：** M5.1 建立 `FollowEnginePort`，统一 start/update_target/snapshot/stop 和 backend/进程生命周期；M5.2 添加 UI adapter 的 fake composition 回归，再考虑页面切换。
+
+### 受影响文件覆盖更新
+| 文件 | 前状态 | 现状态 | 阅读次数 | 备注 |
+|---|---|---|---:|---|
+| `recovery/memory_recovery.py` | (partial) | 深度完整 | 2 | 异步 future、冷却、实例/generation 错误返回和 close 生命周期已确认。 |
+| `recovery/local_recovery.py` | (partial) | 深度完整 | 2 | ROI 半径迭代和 score 门控由 matcher 执行，失败无副作用。 |
+| `recovery/global_recovery.py` | (partial) | 深度完整 | 2 | single-flight 包含 completed-unpolled 窗口，poll 才释放槽。 |
+| `control/follow_control_process.py` | (partial) | (partial) | 2 | 已读完整 tick 和恢复接入；真实进程 backend 注入仍待 M5。 |
+| `multiplayer_follow/recovery/memory_fast_reanchor.py` | 深度完整 | 深度完整 | 2 | 新增只读 cooldown_ready，不改变读取副作用。 |
+
+**CODEBASE.md updated:** follow_engine M4 文件职责、控制数据流、算法边界和风险登记已同步。
+
+
 ## [第 2026-10-07-39 轮] 2026-10-07 — 快速内存重锚耗时与分层方案核对
 
 - `(confirmed)` 实机完整双人首帧/重定位约 8–11s；其中 `memory_ms≈3.6s`，视觉注册 `≈4.1–7.4s`。内存耗时包含 PID/descriptor/layout/reader/component 扫描，不是单个坐标读取耗时。

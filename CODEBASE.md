@@ -6575,3 +6575,39 @@ The newly added recovery package is currently a tested policy layer, not yet the
 ### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
 
 `follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。
+
+### `features/poe2/live_terrain/experimental/follow_engine/recovery/__init__.py`（M4 implemented 2026-10-07）
+
+职责：统一导出跟随引擎的策略、局部视觉、内存和全局异步恢复契约。关键导出：`RecoveryPolicy`、`LocalRecoveryBackend`、`MemoryRecoveryBackend`、`GlobalRecoveryBackend` 及其结果 DTO。对外依赖：同目录恢复模块。注意事项：这些 backend 不拥有 Qt、页面或真实输入；生命周期由组合运行时显式关闭。
+
+### `features/poe2/live_terrain/experimental/follow_engine/recovery/memory_recovery.py`（M4 implemented 2026-10-07）
+
+职责：把 `MemoryFastReanchor` 包装成带 generation 校验的暖读 backend，并将可能较慢的双角色读取放入单线程 executor。关键导出：`MemoryRecoveryBackend`、`MemoryRecoveryResult`、`read()`、`submit()`、`poll()`、`cooldown_ready()`、`close()`。算法：`submit()` 在 future 被 poll 消费前拒绝第二个任务；worker 调用一次 `read_many` 并复用首帧 transform；`poll()` 捕获异常为结构化 error，成功只返回 native positions；运行时按 generation 丢弃迟到结果。副作用：后台线程读取注入的 source，不写 UI、不发送输入。失败行为：读取异常、角色数量/实例不一致或冷却返回 error，调用方继续预测并按策略升级，不释放 follow session。
+
+### `features/poe2/live_terrain/experimental/follow_engine/recovery/local_recovery.py`（M4 implemented 2026-10-07）
+
+职责：在最新视觉帧与预测 native 点附近执行有限 ROI 视觉重捕获。关键导出：`LocalRecoveryBackend.match()`、`LocalRecoveryResult`。算法：委托 `LocalRoiMatcher` 按 80/140/220 半径逐级调用注入 search；达到 score 门槛立即返回位置与耗时，否则返回 reason/evidence。副作用：只调用注入的纯搜索函数；不读取内存、不创建全局任务、不释放输出。失败行为：返回无效结果，由控制运行时继续预测或进入低频 memory/global 层。
+
+### `features/poe2/live_terrain/experimental/follow_engine/recovery/global_recovery.py`（M4 implemented 2026-10-07）
+
+职责：提供 generation 绑定的全局异步注册单飞 backend。关键导出：`GlobalRecoveryBackend.submit()`、`poll()`、`in_flight`、`close()`、`GlobalRecoveryResult`。算法：future 从 submit 到 poll 消费期间始终占用 single-flight 槽；完成但未消费也拒绝重复提交；poll 校验 generation，异常转为 error，成功回传 worker value。副作用：单线程 executor 运行注入 global worker；不阻塞控制 tick。失败行为：旧 generation 返回 `stale_global_result`，worker 异常不传播到控制进程，只触发策略保持/重试。
+
+### `features/poe2/live_terrain/experimental/follow_engine/control/follow_control_process.py`（M4 接入 2026-10-07）
+
+职责：把三类恢复 backend 接入预测/融合控制 runtime。`FollowControlRuntime.apply_visual(observation, frame=None)` 保存最新帧；每次 `tick()` 先 poll memory/global，再按角色对新帧执行一次 bounded local ROI，达到门槛才异步 submit memory/global。恢复位置通过 `_apply_recovery_positions()` seed tracker/odometry 和 evidence 时间，不覆盖角色目标，也不改变动态 session。`StageTiming.local_ms` 记录局部恢复耗时。局部/内存/全局失败均只更新 policy 输入，永不因为视觉暂失配释放输出 lease。
+
+数据流：`VisualObservation`（generation/sequence/map_instance/roles）→ `FollowControlRuntime.apply_visual()` → `RecoveryPolicy.decide()` →（有新帧）`LocalRecoveryBackend.match()` 或（预测超限且 cooldown）`MemoryRecoveryBackend.submit()` → 后续 `tick()` `poll()` → `_apply_recovery_positions()` → `StraightLineRouteController.plan()` → `OutputIntent`/`FusionSnapshot`。全局路径为 `GlobalRecoveryBackend.submit()`→`poll()`，single-flight 与 control tick 解耦。
+
+风险登记：
+
+- **P1 `FollowControlRuntime._run_local_recovery`**：注入的 search 若超过控制周期会拖慢 tick；应保持 ROI matcher 有界并由 M6 计时门槛监测。
+- **P1 `MemoryRecoveryBackend.submit/read`**：底层 source 若不是线程安全的，后台读取会与旧页面 reader 竞争；接入真实 source 前必须使用独占 reader 或显式锁，并验证实例一致。
+- **P1 `GlobalRecoveryBackend.poll`**：只有 poll 才释放 single-flight 槽；调用方若长期不 poll 会保持 HOLD，但不会重复启动任务。控制 runtime 必须每 tick 轮询。
+
+### `tests/poe2_live_terrain/test_follow_engine_recovery_backends.py`（M4 implemented 2026-10-07）
+
+职责：验证 memory transform/instance、local bounded ROI、global generation/single-flight（含 completed-unpolled 竞态）。测试只使用 fake source/worker，不连接游戏、内存或 Host。
+
+### `tests/poe2_live_terrain/test_follow_engine_control_runtime.py`（M4 扩展 2026-10-07）
+
+职责：验证控制 runtime 对新帧优先 local ROI、异步 memory submit/poll、恢复后 tracker seed 和动态 session 保持；覆盖局部恢复耗时字段。失败分支断言不产生 stop。

@@ -50,5 +50,10 @@ class MemoryFastReanchor:
         elapsed_ms = (time.perf_counter() - perf_started) * 1000.0
         return MemoryReanchorResult(positions, str(expected_instance_id), elapsed_ms)
 
+    def cooldown_ready(self, *, now_ms: int | None = None) -> bool:
+        """Expose the low-frequency gate without performing a process read."""
+        started = self.clock_ms() if now_ms is None else int(now_ms)
+        return self._last_read_ms is None or started - self._last_read_ms >= self.cooldown_ms
+
 
 __all__ = ["MemoryFastReanchor", "MemoryReanchorResult"]
