@@ -96,6 +96,7 @@ class ProgramGamepadOutput:
         self._heartbeat_failures = 0
         self._last_heartbeat_ms = 0.0
         self._session_expired = False
+        self._heartbeat_mode = "command"
         self._last_command = {
             "input_vector": (0.0, 0.0),
             "input_magnitude": 0.0,
@@ -136,6 +137,7 @@ class ProgramGamepadOutput:
         )["token"]
         self.limiter.reset()
         self._session_expired = False
+        self._heartbeat_mode = "command"
         self._heartbeat_stop.clear()
         self._start_heartbeat_thread_locked()
         _LOGGER.info(
@@ -243,6 +245,8 @@ class ProgramGamepadOutput:
             if token is None:
                 return False
             started = time.perf_counter()
+            if self._heartbeat_mode == "state":
+                return self._state_heartbeat_locked(token, started)
             try:
                 response = self.client.request(
                     "program.heartbeat",
@@ -250,6 +254,13 @@ class ProgramGamepadOutput:
                 )
             except Exception as exc:
                 self._last_heartbeat_ms = (time.perf_counter() - started) * 1000.0
+                if "unknown program command" in str(exc).lower():
+                    self._heartbeat_mode = "state"
+                    _LOGGER.info(
+                        "program_output.heartbeat_fallback controller=%s mode=program.state",
+                        self.controller,
+                    )
+                    return self._state_heartbeat_locked(token, started)
                 self._heartbeat_failures += 1
                 if _is_session_expired(exc):
                     self._session_expired = True
@@ -270,6 +281,53 @@ class ProgramGamepadOutput:
                     self.controller, self._heartbeat_count, self._last_heartbeat_ms,
                 )
             return True
+
+    def _state_heartbeat_locked(self, token, started: float) -> bool:
+        """Keep the lease alive using program.state on older Host builds."""
+        command = self._last_command
+        ttl = max(20, min(self.ttl_ms, int(command.get("ttl_ms", self.ttl_ms))))
+        axes = tuple(int(value) for value in command.get("axes", (0, 0)))
+        try:
+            response = self.client.request(
+                "program.state",
+                {
+                    "controller": self.controller,
+                    "token": token,
+                    "ttlMs": ttl,
+                    "deadlineMs": host_clock_ms() + ttl,
+                    "state": {
+                        "buttons": 0,
+                        "leftTrigger": 0,
+                        "rightTrigger": 0,
+                        "leftStickX": axes[0],
+                        "leftStickY": axes[1],
+                        "rightStickX": 0,
+                        "rightStickY": 0,
+                    },
+                },
+            )
+        except Exception as exc:
+            self._last_heartbeat_ms = (time.perf_counter() - started) * 1000.0
+            self._heartbeat_failures += 1
+            if _is_session_expired(exc):
+                self._session_expired = True
+                self.token = None
+            _LOGGER.warning(
+                "program_output.state_heartbeat_failed controller=%s elapsed_ms=%.1f failures=%s error=%s",
+                self.controller, self._last_heartbeat_ms, self._heartbeat_failures, exc,
+            )
+            return False
+        self._last_heartbeat_ms = (time.perf_counter() - started) * 1000.0
+        if isinstance(response, dict) and response.get("accepted") is False:
+            self._heartbeat_failures += 1
+            return False
+        self._heartbeat_count += 1
+        if self._heartbeat_count <= 2 or self._heartbeat_count % 20 == 0:
+            _LOGGER.info(
+                "program_output.state_heartbeat controller=%s count=%s elapsed_ms=%.1f",
+                self.controller, self._heartbeat_count, self._last_heartbeat_ms,
+            )
+        return True
 
     def _start_heartbeat_thread_locked(self):
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
@@ -306,7 +364,41 @@ class ProgramGamepadOutput:
             self._heartbeat_stop.set()
             thread = self._heartbeat_thread
             self._heartbeat_thread = None
-            token, self.token = self.token, None
+            token = self.token
+            # Neutralize while the lease is still valid.  Releasing the token
+            # alone leaves the last non-zero report visible until the Host
+            # TTL expires, which is exactly the residual-controller symptom
+            # seen when the application closes.
+            last_axes = tuple(self._last_command.get("axes", (0, 0)))
+            if token is not None and any(last_axes):
+                try:
+                    ttl = max(20, int(self.ttl_ms))
+                    self.client.request(
+                        "program.state",
+                        {
+                            "controller": self.controller,
+                            "token": token,
+                            "ttlMs": ttl,
+                            "deadlineMs": host_clock_ms() + ttl,
+                            "state": {
+                                "buttons": 0,
+                                "leftTrigger": 0,
+                                "rightTrigger": 0,
+                                "leftStickX": 0,
+                                "leftStickY": 0,
+                                "rightStickX": 0,
+                                "rightStickY": 0,
+                            },
+                        },
+                    )
+                    _LOGGER.info("program_output.neutral controller=%s ttl_ms=%s previous_axes=%s", self.controller, ttl, last_axes)
+                except Exception as exc:
+                    # A revoked/expired lease cannot be neutralized through
+                    # Host; still continue to release and close locally.
+                    _LOGGER.warning("program_output.neutral_failed controller=%s error=%s", self.controller, exc)
+            elif token is not None:
+                _LOGGER.info("program_output.neutral_skipped controller=%s reason=already_zero", self.controller)
+            self.token = None
             self._session_expired = False
             self.limiter.reset()
             self._write_count = 0
@@ -324,11 +416,14 @@ class ProgramGamepadOutput:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(0.2, self.heartbeat_interval_ms / 1000.0 * 2))
         if token is not None:
-            _LOGGER.info("program_output.released controller=%s", self.controller)
-            self.client.request(
-                "program.release",
-                {"controller": self.controller, "token": token},
-            )
+            try:
+                self.client.request(
+                    "program.release",
+                    {"controller": self.controller, "token": token},
+                )
+                _LOGGER.info("program_output.released controller=%s", self.controller)
+            except Exception:
+                _LOGGER.exception("program_output.release_failed controller=%s", self.controller)
 
     def rearm(self, *, requested_at_ms=None):
         """Reacquire a lease whose Host token expired or was revoked.
@@ -400,12 +495,21 @@ class ProgramGamepadOutput:
 
     def close(self):
         """Release the lease and close this output's dedicated Host client."""
+        _LOGGER.info("program_output.close_begin controller=%s acquired=%s", self.controller, self.token is not None)
         try:
             self.stop()
         finally:
             close = getattr(self.client, "close", None)
             if callable(close):
                 close()
+            _LOGGER.info("program_output.close_finished controller=%s", self.controller)
+
+    def cancel_pending_io(self):
+        """Cancel an in-flight dedicated pipe request without waiting for _io_lock."""
+        self._heartbeat_stop.set()
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
 
 
 def _is_session_expired(exc: BaseException) -> bool:

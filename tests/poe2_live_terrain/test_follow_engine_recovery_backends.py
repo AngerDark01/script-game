@@ -72,3 +72,103 @@ def test_global_backend_does_not_resubmit_completed_unpolled_future():
     assert result is not None and result.value == ("fast",)
     assert backend.submit(token) is True
     backend.close()
+
+
+def test_global_backend_rejects_same_generation_from_different_map_instance():
+    backend = GlobalRecoveryBackend(lambda: ("map-a",))
+    token_a = GenerationClock().begin("map-a")
+    assert backend.submit(token_a) is True
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and not backend._future.done():
+        time.sleep(0.005)
+    token_b = type(token_a)(token_a.generation, "map-b")
+    try:
+        result = backend.poll(token_b)
+        assert result is not None
+        assert result.error == "stale_global_result"
+    finally:
+        backend.close()
+
+
+def test_global_backend_backs_off_after_worker_failure():
+    now = [0]
+
+    def worker():
+        raise RuntimeError("registration failed")
+
+    backend = GlobalRecoveryBackend(
+        worker,
+        failure_cooldown_ms=100,
+        max_failure_cooldown_ms=400,
+        clock_ms=lambda: now[0],
+    )
+    token = GenerationClock().begin("map-a")
+    assert backend.submit(token, now_ms=0) is True
+    deadline = time.monotonic() + 2
+    result = None
+    while time.monotonic() < deadline and result is None:
+        result = backend.poll(token)
+        time.sleep(0.005)
+    try:
+        assert result is not None and result.error.startswith("RuntimeError")
+        assert backend.cooldown_ready(now_ms=0) is False
+        assert backend.submit(token, now_ms=0) is False
+        assert backend.cooldown_ready(now_ms=100) is True
+        assert backend.submit(token, now_ms=100) is True
+    finally:
+        backend.close()
+
+
+def test_global_backend_worker_failure_uses_submit_clock_for_cooldown():
+    """A caller-provided epoch clock must survive the async exception path.
+
+    Runtime ticks use one explicit time domain.  The backend's default clock
+    is monotonic, so omitting ``now_ms`` while polling would schedule the
+    failure cooldown in a different domain and make it immediately ready.
+    """
+    now = [1_790_000_000_000]
+
+    def worker():
+        raise RuntimeError("registration failed")
+
+    backend = GlobalRecoveryBackend(
+        worker,
+        failure_cooldown_ms=500,
+        max_failure_cooldown_ms=2_000,
+        # Deliberately use a different clock to prove explicit now_ms wins.
+        clock_ms=lambda: 20_000,
+    )
+    token = GenerationClock().begin("map-a")
+    assert backend.submit(token, now_ms=now[0]) is True
+    deadline = time.monotonic() + 2
+    result = None
+    while time.monotonic() < deadline and result is None:
+        result = backend.poll(token, now_ms=now[0])
+        time.sleep(0.005)
+    try:
+        assert result is not None and result.error.startswith("RuntimeError")
+        assert backend.cooldown_ready(now_ms=now[0]) is False
+        now[0] += 500
+        assert backend.cooldown_ready(now_ms=now[0]) is True
+    finally:
+        backend.close()
+
+
+def test_global_backend_failure_poll_uses_submission_clock_when_supplied():
+    def worker():
+        raise RuntimeError("registration failed")
+
+    backend = GlobalRecoveryBackend(worker, failure_cooldown_ms=100, clock_ms=lambda: 0)
+    token = GenerationClock().begin("map-a")
+    assert backend.submit(token, now_ms=100_000) is True
+    deadline = time.monotonic() + 2
+    result = None
+    while time.monotonic() < deadline and result is None:
+        result = backend.poll(token, now_ms=100_000)
+        time.sleep(0.005)
+    try:
+        assert result is not None and result.error
+        assert backend.cooldown_ready(now_ms=100_000) is False
+        assert backend.cooldown_ready(now_ms=100_100) is True
+    finally:
+        backend.close()

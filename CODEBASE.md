@@ -1,5 +1,28 @@
 # CODEBASE
 
+## 跟随定位证据与确认契约（当前源码）
+
+### `features/poe2/live_terrain/experimental/follow_engine/diagnostic_events.py`
+
+`DiagnosticJournal.record(stage, role, reason, *, now_ms=None, **details)` 按 stage/role 保存最近原因与单调采样时间；同原因1000ms内省略，原因变化即时入有界deque，event_id单调增长。`snapshot()` 返回可pickle历史，Vision容量32、Control容量48。该类不写文件、不持有线程锁；调用方按单owner使用。
+`DiagnosticRelay.consume(stream, generation, events)` 在父进程按stream和(epoch,generation)去重，检测event_id缺口并打印diagnostic_gap，逐条写auto_modules.poe2_live_terrain.follow_engine INFO日志；该logger传播至terrain文件handler和页面UiLogHandler。历史可能溢出，不能声称无损逐帧记录。
+
+### 视觉与纠偏调用链
+
+1. `vision_process_entry` 截图→`DualObservationProcessor.process` 同帧墙体变换/双角色候选→`DualRoleAssociator.assign`：采集时间重复或间隔>1000ms清除确认历史。
+2. `MarkerAssociator.assign`：面积上限48px²；唯一身份hint对应一个高置信度远候选时分别按角色pending，下一帧位置差≤24px确认；正常gate内维持即时关联。pending/confirmed不允许facade的geometry fallback再次关联另一角色。无唯一身份hint仍有历史几何兼容路径。
+3. `_build_roles` 对confirmed_roles导出confidence=.9、uncertainty=2、velocity=0；避免把重锚偏移学为高速移动。普通角色保持原融合权重。
+4. `FollowControlRuntime.apply_visual` 通过generation/sequence门后将确认结果以visual_confirmed提交位置校正，刷新leader目标；不训练校正跳变的速度。普通视觉记录fusion创新距离、门限、接受/拒绝和后续视觉位移。
+5. `_run_local_recovery` 等待第二帧时跳过ROI，避免绕过确认；`EncodedMarkerRoiSearch`排除面积>48与明确的其他角色hint，候选按预测距离选择；同帧可见结果冲突仍拒绝。内存失败/冷却/提交与backend是否装配通过Control诊断传回。
+
+### 目标、输出与回执
+
+`update_target(role_id,target)` 仅当坐标变化时增加角色target_revision。Control tick将control_tick、target_revision、visual_sequence写入`OutputIntent`；`SnapshotOutputAdapter._record_write`保留这些字段到`ExecutionReceipt`，采样记录controller/vector/TTL/receipt sequence与transport_only。`record_execution`记录消费端证据，中立回执截断通过dataclasses.replace保留关联字段。`observed_motion`记录后续视觉位移及最近receipt，但不是游戏消费的因果证明。三个新字段有默认值，旧构造和运动参数保持契约。
+
+### 页面观测与风险
+
+`Poe2CaptureTestPage._poll_modular_follow_engine`分别隔离frame/map绘制异常，定期报preview_render_failed并继续状态/倒计时；帧号从last_parent_event读取。父Relay负责队列转发，UI仅读取，不要求本批改成子进程直连。真实有效FPS、颜色误关联率、Host消费仍待实测；48是采集图像轮廓面积阈值，缩放变化需要重新校准。GlobalRecoveryBackend类存在但当前factory未装配，日志global_configured=False不能解释成执行成功。
+
 ## 0. 当前物理布局与路径解释
 
 Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说明中仍使用部分逻辑简称；这些简称必须按下表解析，不能据此重新创建根级兼容包。
@@ -144,7 +167,7 @@ Auto Modules 采用 `src` package 布局。本文后续长期积累的算法说�
 
 ### `ui/modes/poe2_live_terrain/capture_test_page.py`（verified）
 
-职责：PoE2 数据采集与混合定位实验页；拥有唯一 hybrid experiment、唯一 hybrid QTimer 和地图 overlay，仍与正式 `Poe2LocalizationRuntime` 隔离。定位定时器使用 `localization_fps` 计算有效周期，并把旧 `sample_interval_ms` 作为兼容上限；预览使用独立 `preview_fps` 周期。双人首帧在一次内存锚点读取下采集最多三张短间隔截图，对每张独立注册后按接受状态、pair confidence、形状质量和锚点误差选最强候选。新增可选 `follow_engine_page_adapter` 迁移开关：注入时开始/轮询/目标点击/停止走模块化 `FollowEnginePort`，默认 `None` 时旧实验链保持不变，启动前清理旧 probe/target/runtime 以防双重 output lease。关键导出：`Poe2CaptureTestPage`。对外依赖：terrain service/archive、preview/recognizer、可选 hybrid factory、`Poe2CaptureMonitorWindow`、`AspectPreviewLabel`、`Poe2FollowEnginePageAdapter` 和 presenter。注意事项：没有 terrain 时开始按钮禁用；重新抓图、reset、shutdown 都先停止实验。真实视觉/内存/Host composition 尚未默认注入；模块化入口必须显式提供可用 adapter。实验页主区/侧栏、预览/地图以及三个预览格使用可拖动分隔条；窗口大小变化不改变原始截图、地图坐标或路线。
+职责：PoE2数据采集与定位实验页；hybrid实验和overlay仍与正式Poe2LocalizationRuntime隔离。定位/预览由各自fps设置决定；双人首帧默认一次截图注册。收到follow_engine_page_adapter_factory后，开始/轮询/目标/停止走模块化FollowEnginePort，主窗口已注入concrete factory；未注入的独立测试页保留旧链。启动前清理旧probe/target/runtime，避免双重output lease。关键导出Poe2CaptureTestPage；依赖terrain service/archive、preview/recognizer、monitor、page adapter与presenter。没有地图或accepted首帧时禁止启动；重新抓图/reset/shutdown先停止实验。concrete在Vision懒建截图backend、Control创建spawn-safe暖内存reader；Output actor拥有Host写入。10秒闸门期间可以创建零租约/保活，但不得写非零输入；UI持续倒计时，worker故障不被旧snapshot遮盖。拖动分隔条和窗口缩放不改变原始截图/地图坐标。
 
 `start_hybrid_localization()` 校验 snapshot/factory，停止旧 session，按当前 snapshot/config 创建 experiment，注册 listener 并启动 timer，然后立即 tick 一帧；构造或首 tick 异常会停 timer、清 experiment 并显示错误。
 
@@ -682,6 +705,7 @@ data/logs/ - 运行日志。
 data/diagnostics/ - 生成的诊断输出。
 tools/probes/ - 可复用只读/显式执行探针。
 tools/debug/ - 算法调试和数据集评估脚本。
+tools/debug/follow_lifecycle_audit_probe.py - 七项有界离线生命周期故障注入，fake 输出，无真实输入。
 tools/virtual_gamepad/ - Host 构建、启动和真实输入 opt-in 探针。
 packaging/distribution/ - 离线 payload builder、smoke check 和第三方声明。
 packaging/installer/ - 原生 launcher、Inno Setup 和测试。
@@ -1088,6 +1112,10 @@ features/poe2/live_terrain/experimental/multiplayer_follow/complexity.py - 按 r
 features/poe2/live_terrain/experimental/multiplayer_follow/motion_calibration.py - 按 role 保存有界 stick→native 递归校准模型；拒绝低位移、方向失配和无效反馈。
 features/poe2/live_terrain/experimental/multiplayer_follow/sequential_motion.py - 将命令作为预测、视觉/native 位移作为观测的序贯位置/速度更新适配器。
 features/poe2/live_terrain/experimental/multiplayer_follow/closed_loop_controller.py - 通过同一快照组合复杂度、局部控制、序贯反馈与校准；开阔/受限/未知策略切换。
+features/poe2/live_terrain/experimental/follow_engine/composition.py - 新跟随 port 的 seed 校验、共享帧环、局部视觉、可选 warm-memory 和地图路线组合入口。
+features/poe2/live_terrain/experimental/follow_engine/control/route_controller.py - 直线与可选地图感知路线控制器；目标投影、A* waypoint、路线缓存和无路 fallback。
+features/poe2/live_terrain/experimental/follow_engine/recovery/memory_recovery.py - generation 校验的异步双角色内存快速重锚 backend。
+features/poe2/live_terrain/experimental/follow_engine/control/follow_control_process.py - 视觉/预测/恢复融合、控制 tick、路线输出和 spawn worker 生命周期。
 features/poe2/live_terrain/experimental/multiplayer_follow/recovery/__init__.py - 导出跟随恢复状态、诊断和策略基础契约。
 features/poe2/live_terrain/experimental/multiplayer_follow/recovery/recovery_state.py - 定义视觉降级、局部/内存/全局重锚和动态保持状态及恢复等级。
 features/poe2/live_terrain/experimental/multiplayer_follow/recovery/recovery_diagnostics.py - 保存恢复阶段、帧新鲜度、候选数量、各阶段耗时和 generation 诊断。
@@ -1122,6 +1150,7 @@ tools/debug/poe2_movement_probe.py - 管理员短时 PoE2 前台摇杆诊断；�
 tools/debug/poe2_route_probe.py - 当前实例安全路线与 PoE2 等距输入基底的有界门后路线探针。
 tools/debug/poe2_follow_readonly_probe.py - 只读实机双人首帧/视觉跟踪/耗时探针；有限保存 terrain、帧和 JSON 报告，绝不发送输入。
 tests/poe2_live_terrain/test_multiplayer_follow_runtime.py - 跟随路线、身份、新鲜度与障碍图 0/255 门口回归。
+tests/poe2_live_terrain/test_follow_engine_composition.py - 静态编码帧、SharedFrameRing、spawn 控制、warm-memory/map-route 注入和路线缓存回归。
 tests/poe2_live_terrain/test_dual_occlusion_archive.py - 失明证据包的原图、颜色 mask、候选及代价归档回归。
 tests/test_bounded_role_observation.py - 通用角色观测的独立预算、过期和重现确认回归。
 tests/test_poe2_dual_motion_worker.py - latest-only 帧覆盖与黏性恢复 revision、异常隔离回归。
@@ -5483,8 +5512,8 @@ def shutdown(self)
 - C# Launcher path：`LauncherPaths` 以 `services/virtual_gamepad` 为 ModuleRoot，以 repository parent 为 WorkspaceRoot；`.venv`、workspace-local .NET、`src` 三者不得混用根层级。
 - C# build/test：系统默认 `dotnet` 未配置 SDK；`D:\ACloud\dotnet-sdk2\dotnet.exe` 提供 .NET 8.0.424。LAN/Host 测试用该绝对路径运行，未启动真实 Host 或设备；Launcher/Installer 仍需另行验证。
 
-`src/auto_modules/bootstrap/main.py` 拥有 Windows 启动前置：先配置 UTF-8 输出和 `data_root()/logs/runtime.log`，随后默认 `FreeConsole()`，再设置 DPI awareness、检测管理员权限；若不是管理员，则通过 `ShellExecuteW(..., "runas", pythonw.exe, ...)` 触发 UAC 重新启动根 `main.py` 并退出原进程。管理员进程获取基于 repository path 的 Win32 mutex 单实例锁，并扫描已有 `实时小地图拼接系统` 主窗口。默认 GUI 启动不保留控制台；设置 `MINIMAP_DEBUG_CONSOLE=1` 时保留控制台。真实游戏输入依赖管理员完整性级别。
-`data/logs/runtime.log` 每次进程启动都会重建；事件系统另有 `data/logs/event_runtime.log` 和 per-run logs。安装态两者位于 `AUTO_MODULES_DATA_DIR/logs`。
+`src/auto_modules/bootstrap/main.py` 只在显式 `main() -> int` 执行 Windows GUI 初始化，导入时不创建日志、请求 UAC、获取 mutex、退出进程或加载 Qt。main 的顺序是 freeze_support → UTF-8 输出 → console/DPI → 管理员检查/必要时 UAC → 单实例 mutex/已有窗口检查 → Qt 与 MainWindow imports → 创建窗口 → 返回 event loop 退出码。根 `main.py` 用 `raise SystemExit(main())` 传递退出码。默认 GUI 启动不保留控制台；`MINIMAP_DEBUG_CONSOLE=1` 保留控制台。真实游戏输入仍依赖管理员完整性级别。
+`data/logs/runtime.log` 使用追加模式，每次显式 GUI 启动写带时间与 pid 的 session header；`configure_runtime_output()` 已有打开 handle 时不重复配置。重复 GUI 被锁拒绝不会截断之前的证据；Windows spawn 子进程重导入根入口也不会写此文件。事件系统另有 `data/logs/event_runtime.log` 和 per-run logs；安装态位于 `AUTO_MODULES_DATA_DIR/logs`。
 
 `InputDriver.click(x, y)`：由 `MotionController._execute_click()` 的 `win32_mouse_event` 后端调用，执行 `SetCursorPos(x, y)` 后用 Win32 `mouse_event` 分开发送 left-down/left-up。该路径来自旧脚本 `t2.py` 的可用实现，当前是游戏点击主后端。
 
@@ -5659,6 +5688,42 @@ Each output `OcrSpan` uses `frame.coordinate_space` and has a positive-area `Bou
 `sync.share.catalog` payload：`deviceId: str`、`catalog: {deviceId,catalogRevision,catalogHash,events,definitions}`。
 
 ## 9. 风险与隐患登记
+
+### 已修复：工作台 bootstrap 导入副作用阻断 Windows spawn
+
+位置：`bootstrap/main.py` 模块级 `configure_runtime_output()`、提权分支和 `acquire_single_instance_lock()`；根 `main.py` 顶层 import；`FollowControlProcessHandle.start()` 同步 `process.start()`。
+
+完整失败链：点击跟随 → `Poe2CaptureTestPage._start_modular_follow_experiment()` → page adapter / UI adapter → `FollowEnginePort.start()` → `FollowControlProcessHandle.start()` → Windows `Popen` 建管道并发送 preparation 与带地图的 process payload → 子进程 `spawn.prepare()` 先以 `__mp_main__` 重导入根入口 → bootstrap import 重写 `runtime.log`，获取父 GUI 已持有的 mutex 失败 → `sys.exit(0)`，未读取 process payload → 父线程 `reduction.dump(process_obj, to_child)` 持续阻塞，Qt 无事件处理。实机 14:31:59 takeover、14:32:00 单实例拒绝、14:32:45 AppHangB1 与该链一致；不是已证明的 recovery 循环。
+
+当前实现：所有启动副作用与 Qt imports 已进入显式 GUI main，保留 GUI 单实例保护，worker import 只加载定义；日志追加不截断。`tests/test_bootstrap_spawn.py` 验证 import purity、GUI 初始化顺序/退出码、UAC 两个分支、重复启动日志保留、实际根入口持 GUI mutex 的 6MiB spawn 与 2093×2784 地图的 p1/p2 双向跟随离线组合。`FollowEnginePort.start()` 对 control/vision/output 分别记录 begin/completed 和耗时；启动失败清理所有已尝试的组件（包含部分启动者），清理异常记日志后继续，保留原始错误并清空 token/state。页面启动失败还回收 owner 的 shared ring，并丢弃 owned adapter 允许重建。
+
+剩余 P2 边界：`FollowControlProcessHandle.start()`/`VisionProcessHandle.start()` 仍同步序列化启动参数；本机同尺寸地图两种模式约 1.0s。当前修复移除了已证实的无限阻塞原因，尚未提供可打断任意 OS/管道卡死的通用启动超时；后续若出现新启动阻塞，优先按 stage begin/completed 定位，不得把日志完整或离线成功当作 OS 层永远不会阻塞的证明。
+
+### `tools/debug/spawn_import_exit_probe.py`
+
+职责：离线模型复现 Windows spawn 在重导入 main 时退出对父进程的影响；无项目 adapter 依赖。导出 `receive(payload: bytes) -> None` 与 `main() -> None`。`main` 校验 blocked/clean 模式，安排 2s faulthandler，构造 6MiB bytes 并调用 spawn Process.start；若返回则 join 3s、必要时终止该诊断 child，取消 stack timer并打印退出码。blocked 模式在 `__mp_main__` 导入时退出，clean 进入 receive 打印长度。blocked 故意复现挂起，必须用 subprocess.run(timeout=6) 外层 watchdog 运行；只能用于诊断，不能作为工作台启动器。修复后的实际根入口另由 `test_bootstrap_spawn.py` 和 `follow_root_entry_probe.py` 验证。
+
+### 跟随生命周期边界（2026-10-08 同步后）
+
+已修复并有回归覆盖：`SharedFrameRing` 的锁中毒、构造失败回收、未启动 Process 清理；`OutputScheduler` 的逐角色回收、全局锁外 I/O、stop claim、heartbeat/rearm 竞态和过期 execution receipt；`FollowEnginePort` 的 ready/stall 诊断、单线程有界重建、session epoch/cancel、迟到 bundle 丢弃与 stop 时后台 future 隔离；页面的异步 start/stop 及旧 composition 不复用。
+
+`SnapshotOutputAdapter` 的 arm gate 仍保留用户要求的 6 秒前台切换窗口，但会在首次 gated snapshot 时先建立中立 lease，避免 gate 结束后才支付 Host session 启动延迟；中立 lease 不生成执行回执，也不推进 command odometry。
+
+执行反馈已改为 generation/sequence/lease 驱动，arm gate、Host 写入失败和丢帧不会制造虚假位移；Host 报告仍只证明 adapter 接收，不证明游戏角色实际移动。
+
+Scheduler 的外部 I/O 现在只在角色锁内执行，全局状态二次确认 stop/epoch/port 身份；慢角色不阻塞其他角色的诊断或写入。
+
+组合使用 port 自身的 ready/stall 诊断和 bounded rebuild；不同时接入 `ProcessSupervisor`，避免两套重建器竞争同一 session。重建保留业务 session，不增加跟随任务硬时间上限。
+
+构造和部分启动失败现在由退出栈及 allocated/started 生命周期回收；ring、queues 和 worker handles 不再因异常路径遗留。
+
+剩余 P1/P2：Windows `Process.start()` 的 OS 管道序列化仍是同步系统调用，本机同尺寸离线地图约 1 秒，尚无可中断任意 OS 卡死的通用超时；真实 Host 是否消费报告、游戏实际角色响应、长跑时视觉/预测校准仍需实机验收。旧审查报告中的“未修复”描述仅保留在历史文档，不代表当前状态。
+
+### `tools/debug/follow_lifecycle_audit_probe.py`
+
+职责：在离线环境暴露跟随生命周期边界，结果是缺陷诊断，不是声称缺陷已修复的验收。关键导出：`main()`、`hold_lock(lock, ready)`、`FakeOutput`、`SCENARIOS`；对内依赖：ring、composition、process handle、scheduler、snapshot output、supervisor、纯控制 runtime。
+
+算法与数据流：CLI 无参数 → main 逐个以 `subprocess.run(timeout=15)` 启动同文件场景 → fake 或离线资源构造 → 有界故障注入 → JSON stdout。`ring_owner_death()` 启动持锁诊断 child、terminate、acquire(timeout=.2) 确认锁状态，finally 回收共享内存；`failed_composition()` 跟踪非法 memory pair 构造后的 ring 并自行 close；`failed_process_start()` 使用不可 pickle factory，记录 start/stop 两个错误并 dispose queues；`failed_output_cleanup()` 用两个 fake output 和 stop 抛错验证剩余资源；`heartbeat_contention()` 用事件与 timer 释放 fake heartbeat，测 diagnostics 等锁；`supervisor_start_failure()` 用 fake start 抛错记录 token/handle；`unexecuted_command_prediction()` 纯 runtime + 6s gate、3s 缺帧，比较位置预测与零输出。所有场景回收自身资源；父 watchdog 超时只报告该诊断子进程失败。副作用仅离线进程/锁/共享内存/fake 调用记录/stdout，不连接 Host/游戏/LAN，不读内存、不发真实输入。只能显式执行，不供 GUI/import 自动调用。
 FollowProbe lifecycle invariant: arm occurs only after runtime, role, and output construction succeeds; invalid follow starts leave the target source disarmed.
 审计补充：恢复入口统一接受两类安全帧：完整 `tracking`，或 `degraded` 且 `diagnostics.wall_trusted=True`、所需角色仍有 bounded `players` 估计。实时跟随恢复使用 300ms 新鲜度门；超龄帧只等待下一帧并保留 recovery context，不消费上下文。双人同目标与程序移动恢复使用同一状态判定，避免 marker 短暂重叠造成恢复会话悬挂。
 P1 - `Poe2CaptureTestPage.run_dual_first_frame_experiment()` 首帧搜索和 oriented map 构造仍在 GUI 线程；实时双人帧已迁移到 `Poe2DualMotionWorker`，但启动/恢复时的大范围注册仍可能短暂阻塞。触发条件：地图很大、双人近距离首帧需要多候选搜索。建议：后续把首帧/恢复注册也搬到带 generation 的 worker，且保持一次 revision 一次内存读取。
@@ -6531,6 +6596,29 @@ ReplayFrame → HeadlessExperiment.ingest(captured_at_ms, payload)
   → EventRecorder DiagnosticEvent sequence
 ```
 
+### 当前模块化 PoE2 跟随数据流（verified 2026-10-08）
+
+```
+accepted dual first-frame result
+  → capture_test_page._ensure_modular_follow_adapter()
+  → build_follow_seed_from_dual_result()
+  → build_poe2_follow_engine_page_adapter()
+  → SpawnSafePoe2MonitorCapture（vision 子进程内懒创建屏幕 backend）
+  → EncodedImageCapture → VisionProcess → DualObservationProcessor
+  → SharedFrameRing（编码帧）
+  → FollowEnginePort.poll()
+  → FollowControlProcessHandle → FollowControlRuntime
+  → local ROI / prediction / warm memory（可选）/ MapAwareRouteController
+  → FusionSnapshot / OutputIntent
+  → Poe2FollowEnginePageAdapter._refresh_live_targets()
+       （leader 的最新 native 位置 → follower target）
+  → SnapshotOutputAdapter（默认 6000ms 输出闸门）
+  → OutputScheduler（write + heartbeat + session rearm）
+  → parent-side program_output_factory → ProgramGamepadOutput → Host
+```
+
+启动阶段先校验首帧和角色配置，再创建 control/vision worker 和 heartbeat scheduler；闸门期间可 prime 零输入 Host lease，禁止非零移动输入。`p1_leads` 的受控 roles 仅 P2/controller2，目标来自 P1；`p2_leads` 仅 P1/controller1，目标来自 P2。每个启动阶段都记录 begin/completed/elapsed_ms；部分启动失败进行逆序资源回收并保留首错，页面 owner 关闭 ring、清空 owned adapter。正常异常只 neutralize/degrade/recover，显式停止才终结动态 session；页面 timer 只 drain latest-only 结果，不等待 worker 或 memory/global future。同步 spawn 启动本身仍有约 1s 参数传输开销，不能与非阻塞 poll 混淆。
+
 ### 当前风险登记（verified/partial）
 
 - **P1 `capture_test_page.start_follow_experiment` / `_tick_follow_experiment_impl`**：页面仍直接编排 runtime、窗口前台校验和输出，尚未完全收口到 controller/adapter；触发条件是 UI 页面运行而不是 headless composition。建议 C1 继续把 tick 编排提取为无 Qt controller。
@@ -6538,7 +6626,7 @@ ReplayFrame → HeadlessExperiment.ingest(captured_at_ms, payload)
 - **P2 `HeadlessExperiment.ingest`**：当前只验证生命周期和诊断，不执行真实定位/路径算法；它用于确定性状态回放，不能作为实机成功证明。
 ## Current recovery-chain self-check
 
-The newly added recovery package is currently a tested policy layer, not yet the sole live runtime implementation. `capture_test_page.py` bypasses the legacy retry controller for live retry scheduling, but `_request_live_follow_reanchor()` still has an old global fallback when no local matcher is available. The new coordinator, real local ROI matcher, and warm memory reader must be wired before live-follow acceptance; static/legacy experiments remain intentionally separate.
+The legacy retry controller remains intentionally separate from the modular port. For the concrete PoE2 modular entry, `capture_test_page.py` delegates capture, observation, prediction, local ROI, warm-memory reanchor, map-aware routing and output ownership to the new composition; `_request_live_follow_reanchor()` is not called by that path. Static/legacy experiments remain available only when no modular adapter is injected, so the two chains cannot silently share a minimap worker or output lease.
 
 ### Recovery backend boundary (current)
 
@@ -6554,6 +6642,16 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 职责：定义 Vision/Prediction/Fusion/Output 之间的不可变消息，以及异步 worker 的 generation、sequence、map instance 门控。DTO 构造时拒绝 NaN、越界置信度、非法帧元数据和角色键错配；`SequenceGate` 拒绝重复、逆序、旧代际和地图不一致结果，防止迟退 worker 覆盖新会话。`StageTiming` 统一记录 capture/wall/marker/association/local/prediction/recovery/memory/global/fusion/route/output/heartbeat/UI/total 阶段毫秒数，所有值在构造时要求有限且非负。
 
+### `features/poe2/live_terrain/experimental/follow_engine/composition.py`（M5.3 + warm-memory/map-route composition 2026-10-08）
+
+职责：提供新跟随 port 的显式、spawn-safe 组合边界。通用 builder 本身不直接打开设备；PoE2 页面工厂在其上层注入真实截图、暖内存和 Host output adapter。关键导出：`FollowSeedBundle`、`SpawnSafeFollowRuntimeFactory`、`FollowEngineComposition`、`build_follow_engine_composition()`。算法：1）`FollowSeedBundle` 校验地图实例、角色/控制器、native 与 screen seed 覆盖、有限坐标和候选容量；2）builder 以 seed 构造 `DualObservationProcessor`、`EncodedMarkerRoiSearch` 和同一 `SharedFrameRing`，并拒绝带 `map_instance` 属性但与 seed 不一致的路线控制器；3）通过 `SpawnSafeFollowRuntimeFactory` 在控制子进程内部按需创建局部恢复、可选 `MemoryRecoveryBackend` 和可选地图路线控制器；4）warm memory 必须同时提供 source 或 spawn-safe `memory_source_factory` 与 `memory_transform`，由 `MemoryFastReanchor` 校验实例、角色数量并复用首帧变换，且受 cooldown/single-flight 限制；5）地图路由使用显式注入的 `MapAwareRouteController`，调用 `WalkableTargetProjector` 后再调用 `PathFinder`，无路由时退回有界直线脉冲；6）通过 `FollowEnginePort` 统一启动/轮询/停止，停止时由组合 owner 幂等 unlink ring。副作用：builder 仅创建共享内存、spawn worker 和注入的 output adapter；PoE2 页面上层的 concrete factory 才会懒创建截图 backend、内存 reader 和 Host client。失败行为：seed/slot/内存参数非法在启动前抛 `ValueError`；memory 读取异常转成结构化 recovery error；路径规划失败不抛 stop，worker/adapter 启动失败由 `FollowEnginePort.start()` 回滚。
+
+### `features/poe2/live_terrain/experimental/follow_engine/control/route_controller.py`（legacy motion adapter 2026-10-09）
+
+`LegacyDynamicFollowRouteController` 是进程安全边界适配器：不复制或覆盖移动公式，不固定 80ms/1.0 脉冲；它把 fused position、target、timestamp 和 source 转换为 `PositionSample`，委托现有 `multiplayer_follow.runtime.SimulatedFollowRuntime` 决定 vector、duration、连续跟随 hold、路线缓存、进度/接触/门口恢复，再转换回 `RouteDecision`。因此 Control 重构只替换定位证据，旧移动策略仍由 legacy runtime 持有。`MapAwareRouteController` 与 `StraightLineRouteController` 保留用于兼容和离线注入。
+
+职责：定义路线控制器协议、旧直线控制器和可选地图感知控制器。关键导出：`RouteController`、`RouteDecision`、`StraightLineRouteController`、`MapAwareRouteController`。`MapAwareRouteController.plan()` 先计算到达半径，再把目标投影到局部可行走点，按目标位移、当前位置推进和走廊偏离阈值决定是否复用缓存路线，必要时调用共享 `PathFinder.find_path()`，沿有限 lookahead waypoint 产生归一化摇杆向量；A* 无路时缓存单点 fallback，仍返回有界 direct-steering，不生成中止/停止语义。`corrective_vector()` 对预测到达但未被视觉确认的状态产生衰减脉冲。对外依赖：`core.routing.pathfinder.PathFinder`、`multiplayer_follow.target_projection.WalkableTargetProjector`、NumPy；不访问 Qt、内存或 Host。风险：地图快照必须与首帧坐标系一致，且控制器/地图对象必须可被 Windows spawn pickle；concrete PoE2 页面已显式注入该控制器，未提供地图时才保留直线 fallback。
+
 ### `features/poe2/live_terrain/experimental/follow_engine/tracking/`（implemented 2026-10-07）
 
 职责：纯预测和视觉融合。`command_odometry.py` 积分手柄脉冲并累积不确定度；`velocity_calibrator.py` 从可信位置差校准速度；`position_fusion.py` 提供预测、sigma 融合、创新门控和不确定度增长；`tracking_state.py` 保存通用角色状态，不包含 P1/P2 业务规则。
@@ -6562,19 +6660,49 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 职责：纯 L0–L3 恢复策略。新帧先走局部 ROI，短时失配继续预测，达到连续失配/不确定度门槛才允许内存，内存失败后才允许全局异步；Host session 失效只返回 rearm；临时异常保持动态跟随 session，只有用户停止返回 stop。
 
-### `features/poe2/live_terrain/experimental/follow_engine/latest_frame_buffer.py`、`shared_frame_ring.py`（implemented 2026-10-07）
+### `features/poe2/live_terrain/experimental/follow_engine/latest_frame_buffer.py`、`shared_frame_ring.py`（implemented 2026-10-08）
 
-职责：提供进程内和共享内存的 bounded latest-only 帧传输。消费者按最高 sequence 取帧，旧帧直接丢弃；共享 ring 以固定 slot 保存 bytes、generation、sequence 和 timestamp，并把 map instance 固定在 ring spec 中。
+职责：提供进程内和跨 spawn 进程的 bounded latest-only 帧传输。`LatestFrameBuffer` 只在当前进程保存最新值；`SharedFrameRing` 以固定 slot 保存编码 bytes、generation、sequence、timestamp 和 map instance，并用共享元数据锁保证发布/读取不会读到半写 payload。关键导出：`SharedFrameRing.publish()`、`read()`、`read_latest()`、`clear()`、`rebind_session()`、`close()`。`publish()` 校验正 generation、单调 sequence、实例一致和 slot 大小；`read(sequence)` 优先精确取帧，`read_latest(after_sequence)` 提供独立最新帧读取能力；当前Control ROI不用它替代exact slot，以免混用帧变换；`rebind_session()` 清空旧槽并换实例，避免新会话 sequence 从 1 开始时被旧帧阻塞；`close(unlink=True)` 可幂等关闭并延迟释放共享内存名称。副作用：创建/映射 `multiprocessing.shared_memory.SharedMemory`，不访问 Qt、游戏内存或 Host。
 
-### `features/poe2/live_terrain/experimental/follow_engine/vision/`（M2.1/M2.2 implemented 2026-10-07）
+### `features/poe2/live_terrain/experimental/follow_engine/vision/`（M2.1–M2.3 implemented 2026-10-08）
 
-职责：定义 capture/processor adapter 和 spawn-safe `VisionProcessHandle`。视觉子进程只拥有 capture 与 processor，发布带 generation/sequence 的 `VisualObservation`，异常包含 traceback，停止有界 join/terminate；不导入 Qt、内存 reader、路径规划或手柄输出。
+职责：定义 capture/processor adapter 和 spawn-safe `VisionProcessHandle`。视觉子进程只拥有 capture、processor 和可选 `SharedFrameRing`；启用 ring 时发布事件只携带 observation header/sequence，编码 payload 写入共享 slot，控制侧按序列读取，环不可用时才回退传递 `CapturedFrame`。异常包含 traceback，错误事件不会被 latest-only stopped marker 覆盖，停止有界 join/terminate；重复 sequence 也遵守统一采样节拍；stop 会尝试关闭子进程资源，handle start 会清空事件、重置 ring 会话并调用可选 `rebind_session()` 重置会话头；`EncodedImageCapture` 把注入的 BGR provider 在 capture 进程内编码成紧凑 bytes，避免跨进程传 NumPy；不导入 Qt、内存 reader、路径规划或手柄输出。
 
 `vision/wall_processor.py` 以统一的 frame displacement 估计墙体位移并拒绝尺寸/质量异常；`vision/marker_processor.py` 复用 PoE2 HSV profile 候选提取并记录候选耗时；`vision/dual_association.py` 在已有运动关联器上增加“部分匹配时无颜色几何回退”；`vision/local_roi_matcher.py` 只负责预测点附近的 80/140/220 半径搜索契约，失败不产生停止副作用。
 
-### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-07）
+### `features/poe2/live_terrain/experimental/follow_engine/vision/dual_observation_processor.py`（M2.3 implemented 2026-10-07）
 
-`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；handle 支持可 pickling 的 `runtime_factory(token, roles)`，因此页面/port 可以显式注入 warm memory、局部搜索和全局恢复组合，未注入时仍使用无副作用默认 runtime。runtime factory/token 构造也在子进程结构化错误边界内，异常会发布包含 traceback 的 `ControlProcessEvent("error")`，且不会被同一 turn 的 stopped marker 覆盖。`route_controller.py` 提供可替换路线接口和 `FOLLOW_HOLD` 中立保持；`output_scheduler.py` 把 output write、heartbeat、continuous lease 和 session rearm 分开，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
+职责：把单个 `CapturedFrame` 的编码图像在视觉进程内解码，依次生成 wall mask、墙体位移、颜色候选和双角色关联，并输出只含 native/reference 坐标的 `VisualObservation`。关键导出：`DualObservationProcessor.process(frame)`、`decode_image_payload(payload)`、`default_wall_extractor(image)`、`rebind_session(generation,map_instance)`。算法：1）严格校验 generation/map/单调 sequence；2）解码 PNG/JPEG bytes，调用可注入 wall extractor；3）复用 `process_wall()` 和 `extract_markers()`，结合已有 screen/native 首帧 transform 更新 translation；4）调用 `DualRoleAssociator.assign()`，把每个候选映射到 native 坐标并计算速度、置信度、不确定度；5）缺失候选保留上次可信 native 位置并输出 `PARTIAL`/`NONE`，永不产生 stop；6）观察 DTO 同时携带当前墙体校正后的 opaque `SimilarityTransform2D`，供 worker rebuild 交接；7）会话重绑清空墙体、时间、序列和速度历史但保留当前构造时的 seed/transform。对外依赖：`CapturedFrame`、`VisualObservation` 契约、hybrid similarity transform、旧 multiplayer marker profile/association。副作用：仅持有本处理器实例的上一帧 wall 和角色状态；不访问 Qt、内存、Host、路径规划或全局恢复。失败行为：坏 payload、wall extractor 形状错误、代际/地图不一致或重复帧抛 `ValueError`，交由 VisionProcess 的结构化 error 边界处理；短时视觉失配正常返回降级观察。
+
+### `features/poe2/live_terrain/experimental/follow_engine/vision/capture_adapter.py`（M2.3 implemented 2026-10-07）
+
+职责：定义 `CapturedFrame`、capture/processor 协议和 `EncodedImageCapture`。后者接收 spawn-safe 的 BGR image provider，在 capture 侧编码为 PNG/JPEG bytes，维护 generation/map/sequence 与可注入时钟；空帧不推进 sequence；`rebind_session()` 可在 handle 重用时重置 generation/map/sequence。对外依赖：NumPy/OpenCV；不拥有截图 backend，不导入 Qt 或游戏内存。失败行为：provider 返回空/错误通道或编码失败时抛出结构化异常，由 VisionProcess 捕获并保留 traceback；`close()` 仅转发 provider 的可选 close。
+
+### `features/poe2/live_terrain/experimental/follow_engine/vision/local_roi_search.py`（M2.5 implemented 2026-10-08）
+
+逐帧绑定契约：`bind_observation(self, observation: VisualObservation) -> None` 由 `FollowControlRuntime.apply_visual()` 在序号门接受后调用；有transform时替换当前变换，并清空解码缓存。半径扩大和同帧下一角色共享随后解码结果；legacy DTO没有transform时保留注入值。`rebind_session(self, *, transform: SimilarityTransform2D | None = None) -> None` 用于生命周期换代。两者不发送输入、不修改角色状态。Control `_resolve_frame(self, observation: VisualObservation, frame: object | None) -> object | None` 必须返回同generation/map/sequence/captured_at的图像，覆盖后返回None，不拿另一帧套旧变换。
+
+职责：把共享环/编码帧转换为 bounded local marker search，供 `LocalRecoveryBackend` 通过显式 callable 注入。关键导出：`EncodedMarkerRoiSearch` 及其 `__call__(frame,predicted_position,radius)`。算法：1）读取 `CapturedFrame`/`SharedFrameRecord` 的 encoded payload 并缓存同一帧解码结果；2）用当前 handover/视觉 transform 将 native 预测点逆变换为截图坐标，把 native 半径按比例换算为局部 ROI 并裁剪；3）调用 `extract_markers()` 复用颜色 profile，按候选距离、检测 confidence 和 soft identity hint 计算分数；4）把最佳局部候选用同一 transform 变回 native，返回 `RoiMatch(valid,position,score,radius,reason,processing_ms)`；5）worker rebuild 不复用旧 screen anchor，而由最新 native seed 和当前 transform 重新反算。副作用：仅解码内存 bytes 和执行 OpenCV/候选提取；不读游戏内存、不访问 Qt、不输出手柄。失败行为：非法 frame/radius/transform 抛 `TypeError/ValueError`，ROI 无候选返回无效 `RoiMatch`，由恢复策略继续预测或升级。
+
+### `tests/poe2_live_terrain/test_follow_engine_dual_observation_processor.py`（M2.3/M2.4 coverage 2026-10-07）
+
+职责：用编码 PNG 离线夹具验证组合器在进程内输出双角色 native observation、墙体平移、标记缺失容错、严格代际/地图/序列门控和坏 payload；另用 Windows spawn-safe `VisionProcessHandle` 验证真实组合器跨进程发布 observation。测试不连接游戏、不读取内存、不发送输入。
+
+### `tests/poe2_live_terrain/test_follow_engine_capture_adapter.py`（M2.3 coverage 2026-10-07）
+
+职责：验证 `EncodedImageCapture` 对 BGR provider 的空帧、通道/尺寸、编码格式和 sequence 语义；通过 `decode_image_payload` 检查编码后的图像可被视觉组合器重新读取。测试只使用内存 NumPy 图像。
+
+### `tests/poe2_live_terrain/test_follow_engine_vision_processors.py`（M2.5 coverage 2026-10-08）
+
+职责：除墙体、marker、双人关联和 bounded ROI matcher 回归外，验证 `EncodedMarkerRoiSearch` 能从编码帧提取 ROI 内人物标记并映射回 native，且 ROI 外候选返回无效结果；不连接游戏或真实输入。
+
+### `tests/poe2_live_terrain/test_follow_engine_vision_process.py`（M2.2/M2.4 coverage 2026-10-08）
+
+职责：验证 VisionProcess latest-only observation 发布、显式 stop、worker capture 异常的结构化 error/traceback 保留，以及启用 `SharedFrameRing` 时 event 不携带完整 payload、控制侧可按 sequence 读回 slot；异常后不再发布会覆盖 error 的 stopped marker，父侧可区分失败与用户停止。
+
+### `features/poe2/live_terrain/experimental/follow_engine/control/`（M3.1–M3.3 implemented 2026-10-08）
+
+`follow_control_process.py` 的 `FollowControlRuntime` 在纯 Python 中融合最新视觉和 command odometry，只有 fusion 接受的视觉序列才能刷新角色健康时间；预测位置进入到达半径但没有新视觉确认时，会调用路线控制器的 taper corrective vector 继续输出，而不是提前中立。动态跟随的 observation-to-target policy 也在这个进程内执行：source 角色的 accepted visual/fused native position 在同一次 `apply_visual()` 中写入所有 follower target，初始 target 在 runtime 构造时预置；因此正式组合不依赖 UI 的 snapshot-to-target 回写；visual 事件本身仍由 parent poll 转发，也不会让旧 target 覆盖新帧。启用 `SharedFrameRing` 时，`apply_visual()` 先按观察序列精确读取对应 slot，若已被覆盖则跳过本次 ROI，等待匹配的新 observation；因此局部恢复不再依赖 visual command 携带完整图像。`FollowControlProcessHandle` 通过 Windows spawn 运行它并只发布最新 `FusionSnapshot`；发送的 visual/target/recovery/stop 命令带 generation/sequence，子进程丢弃迟到/重复命令，非法命令发布 `command_error` 而不直接杀 worker；队列满时有界丢弃且不把 `queue.Full` 传播到 UI。handle 启动时先 rebind 共享环再 spawn，适配 `FollowEnginePort` 的 control→vision 启动顺序，确保地图实例变化进入子进程 spec。handle 支持可 pickling 的 `runtime_factory(token, roles)`，因此页面/port 可以显式注入 warm memory、局部搜索和全局恢复组合，未注入时仍使用无副作用默认 runtime；runtime stop/close 会关闭 memory/global recovery backend 和子进程持有的 ring 映射。runtime factory/token 构造也在子进程结构化错误边界内，异常会发布包含 traceback 的 `ControlProcessEvent("error")`，且不会被同一 turn 的 stopped marker 覆盖。每个 Control tick 的局部 ROI 恢复采用 role 轮转且最多一个 role 进入 matcher；支持预算的 `MapAwareRouteController` 每 tick 最多一次 A* replan，其他 role 使用缓存走廊或 bounded direct pulse，避免双人异常把控制周期串行拉长。`route_controller.py` 提供可替换路线接口、`FOLLOW_HOLD` 中立保持和半径内未确认到达时的衰减校正脉冲；`output_scheduler.py` 以 session epoch 隔离旧 apply/heartbeat/rearm，外部 I/O 只在角色锁内执行，force stop 先 claim 全部角色，并通过 `prime_neutral()` 在 arm gate 内建立中立 lease；heartbeat 返回 false 时尝试 rearm，暂不绑定真实 Host。控制快照的 `StageTiming` 还记录 prediction/recovery/memory/global/route 分段耗时；实际 Host write/heartbeat 时间由 scheduler 自己的 diagnostics 负责。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/__init__.py`（M4 implemented 2026-10-07）
 
@@ -6590,29 +6718,86 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/recovery/global_recovery.py`（M4 implemented 2026-10-07）
 
-职责：提供 generation 绑定的全局异步注册单飞 backend。关键导出：`GlobalRecoveryBackend.submit()`、`poll()`、`in_flight`、`close()`、`GlobalRecoveryResult`。算法：future 从 submit 到 poll 消费期间始终占用 single-flight 槽；完成但未消费也拒绝重复提交；poll 校验 generation，异常转为 error，成功回传 worker value。副作用：单线程 executor 运行注入 global worker；不阻塞控制 tick。失败行为：旧 generation 返回 `stale_global_result`，worker 异常不传播到控制进程，只触发策略保持/重试。
+职责：提供 generation/map-instance 绑定的全局异步注册单飞 backend。关键导出：`GlobalRecoveryBackend.submit()`、`poll()`、`cooldown_ready()`、`record_failure()`、`in_flight`、`close()`、`GlobalRecoveryResult`。算法：1）future 从 submit 到 poll 消费期间始终占用 single-flight 槽；2）提交与失败轮次使用同一 control tick 时间域，失败采用有上限指数退避；3）poll 同时校验 generation 和 map instance，拒绝旧地图结果；4）成功清除退避，异常转为 error 并安排下一次允许提交时间。副作用：单线程 executor 运行注入 global worker；不阻塞控制 tick。失败行为：旧 generation/map 返回 `stale_global_result`，worker 异常不传播到控制进程，只触发策略保持/冷却后重试。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/control/follow_control_process.py`（M4 接入 2026-10-07）
 
-职责：把三类恢复 backend 接入预测/融合控制 runtime。`FollowControlRuntime.apply_visual(observation, frame=None)` 保存最新帧；每次 `tick()` 先 poll memory/global，再按角色对新帧执行一次 bounded local ROI，达到门槛才异步 submit memory/global。恢复位置通过 `_apply_recovery_positions()` seed tracker/odometry 和 evidence 时间，不覆盖角色目标，也不改变动态 session。`StageTiming.local_ms` 记录局部恢复耗时。局部/内存/全局失败均只更新 policy 输入，永不因为视觉暂失配释放输出 lease。
+恢复与目标契约：`_refresh_live_target(self, source: str, position: tuple[float, float]) -> None` 先判断source是否为当前leader，再更新其配置follower目标，跳过source自身；仅由accepted视觉和`_apply_recovery_positions()`调用。不修改静态点击目标，不让follower自身恢复覆盖leader目标。恢复发生在本tick后半且follower已规划时，下一tick使用新目标。风险：当前concrete factory没有注入GlobalRecoveryBackend；global pending不表示任务已执行，不能依靠状态名断言完整全局恢复已接入。
 
-数据流：`VisualObservation`（generation/sequence/map_instance/roles）→ `FollowControlRuntime.apply_visual()` → `RecoveryPolicy.decide()` →（有新帧）`LocalRecoveryBackend.match()` 或（预测超限且 cooldown）`MemoryRecoveryBackend.submit()` → 后续 `tick()` `poll()` → `_apply_recovery_positions()` → `StraightLineRouteController.plan()` → `OutputIntent`/`FusionSnapshot`。全局路径为 `GlobalRecoveryBackend.submit()`→`poll()`，single-flight 与 control tick 解耦。
+职责：把三类恢复 backend 接入预测/融合控制 runtime。`FollowControlRuntime.apply_visual(observation, frame=None)` 保存最新帧；每次 `tick()` 先 poll memory/global，再按 role 轮转、每 tick 最多一次对新帧执行 bounded local ROI，达到门槛才异步 submit memory/global。动态跟随的 source/target policy 在同一次 `apply_visual()` 内使用 accepted visual/fused source position 更新 follower target，初始 target 在构造时预置；不再等待父 UI relay。恢复位置通过 `_apply_recovery_positions()` seed tracker/odometry 和 evidence 时间，若恢复角色是 live source 则经 `_refresh_live_target()` 刷新 follower target，其他角色不改目标，也不改变连续 session。支持预算的 `MapAwareRouteController` 每 tick 最多一次 A* replan，其他 role 使用缓存走廊或 direct fallback。`StageTiming.local_ms` 和 `route_ms` 记录对应耗时。局部/内存/全局失败均只更新 policy 输入，永不因为视觉暂失配释放输出 lease。
+
+数据流：VisionProcess `CapturedFrame`（generation/sequence/payload）→（启用 ring）`SharedFrameRing.publish(SharedFrameRecord)`，事件只保留 `frame_in_ring=True` 与 observation header；`FollowEnginePort.poll()` → `FollowControlProcessHandle.send_visual(observation)` → `FollowControlRuntime.apply_visual()` 按 observation sequence/captured_at 从 ring `read()` 精确得到局部恢复帧，并通过 search.bind_observation 同步该帧 transform → accepted source position 同 tick 更新 follower target → `RecoveryPolicy.decide()` →（新帧且轮到该 role）`LocalRecoveryBackend.match(frame, predicted_position, search)` 或（预测超限且 cooldown）`MemoryRecoveryBackend.submit()` → 后续 `tick()` `poll()` → `_apply_recovery_positions()` → `RouteController.plan()`（默认 `StraightLineRouteController`，显式地图组合使用 `MapAwareRouteController` 的目标投影+A*+fallback；每 tick 单次允许重规划）/`corrective_vector()` → `OutputIntent`/`FusionSnapshot`。全局路径为 `GlobalRecoveryBackend.submit()`→`poll()`，single-flight 与 control tick 解耦。未配置 ring 时保留旧的 `VisionProcessEvent.frame`/control command payload fallback，离线 fake adapter 仍可只传 observation。
 
 风险登记：
 
-- **P1 `FollowControlRuntime._run_local_recovery`**：注入的 search 若超过控制周期会拖慢 tick；应保持 ROI matcher 有界并由 M6 计时门槛监测。
+- **已修复（A）`FollowControlRuntime.apply_visual/tick`**：融合拒绝候选不再刷新 accepted visual sequence；预测状态进入到达半径但没有新视觉确认时不再提前中立。仍需在真实动态跟随回放中验证速度校准和视觉恢复闭环。
+- **已修复（B）`FollowControlProcessHandle._send/control_process_entry`**：visual/target/priority 各自维护 generation/sequence，target 按 role 合并且不被回执挤掉；非法命令发布 `command_error` 而不直接杀进程，队列饱和不向 UI 抛 `queue.Full`。正式 started path 的 stop/recovery/execution 使用独立 priority 通道。
+- **已修复（B）`VisionProcessHandle.start/vision_process_entry`**：重复序列遵守采样节拍，重启前清空事件并调用可选 session rebind，子进程 finally 尝试关闭 capture/processor；真实 MSS provider 的 close 幂等性仍需实机确认。
+- **已修复（B）`FollowEnginePort.poll`**：vision/control worker 状态写入 diagnostics；control error/stopped 不再重复提交旧 snapshot，vision error 仍保留预测/恢复路径。剩余风险是尚未由 supervisor 自动重启或接入独立可靠 stop 通道。
+- **已修复（P1）`VisionProcessHandle` / `FollowControlRuntime._resolve_frame`**：启用 `SharedFrameRing` 时完整 payload 不再经过 vision→control queue；事件只携带 observation 和 ring 标志，控制侧按 sequence 精确读取，覆盖后跳过本次 ROI，不把新帧套用旧变换。仍需在真实 PoE2 provider 上测量 slot 大小和共享内存回收。
+- **已缓解（P1）`FollowControlRuntime.tick/_run_local_recovery`**：双人同时失配时每个 tick 最多一个 role 进入 bounded ROI matcher，并以轮转推进；单次 matcher 仍可能超过 cadence，必须结合 `StageTiming.local_ms` 和实机日志继续测量。
 - **P1 `MemoryRecoveryBackend.submit/read`**：底层 source 若不是线程安全的，后台读取会与旧页面 reader 竞争；接入真实 source 前必须使用独占 reader 或显式锁，并验证实例一致。
-- **P1 `GlobalRecoveryBackend.poll`**：只有 poll 才释放 single-flight 槽；调用方若长期不 poll 会保持 HOLD，但不会重复启动任务。控制 runtime 必须每 tick 轮询。
-- **P1 `Poe2CaptureTestPage._start_modular_follow_experiment`**：只有注入 adapter 时才启用模块化入口，且 adapter 内部必须组合真实 capture/processor/memory/Host；若调用方误把 fake 或不可 pickling 的 factory 用于实机，启动会失败但不会自动切换旧链路。建议在 R1 前增加 composition contract 检查和显式 opt-in 配置。
-- **P1 `FollowControlProcessHandle.start`**：`runtime_factory` 运行于 Windows spawn 子进程，闭包、lambda 或持有 Qt/句柄的对象无法 pickle。触发时子进程可能在启动阶段报 pickle/TypeError；建议只传模块级函数或 spawn-safe callable，并在 composition 构造时预检。
+- **P2 `GlobalRecoveryBackend.poll`**：只有 poll 才释放 single-flight 槽；调用方若长期不 poll 会保持 HOLD，但不会重复启动任务。控制 runtime 必须每 tick 轮询。
+- **P1 `Poe2CaptureTestPage._start_modular_follow_experiment`**：模块化入口要求页面先有 accepted 双人首帧、地图实例和 concrete adapter；主窗口已注入真实 PoE2 factory，测试夹具仍可注入 fake。若外部调用方传入不可 pickling 的 capture/memory factory，启动会失败但不会自动切换旧链路。R1 前必须保留显式 opt-in 和启动失败日志，不得混跑旧 runtime。
+- **P1 `FollowControlProcessHandle.start`**：`runtime_factory` 运行于 Windows spawn 子进程，闭包、lambda 或持有 Qt/句柄的对象无法 pickle。当前 concrete builder 只把 spawn-safe `Poe2DualPlayerPositionSource` factory 和纯数据 transform 传入控制进程；Host output factory 留在父页面，可在 6 秒闸门内创建零输入租约，闸门后才允许移动。若未来把设备句柄放进 runtime factory，启动会报 pickle/TypeError，必须保持当前边界。
+
+### 全面审查风险登记（当前有效）
+
+#### 2026-10-09 第二轮人工审查修订
+
+- `FollowControlProcessHandle` 的正式 started path 已经是 visual/target/priority 三通道；各通道独立序号。target 父侧按角色合并，control 每 tick 有限消费，视觉批次保留首帧和最新帧。旧的“按全局 sequence 合并”和“target 与 priority 共用”描述已失效。
+- `FollowControlRuntime.apply_visual()` 仅在 fusion accepted 后刷新 accepted anchor、evidence 和 `VelocityCalibrator`；拒绝候选不会污染速度，也不会与 tick 重复增加 miss。
+- `FollowEnginePort` 在正式组合中标记 `control_owns_live_targets=True`，不再由 engine/UI relay 写动态 target；Control runtime 只使用同一视觉帧中已接受的 source 位置更新 follower，page snapshot relay 只保留给 legacy/fake adapter。
+- `FollowControlRuntime.tick()` 每周期只允许一个 role 做同步 local ROI，轮转选择下一个缺失角色；`MapAwareRouteController.plan(..., allow_replan=...)` 每周期最多一次 A* 重规划，其余 role 复用缓存或 direct fallback，避免双人异常时控制输出被恢复/规划串行阻塞。
+- `DualObservationProcessor` 重新出现角色的速度时间基改为该角色自己的 last-visible timestamp；native velocity 到 screen association 使用逆线性变换。
+- `AsyncSnapshotOutput` 每次 actor start 创建独立 watchdog stop event；output restart 与显式 stop 共享 restart lock 并检查 session epoch。
+
+- **已修复（P1）`AsyncSnapshotOutput._run` / `FollowEnginePort._refresh_output_health`**：actor 启动异常通过 `state=failed` 和结构化 failure 传播；连续跟随会保留 session、neutralize 并按退避重启 output。显式 stop 才清理 worker/output/token/clock。
+- **已修复（P1）`OutputScheduler.apply/_heartbeat_loop/_stop_all`**：外部 I/O 在全局锁外、角色锁内执行；stop claim、armed/stopping 复核和 heartbeat stale-port 检查阻止 stop 后幽灵 start/write/rearm；多角色慢 I/O 不阻塞诊断。
+- **已修复（P1）`Poe2CaptureTestPage._on_follow_lifecycle_finished`**：异步启动失败清空 owned adapter/composition 引用，下一次启动不会复用已停止代际。
+- **已修复（P1）`RecoveryPolicy.decide` / `GlobalRecoveryBackend.submit/poll`**：失败指数退避有上限，control tick 统一传入同一时基，generation 与 map instance 同时校验；空/不完整结果也记录失败。
+- **已修复（P1）`FollowControlRuntime._poll_recovery_backends/tick`**：memory/global recovery 成功状态按 role 记录；双人中只有实际返回位置的角色进入 recovered 分支，不再用一个角色的成功结果改善另一个角色。
+- **已修复（P1）`FollowEnginePort._check_worker_stall` / `composition.build_follow_engine_composition`**：重建进入单线程 executor，带 backoff/预算/session epoch/cancel event；detached `RebuildBundle` 只有代际校验通过后才 commit，旧/迟到句柄和 ring dispose，不阻塞 poll。
+- **已修复（P1）`FollowEnginePort._shutdown_rebuild_executor/start`**：停止超时的 rebuild future 会登记为 retiring；同一 port 的下一次 start 先等待其退出，超时则拒绝复用 handles，避免迟到的旧 stop 在新会话启动后关闭新 worker。
+- **已修复（P1）`FollowControlProcessHandle._send/control_process_entry`**：visual、target、priority 使用独立 sequence gate；target 父侧按角色合并，control tick 限量消费并保留视觉首帧+最新帧；priority 满时不任意淘汰 execution/recovery/stop。
+- **P1 `Poe2CaptureTestPage` freshness gates**：`_FOLLOW_START_MAX_FRAME_AGE_MS=300` 与 `_FOLLOW_RUNTIME_MAX_FRAME_AGE_MS=700` 对 UI 抖动敏感，套件并发变慢时会使 dual-target legacy 路径释放输入。触发条件是采样线程延迟而非真实失配；建议保留 session，使用预测/最近有效帧，只有明确证据失控才升级恢复。
+
+历史证据补充：`data/logs/poe2_live_terrain.log` 曾记录 legacy dual-target 的 `output_failed error=host failed` 和 live-follow 的 `visual_rejected`（innovation 约 895、160.5）。这些记录确认 Host 写失败与视觉拒绝在真实实验链路中出现过，但日志段属于旧入口；当前 modular port 仍需在用户授权下做真实 Host 消费验收。最新日志尾部主要是离线 pytest/session fixture，不应被当作实机长跑结果。
+
+### 当前修复批次状态
+
+- `AsyncSnapshotOutput._run` 的 actor 启动失败现在发布 `state=failed`/结构化 failure；`FollowEnginePort` 读取该状态后清理 worker、output、token 和 clock，不再保持 active 假象。
+- `OutputScheduler` 的 stop/neutralize 已把外部 port I/O 移到全局锁外，仅按角色 I/O lock 串行；并发 force-stop 使用 stopping claim 防止重复 stop。
+- `GlobalRecoveryBackend` 已增加失败指数退避和 cooldown；空/不完整 global 结果也回写为失败，不会每个 control tick 重复 submit。
+- `FollowEnginePort` 的 worker rebuild 已移到单线程 executor，增加 backoff、attempt budget、future 收集和 stop 时 executor 释放；poll 不再同步等待 worker stop/start。
+- rebuild 现在捕获 session epoch 与 cancel event；composition 通过无副作用 `RebuildBundle` 延迟提交新 ring/worker，旧代际和迟到 future 会 dispose，不会覆盖 stop→start 后的新会话。
+- `OutputScheduler` 在 role I/O 锁内二次确认 stopped/armed/port 身份，heartbeat 过滤 stale port；`GlobalRecoveryBackend.poll()` 接受 control tick 的时间戳，避免 monotonic/epoch 混用。
+- 页面异步 modular start failure 会清空 owned adapter/composition 引用；control process 将 target、visual、priority 分为独立通道，target 按 role 合并，execution/recovery/stop 保持 priority FIFO，visual 批次保留首帧和最新帧。
+- 上述状态只代表离线契约已修复；真实 Host 消费、真实 PoE2 长跑、内存锚点和手柄效果仍须用户授权后的 R1–R4 实机验收。
 
 ### `tests/poe2_live_terrain/test_follow_engine_recovery_backends.py`（M4 implemented 2026-10-07）
 
 职责：验证 memory transform/instance、local bounded ROI、global generation/single-flight（含 completed-unpolled 竞态）。测试只使用 fake source/worker，不连接游戏、内存或 Host。
 
-### `tests/poe2_live_terrain/test_follow_engine_control_runtime.py`（M4 扩展 2026-10-07）
+### `tests/poe2_live_terrain/test_follow_engine_control_runtime.py`（M4 扩展 2026-10-08）
 
-职责：验证控制 runtime 对新帧优先 local ROI、异步 memory submit/poll、恢复后 tracker seed 和动态 session 保持；覆盖局部恢复耗时字段。失败分支断言不产生 stop。
+职责：验证控制 runtime 对新帧优先 local ROI、异步 memory submit/poll、恢复后 tracker seed 和动态 session 保持；覆盖局部恢复耗时字段、fusion 拒绝候选不刷新健康状态、预测到达未确认时继续输出，以及没有 frame command 时从共享 ring 取得新帧。失败分支断言不产生 stop。
+
+### `tests/poe2_live_terrain/test_follow_frame_recovery_handover.py`
+
+职责：用真实PNG/ROI及纯runtime校验地图平移后的逐帧坐标绑定、被覆盖的ring slot、旧sequence不能重绑transform、显式frame错配，以及P1/P2互换的三类恢复目标传播。只使用内存图像与本地共享内存，不访问游戏或Host。修复前平移用例将native `(130,70)`错填为`(30,40)`并报告恢复成功；该文件保存回归证据。
+
+### `tests/poe2_live_terrain/test_follow_engine_control_process.py`（M3.2/M2.5 coverage 2026-10-08）
+
+职责：验证 Windows spawn 控制 worker 的 visual/target/error 生命周期、runtime factory 组合和 shared-ring 局部恢复闭环。端到端夹具保持 `runtime_factory(token, roles)` 旧签名，由子进程通过 `attach_frame_ring()` 接收共享帧环；测试只传 metadata-only visual command，不连接真实 Host、游戏内存或手柄。
+
+### `tests/poe2_live_terrain/test_follow_engine_composition.py`（M5.3/warm-memory/map-route coverage 2026-10-08）
+
+职责：用静态 BGR provider、实际编码 capture、双角色观察处理器、shared ring、spawn 控制 runtime 和 recording output 验证完整离线组合；覆盖 seed 角色不匹配拒绝、worker 启动、双角色 observation、FusionSnapshot 发布和 owner stop/unlink，并通过 fake memory source/transform 与墙图验证 spawn-safe factory 确实装配 warm memory 和地图路线控制器。测试不切换 legacy 页面、不读实时内存、不连接 Host。
+
+### `tests/poe2_live_terrain/test_follow_engine_output_scheduler.py`（M3.3/B1 扩展 2026-10-07）
+
+职责：验证 output write 的 session rearm、continuous role 中立保持，以及 heartbeat 返回 false 时记录失败并重新 arm；测试使用 fake output，不连接真实 Host。
 
 ### `tests/poe2_live_terrain/test_follow_engine_replays.py`（M7 扩展 2026-10-07）
 
@@ -6620,7 +6805,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/engine.py`（M5.1 implemented 2026-10-07）
 
-职责：定义无 UI 的 `FollowEnginePort` 组合边界，统一 VisionProcess、FollowControlProcess、OutputScheduler 的启动、latest poll、目标更新和用户停止生命周期。关键导出：`FollowEngineStart`、`FollowEnginePort` 及 `VisionPort`/`ControlPort`/`OutputPort` 协议。算法：`start()` 先创建 generation token，再按 control→vision→output 顺序启动；任一步失败按已启动组件逆序清理并停止 clock；`poll()` 每次只取最新视觉事件、转发观察，再取最新控制快照并交给输出；`stop(reason)` 只在显式调用时释放 output，并在任一 adapter stop 抛错时仍清空 active/token。副作用：调用注入的进程/输出适配器，不直接导入 Qt、截图、内存或 Host 实现。失败行为：旧 generation 由 `GenerationClock.stop()` 失效，视觉/控制 error 只记录诊断，不自动释放动态 session。
+职责：定义无 UI 的 `FollowEnginePort` 组合边界，统一 VisionProcess、FollowControlProcess、OutputScheduler 的启动、latest poll、目标更新和用户停止生命周期。关键导出：`FollowEngineStart`、`FollowEnginePort` 及 `VisionPort`/`ControlPort`/`OutputPort` 协议。算法：`start(config: FollowEngineStart) -> GenerationToken` 先创建 generation token；按 control→vision→output 顺序，在调用前记录 attempted component 和阶段 begin，成功后记录 completed/elapsed_ms；任一步失败先强制清理 output，再逆序清理已尝试 worker（含 start 部分分配后抛错者），每项清理异常独立记录，最后清空 active/token/snapshot/worker state、停止 clock 并重新抛出原始启动错误。`poll()` 每次只取最新视觉事件，转发 observation 和可选 `CapturedFrame`，再取最新控制快照并交给输出；正式组合若设置 `control_owns_live_targets=True`，父侧不再转发动态 target，避免 UI timer relay 覆盖 Control 同帧 accepted target；legacy/fake 组合仍可保留 parent relay。控制 worker error/stopped 只更新 worker_state 和诊断，不重复提交旧 snapshot，视觉 worker error 仍允许控制侧继续预测/恢复；`stop(reason)` 只在显式调用时释放 output，并在任一 adapter stop 抛错时仍清空 active/token。副作用：调用注入的进程/输出适配器，阶段日志继承 terrain logger；不直接导入 Qt、截图、内存或 Host 实现。失败行为：旧 generation 由 `GenerationClock.stop()` 失效，普通视觉/控制 error 不自动把动态 session 当作用户停止；worker 状态通过 diagnostics 暴露。
 
 ### `features/poe2/live_terrain/experimental/follow_engine/ui_adapter.py`（M5.1 implemented 2026-10-07）
 
@@ -6628,7 +6813,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `ui/modes/poe2_live_terrain/follow_engine_adapter.py`（M5.2 bridge implemented 2026-10-07）
 
-职责：把 Qt 页面事件翻译为 `FollowEngineUiAdapter` 操作，提供 `start`、`target_clicked`、`poll` 和 `stop`，通过可选 callback 发布只读 `FollowUiState`。对外依赖：`FollowEngineStart`、follow-engine UI adapter；不导入 Qt 控件，也不直接访问截图、内存、路径或 Host。注意事项：页面只有显式注入该 adapter 才启用新入口，默认旧页面链路不变。
+职责：把 Qt 页面事件翻译为 `FollowEngineUiAdapter` 操作，提供 `start`、`target_clicked`、`poll` 和 `stop`，通过可选 callback 发布只读 `FollowUiState`；live-follow 配置成功绑定 engine policy 后，页面不再在 poll 后用旧 snapshot 重写 follower target；没有 engine policy 能力的旧 adapter 才使用兼容 relay。对外依赖：`FollowEngineStart`、follow-engine UI adapter；不导入 Qt 控件，也不直接访问截图、内存、路径或 Host。注意事项：页面只有显式注入该 adapter 才启用新入口；主窗口现在显式注入 concrete PoE2 factory，未注入的独立测试页仍保持旧链路。
 
 ### `tests/test_poe2_capture_test_page.py`（module bridge coverage 2026-10-07）
 
@@ -6636,11 +6821,23 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `features/poe2/live_terrain/experimental/follow_engine/process_supervisor.py`（M2.4 implemented 2026-10-07）
 
-职责：为 VisionProcess 等长期 worker 提供 generation 隔离、异常退出识别、有界重启和退避。关键导出：`ProcessSupervisor`、`SupervisorState`、`SupervisorStatus`。算法：`poll()` 只接受当前 token generation 的事件；error 或非用户 stopped 先停止旧 handle，再按重启次数计算 backoff；超过预算进入 `FAILED`，不会无限重启；显式 `stop()` 将状态置为 `STOPPED` 并禁止重新拉起。副作用：只调用注入 handle 的 start/poll/stop，不创建 Qt 或游戏输入。
+职责：为 VisionProcess 等长期 worker 提供 generation 隔离、结构化异常退出识别、有界重启和退避。关键导出：`ProcessSupervisor`、`SupervisorState`、`SupervisorStatus`。算法：`poll()` 只接受当前 token generation 的事件；error 或非用户 stopped 先停止旧 handle，再按重启次数计算 backoff；无事件但 handle 暴露 `process.is_alive()==False` 时记录 `worker_exited_without_event` 并走同一重启路径；超过预算进入 `FAILED`，不会无限重启；显式 `stop()` 将状态置为 `STOPPED` 并禁止重新拉起。副作用：只调用注入 handle 的 start/poll/stop，不创建 Qt 或游戏输入。无 `process` 属性的离线 fake handle 仍按事件语义运行。
 
 ### `tests/poe2_live_terrain/test_follow_engine_port.py`（M5.1 implemented 2026-10-07）
 
-职责：用 fake vision/control/output 验证端口事件流、目标更新、启动失败回滚和多角色目标必须显式 role；不创建真实进程、不发送输入。
+职责：用 fake vision/control/output 验证端口事件流、目标更新、启动失败回滚和多角色目标必须显式 role；新增部分 start 失败时清理该组件、cleanup 失败不遮蔽原错以及 retry 成功的回归。不创建真实进程、不发送输入。
+
+### `tools/debug/follow_root_entry_probe.py`
+
+职责：验证真实工作台根入口下的 Windows spawn，而不是仅以 pytest 入口替代。关键导出：`main() -> None`、`OfflineCaptureBackend`、`RecordingOutput`。内部依赖：bootstrap mutex 名称、FollowSeedBundle、FollowEngineStart、页面 composition factory。执行步骤：1）解析 leader，建立静态小地图及两个 native/screen seed；2）父进程持有 GUI 实际 mutex，并将 spawn 的 main path 指向根 `main.py`；3）组合 2093×2784 空墙图、真实 spawn/ring、fake capture 和 recording-only output，无 native_shape 内存后端；4）启动并轮询最多 10s，要求 ≥5 完整双角色 snapshot、output intents 只属于 follower、对应 controller 非零写入；5）finally 停止 adapter/composition 并释放 mutex。副作用仅限诊断进程、共享内存和 stdout；不连接 Host、不读游戏内存、不发送真实输入。失败以 AssertionError 暴露 stage/完整快照缺失，测试调用方另有外层进程超时。诊断不是 GUI 启动器，也不证明游戏消费输入。
+
+### `tests/test_bootstrap_spawn.py`
+
+职责：保护 bootstrap 导入无副作用与 Windows 实际入口组合契约。关键导出：pytest 测试，`_load_bootstrap()` 加载独立模块定义。依赖：根 `main.py`、bootstrap、上述离线组合探针。检查步骤：AST 注入 startup 函数失败断言后执行 import，验证无日志/Qt/mutex；mock GUI 初始化验证 freeze_support 和后续阶段顺序、事件循环退出码；mock UAC granted/cancelled 验证在 mutex/Qt 前返回；重复 GUI 启动验证旧日志未截断；Windows 实际根入口测试在父 mutex 存在时发送 6MiB payload，并用双向大地图探针验证完整链路。副作用限制在临时日志、离线 subprocess 和测试 mutex；真实 UAC 被 mock，无游戏输入。Windows 专属用例在其他系统跳过。
+
+### `tests/poe2_live_terrain/test_follow_engine_page_startup.py`
+
+职责：独立保护页面启动的角色路由与失败资源回收，不构造 Qt widget。关键导出：`test_modular_selected_output_roles_match_follow_target_roles(mode, expected)`、`test_failed_owned_adapter_start_disposes_composition_and_can_be_rebuilt()`。依赖：Poe2CaptureTestPage 的未绑定方法和 SimpleNamespace fake 状态。步骤：参数化检查 p1_leads→P2、p2_leads→P1、单角色和 both_program 五种输出/目标 role 一致；fake adapter start 抛 RuntimeError 后验证 adapter 和 owned composition 均 stop、引用置空、owned/live 标志复位，允许下一次 factory 重建。副作用仅为 fake stop 调用记录，无截图/内存/Host/真实手柄。
 
 ### `tests/poe2_live_terrain/test_follow_engine_page_adapter.py`（M5.2 implemented 2026-10-07）
 
@@ -6648,7 +6845,7 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `tests/poe2_live_terrain/test_follow_engine_supervisor.py`（M2.4 implemented 2026-10-07）
 
-职责：验证 worker error/异常 stopped 的退避重启、generation 迟到事件过滤、重启预算和 terminal stop；只使用 fake worker。
+职责：验证 worker error/异常 stopped 的退避重启、generation 迟到事件过滤、无事件 silent exit 的进程存活探测、重启预算和 terminal stop；只使用 fake worker。
 
 ### `tests/poe2_live_terrain/test_follow_engine_stress.py`（M6.2 implemented 2026-10-07）
 
@@ -6660,4 +6857,34 @@ The newly added recovery package is currently a tested policy layer, not yet the
 
 ### `docs/POE2_FOLLOW_ENGINE_ACCEPTANCE.md`（M8 implemented 2026-10-07）
 
-职责：记录 M0–M8 的离线交付边界、505 个测试的验收命令、真实输入 opt-in 前置检查、R1–R10 实机分级场景和回滚点。注意事项：明确旧 `capture_test_page.py` 默认入口尚未切换，离线通过不能当作实机发布。
+职责：记录 M0–M8 的离线交付边界、当前相关全套 667 passed 与最新启动专项 21 passed 的验收命令（两组重叠）、真实输入 opt-in 前置检查、R1–R10 实机分级场景和回滚点。注意事项：明确 concrete PoE2 adapter 已接入主窗口，Windows 根入口挂起修复已离线验证，但仍需重启后由用户显式启动 R1；离线通过、adapter 已接入均不能当作实机输入已验收。
+
+### 当前生命周期修复契约（2026-10-08）
+
+`follow_engine/execution_feedback.py::ExecutionReceipt` 是输出写入边界的不可变证据：generation、全局 sequence、role、归一化向量、接受时间和有效 lease。它只证明 Host/adapter 接收了脉冲，不证明游戏已经移动。`SnapshotOutputAdapter` 在实际 `write()` 成功后生成回执，neutralize/失败生成零 lease；`AsyncSnapshotOutput` 用单一 writer actor 独占同步 Host I/O，主线程只交换最新 snapshot、读取诊断和回执，watchdog 超过 1.5s 调用 adapter cancellation。
+
+`follow_control_process.py::FollowControlRuntime.record_execution()` 严格过滤 generation/sequence/role，按每个 lease 与控制 tick 的未消费时间重叠积分 command odometry；planned `last_vector` 不再推进位置，视觉/recovery anchor 会推进执行游标，零回执会截断重叠脉冲。control worker 通过 `execution` envelope 接收回执，`FollowEnginePort.poll()` 在 apply 前后转发最新回执，因此 arm gate、Host 写失败和丢帧不会制造虚假位移。
+
+`output_scheduler.py` 用每角色 I/O lock 保证单个 Host client 串行，但不再把 heartbeat/write/rearm 放在全局 scheduler lock 内；诊断/停止不会等待其它角色的慢 I/O。`process_supervisor.py` 的 start/stop/restart 异常会清掉 handle/token 并进入有界退避。
+
+`engine.py::FollowEnginePort` 维护 spawned/运行/停滞诊断：每个worker独立等待其首个结果，启动门为10s；该worker已有结果后才采用2s无进展门。Control首snapshot不会缩短Vision启动窗口。组合提供rebuild factory时neutralize旧lease、替换ring/worker并重放target，session不因组件超时结束。`composition.py::FollowEngineComposition.stop()` 总是处理port当前handles。PoE2 concrete page factory用`AsyncSnapshotOutput`；页面在单线程lifecycle executor运行start/stop，Qt timer只负责latest poll和状态回调。页面明确传入10,000ms非零输出闸门，零租约/心跳可以提前建立，UI从启动完成持续显示倒计时，首snapshot不覆盖提示；故障状态优先于旧snapshot，常态日志不逐帧打印。
+
+当前并发边界：`FollowEnginePort`以session epoch/cancel event隔离stop→start；detached `RebuildBundle`通过epoch/token校验后才commit，迟到bundle dispose。`poll() -> FusionSnapshot | None`先收集完成重建，再捕获当前handles；重建进行中返回保留快照，不轮询已dispose旧队列；正常轮询先接收最新Vision/Control结果并刷新进展，最后才检查stall，避免父侧调度延迟被误认为worker停滞。output apply前仍复核代际/handle身份。重建neutralize由poll线程请求。OutputScheduler角色锁保护单角色I/O；GlobalRecoveryBackend使用control tick时基。
+
+`FollowEnginePort._record_worker_fault(worker: str, error: str, traceback_text: str = "") -> None`：1. 按worker/error去重，正常结果清除该worker去重键；2. 记录generation、session_epoch、PID/exitcode与原始traceback；3. 首个fault保存在session的first_fault，后续stall/rebuild不覆盖；4. 写terrain logger，diagnostics返回副本。`_check_worker_stall()`先收集future，再按每个worker_ready计算10s/2s门，记录进展年龄/状态/attempt，仅在分类或attempt变化时打印；正常rebuild记录begin/completed。first_fault只证明最初观察到的故障，不能自动证明最底层原因。
+
+风险：`poll/_check_worker_stall`的队列前超时检查、旧handle捕获和跨worker启动窗口缺陷已由离线时序复现修复；03:07/03:08实测的原始worker异常未记录，尚不能宣称实机首因已定位。A*/ROI耗时、IPC吞吐和Host游戏消费仍需带新诊断的实测证据；不能以聚焦检查通过替代游戏验收。
+2026-10-09 CODEBASE SYNC: FollowEnginePort now records parent poll count/gap, last consumed worker events, and watchdog evidence; vision_process and control_process emit bounded child progress logs with generation/sequence/tick/pid. No tracking or recovery semantics changed. Offline focused tests 29 passed; real Qt/PoE2 boundary remains unverified.
+2026-10-09 CODEBASE SYNC: `vision/wall_processor.py::process_wall` normalizes OpenCV phase-correlation response at the adapter boundary before constructing `VisualObservation`; raw gating/accepted decision remains unchanged, preventing `wall_quality > 1` from killing Vision. `FollowEnginePort` records a deterministic fault signature and suppresses repeated rebuilds of the same unchanged child contract fault, preserving the session in degraded mode. `control_process_entry` logs bounded role/recovery/vector/duration decisions every 30 ticks. Focused vision/port/control checks 32 passed; real game/Host consumption remains unverified.
+2026-10-09 CODEBASE SYNC: `FollowControlProcessHandle` now retains execution envelopes in a bounded FIFO spill when the priority queue is full, retries them before new sends/polls, and logs overflow instead of silently dropping receipts. Individual receipt segments remain intact; no last-vector aggregation was introduced. Focused control/port checks 26 passed; no runtime input.
+2026-10-09 CODEBASE SYNC: priority execution/recovery spill now enforces FIFO even when a queue slot opens between flush attempts; later commands cannot bypass older receipts. Overflow rejects new evidence with explicit state/logging rather than evicting old entries. Focused control process tests 10 passed.
+2026-10-09 CODEBASE SYNC: priority receipt overflow now emits explicit execution_gap envelopes carrying generation/role/sequence; FollowControlRuntime consumes the gap as uncertainty/source evidence without fabricating displacement or stopping the session. Focused control tests 10 passed.
+2026-10-09 CODEBASE SYNC: added `tests/poe2_live_terrain/test_follow_engine_replay_contracts.py` with direct local-first recovery, captured_at receipt replay, memory cooldown/single-flight, stale metadata/duplicate receipt, spawn child progress/stall, and legacy route contract coverage. Six tests passed; no real game/Host/memory/input.
+2026-10-09 CODEBASE SYNC: added `follow_engine/relay.py::RelayLoop`; `FollowEnginePort` starts/stops it per session epoch, internal `_poll_once` owns worker transport, and public `poll()` is latest-snapshot read-only. Relay errors are surfaced to port diagnostics. Added fake-port end-to-end pause test; focused combined 42 passed; real Qt/Host/game and child rebuild remain unverified.
+2026-10-09 CODEBASE SYNC: serialized FollowEnginePort `_poll_once` with `_poll_lock`; UI first-read compatibility waits on `_snapshot_event`, preventing concurrent relay/UI queue consumption. Concurrent relay-reader focused regression passed; real child rebuild/game consumption remains unverified.
+2026-10-09 CODEBASE SYNC: stabilized relay concurrency test shutdown boundary by comparing observed reader ticks against captured produced ticks; repeated race test 5/5 passed, with output apply and relay error checks retained.
+2026-10-09 CODEBASE SYNC: reviewed existing FollowEnginePort lifecycle coverage for async stall budget, atomic rebuild commit, stale future isolation, and old-handle retirement; no additional runtime change. Real PoE2 child/Host/Qt/game boundary remains explicitly unverified.
+2026-10-09 CODEBASE SYNC: added `experimental/follow_contract.py::DYNAMIC_FOLLOW_CONTRACT` and wired legacy click/single/dual runtime factories plus modular composition to shared 12/20/80/8/24/.25 values; route/steering/output algorithms unchanged. J10 focused contract batch passed.
+### Follow-engine timing diagnostics (J11/J12, 2026-10-09)
+
+`experimental/follow_engine/timing.py` provides bounded monotonic `TimingWindow` percentiles. Vision processing, Control ticks, Relay entry gap/duration, Output apply/heartbeat, receipt age, and `LatestFrameBuffer` queue depth/drop/age expose offline diagnostics only. These metrics are observability fields and do not affect movement, recovery, or output decisions. Recovery/rebuild aggregate windows remain pending.

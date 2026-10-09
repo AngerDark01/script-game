@@ -25,6 +25,7 @@ class DualRoleAssociator:
 
     def __init__(self, *, base_gate: float = 45.0, max_gate: float = 180.0, margin: float = 2.0) -> None:
         self._associator = MarkerAssociator(base_gate=base_gate, max_gate=max_gate, margin=margin)
+        self._last_capture_ms = None
 
     def assign(
         self,
@@ -35,7 +36,12 @@ class DualRoleAssociator:
         velocities: Mapping[str, tuple[float, float]] | None = None,
         elapsed_ms: Mapping[str, int] | None = None,
         wall_shift: tuple[float, float] = (0.0, 0.0),
+        captured_at_ms: int | None = None,
     ) -> DualAssociation:
+        if captured_at_ms is not None:
+            if self._last_capture_ms is not None and not 0 < captured_at_ms - self._last_capture_ms <= 1000:
+                self._associator.reset_confirmation()
+            self._last_capture_ms = captured_at_ms
         result: AssociationResult = self._associator.assign(
             candidates,
             predicted,
@@ -44,7 +50,7 @@ class DualRoleAssociator:
             elapsed_ms=elapsed_ms,
             wall_shift=wall_shift,
         )
-        if identity_hints and len(result.assignment) < len(predicted) and len(candidates) >= len(predicted):
+        if identity_hints and not result.diagnostics.get("single_candidate_pending") and not result.diagnostics.get("single_candidate_confirmed") and len(result.assignment) < len(predicted) and len(candidates) >= len(predicted):
             geometry_result = self._associator.assign(
                 candidates,
                 predicted,

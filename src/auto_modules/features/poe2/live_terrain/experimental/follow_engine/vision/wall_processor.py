@@ -38,4 +38,12 @@ def process_wall(
         min_quality=float(min_quality),
         max_shift=float(max_shift),
     )
-    return WallObservation(result.shift, result.quality, result.accepted, result.reason, float(processing_ms))
+    # OpenCV's phase-correlation response is an implementation metric, not a
+    # contract score.  In particular, textured/bright minimap masks can yield
+    # responses slightly above one.  The follow-engine DTO deliberately
+    # exposes a normalized confidence in [0, 1], so normalize at this adapter
+    # boundary instead of letting a malformed observation kill the Vision
+    # child process.  Keep the gating decision based on the raw response in
+    # ``estimate_bounded_displacement``; only the exported score is bounded.
+    quality = min(1.0, max(0.0, float(result.quality)))
+    return WallObservation(result.shift, quality, result.accepted, result.reason, float(processing_ms))

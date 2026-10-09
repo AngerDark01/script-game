@@ -64,6 +64,35 @@ def test_program_output_heartbeat_runs_without_control_writes():
     assert client.calls.count("program.state") == 0
 
 
+def test_program_output_falls_back_to_state_heartbeat_when_host_lacks_command():
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def pause(self, controller):
+            pass
+
+        def request(self, name, payload):
+            self.calls.append((name, payload))
+            if name == "program.acquire":
+                return {"token": "test"}
+            if name == "program.heartbeat":
+                raise RuntimeError("invalid_argument: Unknown program command.")
+            return {"accepted": True}
+
+    client = Client()
+    output = ProgramGamepadOutput(client, controller=2, heartbeat_interval_ms=900)
+    output.start()
+    output.write((0.0, 0.0))
+    assert output.heartbeat() is True
+    # Once the capability probe sees an older Host, remain on the compatible
+    # state heartbeat path; do not retry the unsupported command each tick.
+    assert output.heartbeat() is True
+    assert [name for name, _ in client.calls].count("program.heartbeat") == 1
+    assert [name for name, _ in client.calls].count("program.state") >= 3
+    output.stop()
+
+
 def test_program_output_close_releases_lease_and_closes_dedicated_client():
     class Client:
         def __init__(self):
@@ -189,3 +218,40 @@ def test_failed_program_write_does_not_report_accepted_motion():
     output.start()
     with pytest.raises(RuntimeError, match="Host rejected"):
         output.write((1.0, 0.0))
+
+
+def test_program_output_rearms_only_current_controller_after_session_expiry_and_keeps_heartbeat():
+    class Client:
+        def __init__(self):
+            self.calls = []
+            self.acquire_count = 0
+            self.expired_once = True
+
+        def pause(self, controller):
+            self.calls.append(("pause", controller))
+
+        def request(self, name, payload):
+            self.calls.append((name, payload))
+            if name == "program.acquire":
+                self.acquire_count += 1
+                return {"token": f"token-{self.acquire_count}"}
+            if name == "program.heartbeat" and self.expired_once:
+                self.expired_once = False
+                raise RuntimeError("Program session expired or was revoked")
+            return {"accepted": True}
+
+    client = Client()
+    output = ProgramGamepadOutput(client, controller=2, heartbeat_interval_ms=900)
+    output.start()
+    output.write((0.0, 0.0))
+    assert output.heartbeat() is False
+    assert output.token is None
+    output.rearm()
+    assert output.token == "token-2"
+    assert [name for name, _payload in client.calls].count("program.acquire") == 2
+    assert all(payload == 2 for name, payload in client.calls if name == "pause")
+    assert output.heartbeat() is True
+    diagnostics = output.snapshot()
+    assert diagnostics["acquired"] is True
+    assert diagnostics["last_command"]["input_vector"] == (0.0, 0.0)
+    output.stop()

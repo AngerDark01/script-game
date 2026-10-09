@@ -81,6 +81,14 @@ class ProcessSupervisor:
             return None
         event = self.handle.poll_latest()
         if event is None:
+            # A native/OS failure can terminate a multiprocessing worker
+            # before it can enqueue the structured ``error`` event.  Do not
+            # leave the supervisor in RUNNING forever in that case.  Fake
+            # handles without a process attribute remain compatible.
+            process = getattr(self.handle, "process", None)
+            is_alive = getattr(process, "is_alive", None)
+            if process is not None and callable(is_alive) and not bool(is_alive()):
+                self._schedule_restart("worker_exited_without_event", now)
             return None
         kind = str(getattr(event, "kind", ""))
         generation = getattr(event, "generation", None)
@@ -107,17 +115,41 @@ class ProcessSupervisor:
     def _start_handle(self) -> None:
         if self.token is None:
             raise RuntimeError("worker token is missing")
-        self.handle = self.factory()
-        self.handle.start(generation=self.token.generation, map_instance=self.token.map_instance)
+        handle = self.factory()
+        try:
+            handle.start(generation=self.token.generation, map_instance=self.token.map_instance)
+        except BaseException as exc:
+            # A failed start must not leave an allocated handle attached to a
+            # stopped supervisor.  Best-effort cleanup is isolated so the
+            # original spawn/pickle error remains the one callers see.
+            try:
+                handle.stop()
+            except Exception:
+                pass
+            self.handle = None
+            self._state = SupervisorState.STOPPED
+            self._next_restart_at_ms = None
+            self._last_error = f"start_failed: {type(exc).__name__}: {exc}"
+            self.token = None
+            raise
+        self.handle = handle
         self._state = SupervisorState.RUNNING
         self._next_restart_at_ms = None
 
     def _schedule_restart(self, error: str, now_ms: int) -> None:
         handle = self.handle
         self.handle = None
+        stop_error = None
         if handle is not None:
-            handle.stop()
+            try:
+                handle.stop()
+            except Exception as exc:
+                # A broken worker must not prevent the supervisor from
+                # entering a bounded backoff/failed state.
+                stop_error = exc
         self._last_error = str(error)
+        if stop_error is not None:
+            self._last_error = f"{self._last_error}; stop_failed: {type(stop_error).__name__}: {stop_error}"
         self._restart_count += 1
         if self._restart_count > self.max_restarts:
             self._state = SupervisorState.FAILED

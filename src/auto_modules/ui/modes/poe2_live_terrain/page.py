@@ -93,6 +93,7 @@ class Poe2LiveTerrainPage(QWidget):
         hybrid_localization_factory: Any | None = None,
         multiframe_localization_factory: Any | None = None,
         program_output_factory: Any | None = None,
+        follow_engine_page_adapter_factory: Any | None = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -111,6 +112,7 @@ class Poe2LiveTerrainPage(QWidget):
         self.hybrid_localization_factory = hybrid_localization_factory
         self.multiframe_localization_factory = multiframe_localization_factory
         self.program_output_factory = program_output_factory
+        self.follow_engine_page_adapter_factory = follow_engine_page_adapter_factory
         active_profile = profile_store.active() if profile_store is not None else None
         self.monitor_config = active_profile or (
             config_store.load() if config_store is not None else Poe2MonitorConfig()
@@ -258,6 +260,7 @@ class Poe2LiveTerrainPage(QWidget):
                 hybrid_localization_factory=self.hybrid_localization_factory,
                 multiframe_localization_factory=self.multiframe_localization_factory,
                 program_output_factory=self.program_output_factory,
+                follow_engine_page_adapter_factory=self.follow_engine_page_adapter_factory,
                 open_config=self.open_monitor_config,
                 parent=self.tabs,
             )
@@ -886,7 +889,12 @@ class Poe2LiveTerrainPage(QWidget):
             )
             if self.capture_test_page is not None:
                 self.capture_test_page.suspend()
-            return
+            # The monitor worker is independent from the follow engine.  A
+            # timeout must not skip follow/Host cleanup: doing so leaves the
+            # modular child processes and gamepad lease alive when the main
+            # window proceeds with shutdown.  Keep the retired worker tracked,
+            # but always cross the capture page's terminal cleanup boundary.
+            self._logger.warning("step=ui.shutdown_continue_follow_cleanup despite_monitor_worker=True")
         if self.capture_test_page is not None:
             self.capture_test_page.shutdown()
         self.service.reset()

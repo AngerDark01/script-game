@@ -26,12 +26,35 @@ class AssociationResult:
 class MarkerAssociator:
     """Associate candidates with role predictions using adaptive gates."""
 
-    def __init__(self, *, base_gate: float = 45.0, max_gate: float = 180.0, margin: float = 2.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_gate: float = 45.0,
+        max_gate: float = 180.0,
+        margin: float = 2.0,
+        single_candidate_confidence: float = 0.85,
+        single_confirmation_distance: float = 24.0,
+        large_marker_area: float = 48.0,
+    ) -> None:
         if base_gate <= 0 or max_gate < base_gate or margin < 0:
             raise ValueError("invalid marker association thresholds")
         self.base_gate = float(base_gate)
         self.max_gate = float(max_gate)
         self.margin = float(margin)
+        if not 0.0 <= float(single_candidate_confidence) <= 1.0:
+            raise ValueError("single candidate confidence must be between 0 and 1")
+        if float(single_confirmation_distance) <= 0.0 or not math.isfinite(float(single_confirmation_distance)):
+            raise ValueError("single confirmation distance must be finite and positive")
+        self.single_candidate_confidence = float(single_candidate_confidence)
+        self.single_confirmation_distance = float(single_confirmation_distance)
+        if float(large_marker_area) <= 0.0 or not math.isfinite(float(large_marker_area)):
+            raise ValueError("large marker area must be finite and positive")
+        self.large_marker_area = float(large_marker_area)
+        self._pending_single: dict[str, tuple[tuple[float, float], int]] = {}
+
+    def reset_confirmation(self) -> None:
+        """Discard pending anchors when the frame sequence is discontinuous."""
+        self._pending_single.clear()
 
     def assign(
         self,
@@ -44,9 +67,24 @@ class MarkerAssociator:
         wall_shift: tuple[float, float] = (0.0, 0.0),
         pair_geometry: bool = True,
     ) -> AssociationResult:
-        visible = tuple(sorted(candidates, key=lambda item: item.confidence, reverse=True)[:6])
+        ranked = tuple(sorted(candidates, key=lambda item: item.confidence, reverse=True)[:6])
+        filtered_large = tuple(
+            item for item in ranked
+            if float(getattr(item, "area", 0.0) or 0.0) <= 0.0
+            or float(getattr(item, "area", 0.0)) <= self.large_marker_area
+        )
+        visible = filtered_large
         if not visible:
-            return AssociationResult({}, False, {"candidate_ids": (), "options": ()})
+            self._pending_single.clear()
+            return AssociationResult(
+                {}, False,
+                {
+                    "candidate_ids": tuple(item.candidate_id for item in ranked),
+                    "candidate_areas": {item.candidate_id: float(getattr(item, "area", 0.0) or 0.0) for item in ranked},
+                    "filtered_large_area_ids": tuple(item.candidate_id for item in ranked),
+                    "options": (),
+                },
+            )
         hints = identity_hints or {}
         speeds = velocities or {}
         ages = elapsed_ms or {}
@@ -71,6 +109,92 @@ class MarkerAssociator:
             predicted_pair_distance = math.dist(
                 predicted[predicted_identities[0]], predicted[predicted_identities[1]],
             )
+        # Resolve unique per-role colours before geometry fallback. Otherwise
+        # a drifted prediction can claim the other player's marker.
+        if hints and len(set(hints.values())) == len(hints):
+            confirmed, pending, reserved = {}, [], []
+            for identity in predicted:
+                matches = [item for item in visible if hints.get(identity) == str(item.color_features.get("identity_hint") or "")]
+                if len(matches) != 1:
+                    self._pending_single.pop(identity, None)
+                    continue
+                candidate = matches[0]
+                distance = math.dist(predicted[identity], candidate.local_position)
+                if distance <= gates[identity] or candidate.confidence < self.single_candidate_confidence:
+                    self._pending_single.pop(identity, None)
+                    continue
+                reserved.append(candidate)
+                previous = self._pending_single.get(identity)
+                if previous is not None and math.dist(previous[0], candidate.local_position) <= self.single_confirmation_distance:
+                    confirmed[identity] = candidate.local_position
+                    self._pending_single.pop(identity, None)
+                else:
+                    pending.append(identity)
+                    self._pending_single[identity] = (candidate.local_position, 1)
+            if confirmed or pending:
+                remaining = {key: point for key, point in predicted.items() if key not in confirmed and key not in pending}
+                rest = MarkerAssociator(base_gate=self.base_gate, max_gate=self.max_gate, margin=self.margin,
+                    large_marker_area=self.large_marker_area).assign(
+                        [item for item in visible if item not in reserved], remaining,
+                        identity_hints={key: hints[key] for key in remaining if key in hints},
+                        velocities=velocities, elapsed_ms=elapsed_ms, wall_shift=wall_shift) if remaining else AssociationResult({}, False, {})
+                return AssociationResult({**rest.assignment, **confirmed}, rest.ambiguous, {
+                    "candidate_ids": tuple(item.candidate_id for item in visible),
+                    "candidate_areas": {item.candidate_id: float(item.area) for item in ranked},
+                    "filtered_large_area_ids": tuple(item.candidate_id for item in ranked if item not in visible),
+                    "gates": gates, "confirmed_roles": tuple(confirmed), "pending_roles": tuple(pending),
+                    "single_candidate_pending": bool(pending), "single_candidate_confirmed": bool(confirmed),
+                })
+        # A lone, high-confidence candidate outside the normal innovation gate
+        # may indicate that the native/map anchor drifted. Confirm it on the
+        # next frame before overriding prediction; close candidates keep the
+        # original immediate-association behavior.
+        if len(visible) == 1 and predicted_identities:
+            candidate = visible[0]
+            nearest_identity = min(
+                predicted_identities,
+                key=lambda identity: math.dist(predicted[identity], candidate.local_position),
+            )
+            nearest_distance = math.dist(predicted[nearest_identity], candidate.local_position)
+            if (
+                float(candidate.confidence) >= self.single_candidate_confidence
+                and nearest_distance > gates[nearest_identity]
+            ):
+                previous = self._pending_single.get(nearest_identity)
+                repeated = bool(
+                    previous is not None
+                    and math.dist(previous[0], candidate.local_position) <= self.single_confirmation_distance
+                )
+                self._pending_single[nearest_identity] = (candidate.local_position, 2 if repeated else 1)
+                if not repeated:
+                    return AssociationResult(
+                        {}, False,
+                        {
+                            "candidate_ids": tuple(item.candidate_id for item in visible),
+                            "candidate_areas": {item.candidate_id: float(getattr(item, "area", 0.0) or 0.0) for item in visible},
+                            "gates": dict(gates),
+                            "single_candidate_pending": True,
+                            "single_candidate_role": nearest_identity,
+                            "single_candidate_distance": float(nearest_distance),
+                        },
+                    )
+                self._pending_single.pop(nearest_identity, None)
+                return AssociationResult(
+                    {nearest_identity: candidate.local_position}, False,
+                    {
+                        "candidate_ids": tuple(item.candidate_id for item in visible),
+                        "candidate_areas": {item.candidate_id: float(getattr(item, "area", 0.0) or 0.0) for item in visible},
+                        "gates": dict(gates),
+                            "single_candidate_confirmed": True,
+                            "confirmed_roles": (nearest_identity,),
+                        "single_candidate_role": nearest_identity,
+                        "single_candidate_distance": float(nearest_distance),
+                    },
+                )
+        elif len(visible) != 1:
+            self._pending_single.clear()
+        else:
+            self._pending_single.clear()
         options: list[tuple[float, tuple[str, ...], tuple[PlayerMarkerCandidate, ...], tuple[float, ...], float | None]] = []
         for count in range(min(len(predicted), len(visible)), 0, -1):
             for selected in itertools.combinations(visible, count):
@@ -123,6 +247,8 @@ class MarkerAssociator:
         options.sort(key=lambda item: item[0])
         diagnostics = {
             "candidate_ids": tuple(item.candidate_id for item in visible),
+            "candidate_areas": {item.candidate_id: float(getattr(item, "area", 0.0) or 0.0) for item in ranked},
+            "filtered_large_area_ids": tuple(item.candidate_id for item in ranked if item not in visible),
             "gates": dict(gates),
             "predicted_pair_distance": None if predicted_pair_distance is None else float(predicted_pair_distance),
             "options": tuple(

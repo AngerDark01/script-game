@@ -14,6 +14,7 @@
 
 import ctypes
 import hashlib
+import multiprocessing
 import os
 from pathlib import Path
 import subprocess
@@ -71,6 +72,8 @@ def _debug_console_enabled():
 def configure_runtime_output():
     """Use UTF-8 output and keep diagnostics in a log file even under pythonw."""
     global _RUNTIME_LOG_HANDLE
+    if _RUNTIME_LOG_HANDLE is not None and not _RUNTIME_LOG_HANDLE.closed:
+        return
     if os.name == "nt":
         try:
             ctypes.windll.kernel32.SetConsoleOutputCP(65001)
@@ -89,8 +92,12 @@ def configure_runtime_output():
     log_dir = data_root() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "runtime.log"
-    _RUNTIME_LOG_HANDLE = log_path.open("w", encoding="utf-8-sig", buffering=1)
-    _RUNTIME_LOG_HANDLE.write(f"\n=== session {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+    # Preserve the primary instance's evidence if a second GUI is rejected.
+    # Spawned workers never call this routine during module import.
+    _RUNTIME_LOG_HANDLE = log_path.open("a", encoding="utf-8-sig", buffering=1)
+    _RUNTIME_LOG_HANDLE.write(
+        f"\n=== session {time.strftime('%Y-%m-%d %H:%M:%S')} pid={os.getpid()} ===\n"
+    )
 
     current_stdout = getattr(sys, "stdout", None)
     current_stderr = getattr(sys, "stderr", None)
@@ -110,10 +117,6 @@ def hide_console_if_not_debugging():
         ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass
-
-
-configure_runtime_output()
-hide_console_if_not_debugging()
 
 
 def set_process_dpi_awareness():
@@ -249,33 +252,37 @@ def has_existing_main_window() -> bool:
         return False
 
 
-DPI_AWARENESS_RESULT = set_process_dpi_awareness()
+def main() -> int:
+    """Initialize the GUI process only; imports must be safe for Windows spawn."""
+    # Frozen launchers must dispatch multiprocessing children before any GUI,
+    # UAC, logging or single-instance work. Source spawn imports only definitions.
+    multiprocessing.freeze_support()
+    configure_runtime_output()
+    hide_console_if_not_debugging()
+    dpi_awareness_result = set_process_dpi_awareness()
 
+    if os.name == "nt" and not is_running_as_admin():
+        print("需要管理员权限来向游戏窗口发送鼠标输入，正在请求 UAC 提权...")
+        if relaunch_as_admin():
+            return 0
+        print("管理员提权失败或被取消，程序退出。")
+        return 1
 
-if os.name == "nt" and not is_running_as_admin():
-    print("需要管理员权限来向游戏窗口发送鼠标输入，正在请求 UAC 提权...")
-    if relaunch_as_admin():
-        sys.exit(0)
-    print("管理员提权失败或被取消，程序退出。")
-    sys.exit(1)
+    if not acquire_single_instance_lock():
+        return 0
+    if has_existing_main_window():
+        print("Another auto_modules window is already running; exiting this instance.")
+        return 0
 
-if not acquire_single_instance_lock():
-    sys.exit(0)
+    # Keep Qt and application composition out of worker preparation. DPI must
+    # be configured before Qt is loaded or any application window is created.
+    from PySide6.QtWidgets import QApplication
+    from auto_modules.ui.main_window import MainWindow
 
-if has_existing_main_window():
-    print("Another auto_modules window is already running; exiting this instance.")
-    sys.exit(0)
-
-from PySide6.QtWidgets import QApplication
-from auto_modules.ui.main_window import MainWindow
-
-
-def main():
-    """主函数"""
     print("=" * 60)
     print("实时小地图拼接系统")
     print("=" * 60)
-    print(f"DPI awareness: {DPI_AWARENESS_RESULT}")
+    print(f"DPI awareness: {dpi_awareness_result}")
     print(f"Admin: {is_running_as_admin()}")
     print()
     print("算法: 相位相关法 (cv2.phaseCorrelate)")
@@ -304,8 +311,8 @@ def main():
     print("=" * 60)
     
     # 运行应用
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

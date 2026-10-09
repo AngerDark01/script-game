@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 import logging
+import inspect
 from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -58,6 +60,7 @@ from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow imp
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow.command_role_tracker import (
     CommandRoleTracker,
 )
+from auto_modules.features.poe2.live_terrain.experimental.follow_contract import DYNAMIC_FOLLOW_CONTRACT
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow.recovery.recovery_coordinator import (
     RecoveryCoordinator,
 )
@@ -190,8 +193,9 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     # Give the user time to move focus back to PoE2 after pressing the
     # workbench button.  This gate is intentionally above ProgramFollowOutput
     # so no Host lease or controller report can be created during the delay.
-    _FOLLOW_COMMAND_ARM_DELAY_MS = 6_000
+    _FOLLOW_COMMAND_ARM_DELAY_MS = 10_000
     _FOLLOW_COMMAND_ARM_LOG_INTERVAL_MS = 1_000
+    _follow_lifecycle_finished = Signal(int, str, bool, object)
 
     def __init__(
         self,
@@ -212,6 +216,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         hybrid_localization_factory: Callable[[Any, Callable[[], Any]], Any] | None = None,
         multiframe_localization_factory: Callable[[Any, Callable[[], Any]], Any] | None = None,
         follow_engine_page_adapter: Poe2FollowEnginePageAdapter | None = None,
+        follow_engine_page_adapter_factory: Callable[..., Any] | None = None,
         open_config: Callable[[], None] | None = None,
         parent=None,
     ) -> None:
@@ -236,7 +241,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         # page boundary makes the migration reversible and prevents the old
         # runtime and the new port from owning a controller simultaneously.
         self._follow_engine_page_adapter = follow_engine_page_adapter
+        self._follow_engine_page_adapter_factory = follow_engine_page_adapter_factory
+        self._follow_engine_composition = None
+        self._follow_engine_adapter_owned = False
         self._modular_follow_active = False
+        self._modular_follow_live_mode = False
         self.open_config_callback = open_config
         self.capture_monitor_window = None
         self._logger = get_terrain_logger()
@@ -346,7 +355,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         # frame; without this per-role timestamp the same failed frame is
         # counted as repeated failures and immediately starts recovery.
         self._follow_last_evaluated_visual_at_ms: dict[str, int] = {}
-        # Tests may set this to zero; production keeps the six-second focus
+        # Tests may set this to zero; production keeps the ten-second focus
         # handoff window requested for the real game workflow.
         self._follow_command_arm_delay_ms = self._FOLLOW_COMMAND_ARM_DELAY_MS
         self._follow_output_not_before_ms: int | None = None
@@ -377,6 +386,18 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._live_memory_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="poe2-live-memory-reanchor"
         )
+        # Process.start/join and Host cleanup are lifecycle operations, not UI
+        # work.  A single serialized executor prevents overlapping generations
+        # while keeping the Qt event loop responsive.
+        self._follow_lifecycle_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="poe2-follow-lifecycle"
+        )
+        self._follow_lifecycle_serial = 0
+        self._follow_lifecycle_future: Future[Any] | None = None
+        self._modular_follow_start_pending = False
+        self._modular_follow_stop_pending = False
+        self._modular_follow_restart_requested = False
+        self._follow_lifecycle_finished.connect(self._on_follow_lifecycle_finished)
         self._live_memory_future: Future[Any] | None = None
         self._live_memory_started_at_ms: int | None = None
         self._live_global_reanchor = GlobalReanchorBackend(
@@ -432,6 +453,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         self._follow_timer = QTimer(self)
         self._follow_timer.setInterval(100)
         self._follow_timer.timeout.connect(self._on_follow_timer)
+        self._follow_timer_default_interval = self._follow_timer.interval()
         self._dual_target_timer = QTimer(self)
         self._dual_target_timer.setInterval(100)
         self._dual_target_timer.timeout.connect(self._on_dual_target_timer)
@@ -797,6 +819,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         log_group_layout = QVBoxLayout(log_group)
         log_header = QHBoxLayout()
         log_header.addStretch()
+        self.copy_log_button = QPushButton("复制日志")
+        self.copy_log_button.setToolTip("复制当前跟随实验的全部日志，可直接发送排查")
+        self.copy_log_button.clicked.connect(self._copy_session_log)
+        log_header.addWidget(self.copy_log_button)
         self.clear_log_button = QPushButton("清空")
         self.clear_log_button.clicked.connect(lambda: self.session_log.clear())
         log_header.addWidget(self.clear_log_button)
@@ -1467,6 +1493,16 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         ):
             self.session_log.appendPlainText(str(message))
 
+    def _copy_session_log(self) -> None:
+        """Copy the bounded UI log without requiring users to inspect files."""
+        if not hasattr(self, "session_log") or not _qt_is_valid(self.session_log):
+            return
+        text = self.session_log.toPlainText()
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+            self._logger.info("step=follow_engine.ui_log_copied chars=%s lines=%s", len(text), text.count("\n") + (1 if text else 0))
+
     def closeEvent(self, event) -> None:
         """Make widget destruction follow the same cleanup contract as shutdown."""
         self.shutdown()
@@ -1488,15 +1524,16 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     def _make_follow_runtime(
         self, reference: Any, map_identity: MapIdentity, *, live_role_follow: bool = False,
     ) -> SimulatedFollowRuntime:
-        arrival_radius = 12.0 if live_role_follow else 8.0
+        motion = DYNAMIC_FOLLOW_CONTRACT
+        arrival_radius = motion.arrival_radius
         return SimulatedFollowRuntime(
             wall_map=reference.wall_layer,
             map_identity=map_identity,
             arrival_radius=arrival_radius,
-            resume_radius=20.0 if live_role_follow else None,
-            speed_units_per_second=80.0,
+            resume_radius=motion.resume_radius if live_role_follow else None,
+            speed_units_per_second=motion.speed_units_per_second,
             position_ttl_ms=self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS,
-            downsample_factor=8,
+            downsample_factor=motion.downsample_factor,
             # Narrow native passages remain open; local steering handles contact.
             safety_margin=0,
             clearance_radius=20.0,
@@ -1507,10 +1544,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             inflate_collision=False,
             stalled_ticks=8,
             contact_required_samples=4,
-            local_lookahead=24.0,
-            prediction_horizon=0.25,
+            local_lookahead=motion.local_lookahead,
+            prediction_horizon=motion.prediction_horizon,
             closed_loop_controller=ClosedLoopMotionController(
-                expected_speed=80.0,
+                expected_speed=motion.speed_units_per_second,
                 arrival_radius=arrival_radius,
                 max_frame_age_ms=self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS,
             ),
@@ -1546,14 +1583,217 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         p1 = self.follow_p1_combo.currentData()
         p2 = self.follow_p2_combo.currentData()
         values: dict[str, int] = {}
-        if mode in {"single_p1_program", "p1_leads", "both_program"} and p1 is not None:
+        if mode in {"single_p1_program", "p2_leads", "both_program"} and p1 is not None:
             values[str(p1)] = 1
-        if mode in {"single_p2_program", "p2_leads", "both_program"} and p2 is not None:
+        if mode in {"single_p2_program", "p1_leads", "both_program"} and p2 is not None:
             values[str(p2)] = 2
         return values
 
+    def _modular_follow_policy(self) -> tuple[str | None, tuple[str, ...]]:
+        """Return the optional live leader and its controlled followers."""
+        mode = str(self.follow_mode_combo.currentData() or "both")
+        p1 = self.follow_p1_combo.currentData()
+        p2 = self.follow_p2_combo.currentData()
+        if mode == "p1_leads" and p1 is not None and p2 is not None:
+            return str(p1), (str(p2),)
+        if mode == "p2_leads" and p1 is not None and p2 is not None:
+            return str(p2), (str(p1),)
+        return None, ()
+
+    def _ensure_modular_follow_adapter(self, roles: dict[str, int]) -> bool:
+        """Build the concrete adapter once a successful dual seed exists."""
+        if self._follow_engine_page_adapter is not None:
+            self._logger.info(
+                "step=follow_engine.adapter_reuse adapter_id=%s composition_id=%s stop_pending=%s start_pending=%s",
+                id(self._follow_engine_page_adapter),
+                id(self._follow_engine_composition) if self._follow_engine_composition is not None else None,
+                bool(getattr(self, "_modular_follow_stop_pending", False)),
+                bool(getattr(self, "_modular_follow_start_pending", False)),
+            )
+            return True
+        factory = self._follow_engine_page_adapter_factory
+        result = self._last_dual_first_frame_result
+        snapshot = self._snapshot
+        reference = self._dual_follow_reference
+        if factory is None or result is None or snapshot is None or reference is None:
+            return False
+        try:
+            from auto_modules.ui.modes.poe2_live_terrain.follow_engine_page_composition import (
+                build_follow_seed_from_dual_result,
+            )
+            from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization.models import (
+                MarkerColorProfile,
+            )
+
+            configured_profiles = getattr(self.monitor_config, "dual_marker_profiles", ())
+            marker_profiles = tuple(
+                item if isinstance(item, MarkerColorProfile) else MarkerColorProfile.from_dict(item)
+                for item in configured_profiles
+            )
+
+            seed = build_follow_seed_from_dual_result(
+                map_instance=str(snapshot.metadata.instance_id),
+                result=result,
+                roles=roles,
+                marker_profiles=marker_profiles,
+                initial_candidates=getattr(self, "_dual_initial_candidates", ()),
+            )
+            leader_role, target_roles = self._modular_follow_policy()
+            built = factory(
+                seed=seed,
+                monitor_config=self.monitor_config,
+                wall_map=reference.wall_layer,
+                native_shape=(int(snapshot.metadata.height), int(snapshot.metadata.width)),
+                leader_role=leader_role,
+                target_roles=target_roles,
+                arm_delay_ms=int(self._FOLLOW_COMMAND_ARM_DELAY_MS),
+            )
+            if isinstance(built, tuple) and len(built) == 2:
+                self._follow_engine_page_adapter, self._follow_engine_composition = built
+                self._follow_engine_adapter_owned = True
+            else:
+                self._follow_engine_page_adapter = built
+                self._follow_engine_composition = None
+                self._follow_engine_adapter_owned = False
+            return self._follow_engine_page_adapter is not None
+        except Exception as exc:
+            self._logger.exception("step=follow_engine.modular_adapter_build_failed")
+            self.follow_status_label.setText(f"模块化跟随：适配器构建失败 | {exc}")
+            return False
+
+    def _can_async_modular_lifecycle(self) -> bool:
+        return callable(getattr(getattr(self, "_follow_lifecycle_executor", None), "submit", None)) and hasattr(
+            self, "_follow_lifecycle_finished"
+        )
+
+    def _submit_modular_lifecycle(self, operation: str, action: Callable[[], Any]) -> None:
+        self._follow_lifecycle_serial += 1
+        serial = self._follow_lifecycle_serial
+        caller = " <- ".join(
+            f"{frame.function}:{frame.lineno}"
+            for frame in inspect.stack()[1:4]
+        )
+        if operation == "start":
+            self._modular_follow_start_pending = True
+        else:
+            self._modular_follow_stop_pending = True
+        self._logger.info(
+            "step=follow_engine.lifecycle_submit operation=%s serial=%s caller=%s adapter_id=%s composition_id=%s active=%s start_pending=%s stop_pending=%s",
+            operation, serial,
+            caller,
+            id(self._follow_engine_page_adapter) if self._follow_engine_page_adapter is not None else None,
+            id(self._follow_engine_composition) if self._follow_engine_composition is not None else None,
+            self._modular_follow_active, self._modular_follow_start_pending,
+            self._modular_follow_stop_pending,
+        )
+
+        def run() -> None:
+            self._logger.info(
+                "step=follow_engine.lifecycle_begin operation=%s serial=%s adapter_id=%s composition_id=%s",
+                operation, serial,
+                id(self._follow_engine_page_adapter) if self._follow_engine_page_adapter is not None else None,
+                id(self._follow_engine_composition) if self._follow_engine_composition is not None else None,
+            )
+            try:
+                action()
+            except BaseException as exc:
+                self._follow_lifecycle_finished.emit(serial, operation, False, exc)
+            else:
+                self._follow_lifecycle_finished.emit(serial, operation, True, None)
+
+        future = self._follow_lifecycle_executor.submit(run)
+        self._follow_lifecycle_future = future
+
+    def _on_follow_lifecycle_finished(
+        self, serial: int, operation: str, success: bool, error: object,
+    ) -> None:
+        self._logger.info(
+            "step=follow_engine.lifecycle_finished operation=%s serial=%s success=%s current_serial=%s adapter_id=%s composition_id=%s",
+            operation, serial, success, self._follow_lifecycle_serial,
+            id(self._follow_engine_page_adapter) if self._follow_engine_page_adapter is not None else None,
+            id(self._follow_engine_composition) if self._follow_engine_composition is not None else None,
+        )
+        if int(serial) != int(self._follow_lifecycle_serial):
+            # A later explicit stop/restart owns cleanup; stale completion must
+            # never re-enable the button or resurrect a follow timer.
+            return
+        if operation == "start":
+            self._modular_follow_start_pending = False
+            if not success:
+                self._logger.error("step=follow_engine.modular_start_failed_async error=%s", error)
+                self._modular_follow_active = False
+                self._modular_follow_live_mode = False
+                # The worker action already attempted adapter/composition
+                # cleanup.  Drop every owned reference here as well so a
+                # retry cannot reuse a stopped ring/worker generation.
+                if self._follow_engine_adapter_owned:
+                    self._follow_engine_page_adapter = None
+                self._follow_engine_composition = None
+                self._follow_engine_adapter_owned = False
+                self.follow_status_label.setText(f"模块化跟随：启动失败，已回收资源，可重试 | {error}")
+                self.start_follow_button.setEnabled(True)
+                self.stop_follow_button.setEnabled(False)
+                return
+            self._modular_follow_active = True
+            modular_interval = max(
+                16,
+                min(100, round(1000 / max(1, int(getattr(self.monitor_config, "localization_fps", 30))))),
+            )
+            self._follow_timer.setInterval(modular_interval)
+            self._follow_timer.start()
+            self.start_follow_button.setEnabled(False)
+            self.stop_follow_button.setEnabled(True)
+            arm_delay_ms = int(getattr(self, "_FOLLOW_COMMAND_ARM_DELAY_MS", 0))
+            self._modular_follow_arm_deadline = time.monotonic() + arm_delay_ms / 1000.0
+            self._modular_follow_last_countdown = None
+            self._modular_follow_poll_count = 0
+            self.follow_status_label.setText(
+                "模块化跟随：已启动，等待最新视觉帧；"
+                + (f"{math.ceil(arm_delay_ms / 1000)}秒后允许发送，请切回 PoE2" if arm_delay_ms else "输出已待命")
+            )
+            self._logger.info("step=follow_engine.modular_started_async timer_interval_ms=%s", modular_interval)
+            return
+
+        self._modular_follow_stop_pending = False
+        self._modular_follow_start_pending = False
+        self._modular_follow_active = False
+        self._modular_follow_live_mode = False
+        self._follow_timer.stop()
+        self._follow_timer.setInterval(self._follow_timer_default_interval)
+        self._follow_engine_page_adapter = None if self._follow_engine_adapter_owned else self._follow_engine_page_adapter
+        self._follow_engine_composition = None
+        self._follow_engine_adapter_owned = False
+        restart_requested = bool(getattr(self, "_modular_follow_restart_requested", False))
+        self._modular_follow_restart_requested = False
+        if restart_requested and success:
+            self.start_follow_button.setEnabled(False)
+            self.stop_follow_button.setEnabled(True)
+            self.follow_status_label.setText("模块化跟随：旧会话已回收，正在启动新会话")
+            self._logger.info("step=follow_engine.modular_restart_after_stop")
+            self._start_modular_follow_experiment()
+            return
+        self.start_follow_button.setEnabled(
+            self._dual_motion_tracker is not None
+            or bool(getattr(self, "_last_dual_first_frame_result", None) and getattr(self._last_dual_first_frame_result, "accepted", False))
+        )
+        self.stop_follow_button.setEnabled(False)
+        self.follow_status_label.setText("模块化跟随：已停止" if success else f"模块化跟随：停止完成但有错误 | {error}")
+
     def _start_modular_follow_experiment(self) -> bool:
         """Start the injected FollowEngine adapter without touching legacy state."""
+        if bool(getattr(self, "_modular_follow_stop_pending", False)):
+            self._modular_follow_restart_requested = True
+            self._logger.info("step=follow_engine.modular_start_deferred reason=stop_pending")
+            return True
+        if bool(getattr(self, "_modular_follow_start_pending", False)):
+            self._logger.info("step=follow_engine.modular_start_ignored reason=start_pending")
+            return True
+        roles = self._modular_follow_roles()
+        if not roles:
+            self.follow_status_label.setText("模块化跟随：当前模式没有程序控制角色")
+            return False
+        if not self._ensure_modular_follow_adapter(roles):
+            return False
         adapter = self._follow_engine_page_adapter
         if adapter is None:
             return False
@@ -1566,26 +1806,88 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         if snapshot is None or self._dual_map_transform is None or self._dual_follow_reference is None:
             self.follow_status_label.setText("模块化跟随：请先完成地图和双人首帧")
             return False
-        roles = self._modular_follow_roles()
-        if not roles:
-            self.follow_status_label.setText("模块化跟随：当前模式没有程序控制角色")
-            return False
+        # The modular vision process becomes the sole live minimap owner.  Do
+        # not leave the legacy Qt dual-motion worker capturing the same region
+        # and mutating the old tracker while the new engine is active.
+        if self._dual_motion_worker is not None or self._dual_motion_timer.isActive():
+            self._logger.info("step=follow_engine.modular_takeover stopping_legacy_dual_motion=True")
+            self.stop_dual_motion(clear_first_frame=False, preserve_follow=True)
+        leader_role, target_roles = self._modular_follow_policy()
+        self._modular_follow_live_mode = leader_role is not None and bool(target_roles)
+        configure = getattr(adapter, "configure_live_follow", None)
+        if callable(configure):
+            configure(leader_role=leader_role, target_roles=target_roles)
         map_instance = str(snapshot.metadata.instance_id).strip()
         if not map_instance:
             self.follow_status_label.setText("模块化跟随：地图实例无效")
             return False
+        start_config = FollowEngineStart(map_instance=map_instance, roles=roles)
+        if self._follow_engine_composition is not None and getattr(self, "_can_async_modular_lifecycle", lambda: False)():
+            self.start_follow_button.setEnabled(False)
+            self.stop_follow_button.setEnabled(True)
+            self.follow_status_label.setText("模块化跟随：正在后台启动 worker，请稍候")
+
+            def start_modular() -> None:
+                try:
+                    adapter.start(start_config)
+                except BaseException:
+                    try:
+                        adapter.stop(reason="start_failed")
+                    finally:
+                        self._follow_engine_composition.stop(reason="start_failed")
+                    raise
+
+            self._submit_modular_lifecycle("start", start_modular)
+            return True
         try:
-            adapter.start(FollowEngineStart(map_instance=map_instance, roles=roles))
+            adapter.start(start_config)
         except Exception as exc:
             self._logger.exception("step=follow_engine.modular_start_failed")
+            # A failed start can leave a constructed shared ring even though
+            # the port never became active. Dispose it before rebuilding from
+            # a fresh seed; do not retain the failed adapter for the next click.
+            try:
+                adapter.stop(reason="start_failed")
+            except Exception:
+                self._logger.exception("step=follow_engine.modular_start_adapter_cleanup_failed")
+            composition = self._follow_engine_composition
+            self._follow_engine_composition = None
+            if composition is not None:
+                try:
+                    composition.stop(reason="start_failed")
+                except Exception:
+                    self._logger.exception("step=follow_engine.modular_start_composition_cleanup_failed")
+            if self._follow_engine_adapter_owned:
+                self._follow_engine_page_adapter = None
+                self._follow_engine_adapter_owned = False
             self._modular_follow_active = False
-            self.follow_status_label.setText(f"模块化跟随：启动失败，旧链路未切换 | {exc}")
+            self._modular_follow_live_mode = False
+            self.follow_status_label.setText(f"模块化跟随：启动失败，已回收资源，可重试 | {exc}")
             return False
         self._modular_follow_active = True
+        # Drain the latest-only port at the same cadence as the configured
+        # visual sampler.  The old 100 ms experiment timer is too slow for a
+        # 30 FPS stream and needlessly increases target/observation age; the
+        # timer callback is non-blocking, so this does not serialize capture
+        # or control work onto the UI thread.
+        modular_interval = max(
+            16,
+            min(
+                100,
+                round(1000 / max(1, int(getattr(self.monitor_config, "localization_fps", 30)))),
+            ),
+        )
+        self._follow_timer.setInterval(modular_interval)
         self._follow_timer.start()
         self.start_follow_button.setEnabled(False)
         self.stop_follow_button.setEnabled(True)
-        self.follow_status_label.setText("模块化跟随：已启动，等待最新视觉帧")
+        arm_delay_ms = int(getattr(self, "_FOLLOW_COMMAND_ARM_DELAY_MS", 0))
+        self._modular_follow_arm_deadline = time.monotonic() + arm_delay_ms / 1000.0
+        self._modular_follow_last_countdown = None
+        self.follow_status_label.setText(
+            "模块化跟随：已启动，等待最新视觉帧；"
+            + (f"{math.ceil(arm_delay_ms / 1000)}秒后允许发送，请切回 PoE2" if arm_delay_ms else "输出已待命")
+        )
         self._logger.info(
             "step=follow_engine.modular_started map_instance=%s roles=%s timer_interval_ms=%s",
             map_instance, roles, self._follow_timer.interval(),
@@ -1601,7 +1903,49 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         try:
             state = adapter.poll()
             snapshot = state.snapshot
-            if snapshot is not None:
+            self._modular_follow_poll_count = int(getattr(self, "_modular_follow_poll_count", 0)) + 1
+            for panel, render, value in (
+                ("frame", self._render_modular_follow_frame, getattr(state, "preview_frame", None)),
+                ("map", self._render_modular_follow_map, snapshot),
+            ):
+                try:
+                    render(value)
+                except Exception:
+                    # Rendering is observational: retain countdown/status and
+                    # keep the other panel updating if one renderer fails.
+                    if self._modular_follow_poll_count == 1 or self._modular_follow_poll_count % 30 == 0:
+                        self._logger.exception("step=follow_engine.preview_render_failed panel=%s", panel)
+            remaining = max(0, math.ceil((getattr(self, "_modular_follow_arm_deadline", 0.0) - time.monotonic())))
+            if remaining != getattr(self, "_modular_follow_last_countdown", None):
+                self._modular_follow_last_countdown = remaining
+                self._logger.info("step=follow_engine.focus_handoff remaining_seconds=%s nonzero_allowed=%s", remaining, remaining == 0)
+            worker_fault = state.diagnostics.get("last_error") and (
+                state.diagnostics.get("rebuild_in_progress")
+                or any(value in {"error", "stalled", "exited", "failed"} for value in state.diagnostics.get("worker_state", {}).values())
+            )
+            if self._modular_follow_poll_count == 1 or self._modular_follow_poll_count % 30 == 0:
+                diagnostics = state.diagnostics
+                self._logger.info(
+                    "step=follow_engine.page_poll count=%s active=%s snapshot_tick=%s snapshot_roles=%s "
+                    "worker_state=%s worker_pids=%s output_state=%s output_diag=%s vision_seq=%s control_tick=%s last_error=%s arm_remaining=%s",
+                    self._modular_follow_poll_count,
+                    state.active,
+                    diagnostics.get("last_parent_event", {}).get("control"),
+                    tuple(getattr(snapshot, "roles", {}) or {}) if snapshot is not None else (),
+                    diagnostics.get("worker_state"),
+                    diagnostics.get("worker_pids"),
+                    diagnostics.get("output_state"),
+                    diagnostics.get("output_diagnostics"),
+                    diagnostics.get("last_parent_event", {}).get("vision"),
+                    diagnostics.get("last_parent_event", {}).get("control"),
+                    diagnostics.get("last_error"), remaining,
+                )
+            if remaining:
+                detail = f" | 等待恢复：{state.diagnostics['last_error']}" if worker_fault else ""
+                self.follow_status_label.setText(f"模块化跟随：准备中，{remaining}秒后允许移动，请切回 PoE2{detail}")
+            elif worker_fault:
+                self.follow_status_label.setText(f"模块化跟随：等待恢复 | {state.diagnostics['last_error']}")
+            elif snapshot is not None:
                 self.follow_status_label.setText(
                     "模块化跟随：%s（%s）" % (snapshot.recovery_state, snapshot.recovery_reason)
                 )
@@ -1612,8 +1956,13 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             if not state.active:
                 self._modular_follow_active = False
                 self._follow_timer.stop()
-                self.start_follow_button.setEnabled(self._dual_motion_tracker is not None)
+                self.start_follow_button.setEnabled(
+                    self._dual_motion_tracker is not None
+                    or bool(getattr(self._last_dual_first_frame_result, "accepted", False))
+                )
                 self.stop_follow_button.setEnabled(False)
+                self._modular_follow_live_mode = False
+                self._follow_timer.setInterval(self._follow_timer_default_interval)
         except Exception as exc:
             # A polling fault is non-terminal for the page; the adapter owns
             # the engine's recovery/cleanup contract.  Do not call the legacy
@@ -1627,21 +1976,88 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
                 elapsed_ms, self._modular_follow_active,
             )
 
+    def _render_modular_follow_frame(self, frame) -> None:
+        """Render the newest encoded Vision payload without consuming worker queues."""
+        if frame is None:
+            return
+        sequence = int(getattr(frame, "sequence", -1))
+        if sequence <= int(getattr(self, "_modular_preview_sequence", -1)):
+            return
+        payload = getattr(frame, "payload", None)
+        if not payload:
+            return
+        image = QImage.fromData(bytes(payload))
+        if image.isNull():
+            self._logger.warning("step=follow_engine.preview_decode_failed sequence=%s", sequence)
+            return
+        self._modular_preview_sequence = sequence
+        self._set_preview(self.frame_preview, QPixmap.fromImage(image))
+        # Processed masks remain private to Vision/Control. Clear stale legacy
+        # images instead of presenting an old frame as if it were current.
+        self._clear_label(self.processed_preview, "模块化 Vision：处理结果在子进程")
+        self._clear_label(self.feature_preview, "模块化 Vision：匹配特征在子进程")
+        self._logger.debug("step=follow_engine.preview_updated sequence=%s", sequence)
+
+    def _render_modular_follow_map(self, snapshot) -> None:
+        """Project the latest fused role positions onto the loaded large map."""
+        if snapshot is None or self._dual_map_source_size is None or self._dual_map_transform is None:
+            return
+        roles = getattr(snapshot, "roles", {}) or {}
+        players = {}
+        for role_id, role_state in roles.items():
+            point = getattr(role_state, "position_native", None)
+            if point is None:
+                continue
+            players[str(role_id)] = localization_display_point(
+                point,
+                source_size=self._dual_map_source_size,
+                transform=self._dual_map_transform,
+            )
+        if players:
+            self.map_widget.set_overlay(
+                players=players,
+                target=getattr(self, "_clicked_target_display", None),
+            )
+
     def start_follow_experiment(self, *, _sync_phase: str = "cold_start") -> None:
-        """Start a click target or a live role target with explicit output ownership."""
-        if self._follow_engine_page_adapter is not None:
-            # The injected adapter is an explicit migration switch.  It is
-            # deliberately checked before legacy construction so a modular
-            # session can never accidentally create the old runtime/output.
-            self.stop_program_move_probe(reason="已切换到模块化跟随")
-            self.stop_dual_target_experiment()
-            self.stop_follow_experiment(reason="modular_restart")
-            self._start_modular_follow_experiment()
+        """Start the modular follow session.
+
+        The page used to fall back to the old in-process runtime when the
+        modular adapter was not injected.  That fallback made a failed or
+        partially configured migration look like a valid follow session and
+        allowed the old timer/output ownership to re-enter after a restart.
+        The formal follow button is now modular-only: the legacy algorithm
+        components remain available behind the Control adapter, while the
+        legacy page runtime is never constructed from this entry point.
+        """
+        if self._follow_engine_page_adapter is None and self._follow_engine_page_adapter_factory is None:
+            self._logger.error(
+                "step=follow_engine.modular_start_rejected reason=adapter_unavailable "
+                "legacy_runtime_fallback_disabled"
+            )
+            self.follow_status_label.setText(
+                "模块化跟随：新架构未就绪，已拒绝启动（旧版跟随已禁用）"
+            )
             return
         # The entry point is intentionally idempotent.  Recovery callbacks and
-        # rapid UI activation can arrive while an older runtime still owns a
+        # rapid UI activation can arrive while an older session still owns a
         # timer, output lease, or prediction tracker; release that ownership
         # before constructing the replacement.
+        self.stop_program_move_probe(reason="已切换到模块化跟随")
+        self.stop_dual_target_experiment()
+        self.stop_follow_experiment(reason="modular_restart")
+        self._start_modular_follow_experiment()
+        return
+
+        # Kept below as unreachable source during the migration window only so
+        # old helper methods can be removed in a separate cleanup change.  No
+        # formal follow entry may execute this branch.
+        if False:
+            pass
+            # The entry point is intentionally idempotent.  Recovery callbacks and
+            # rapid UI activation can arrive while an older runtime still owns a
+            # timer, output lease, or prediction tracker; release that ownership
+            # before constructing the replacement.
         if (
             self._follow_runtime is not None
             or self._follow_timer.isActive()
@@ -2181,18 +2597,77 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
     def stop_follow_experiment(
         self, *, _preserve_recovery: bool = False, reason: str = "requested",
     ) -> None:
+        caller = " <- ".join(
+            f"{frame.function}:{frame.lineno}"
+            for frame in inspect.stack()[1:5]
+        )
+        self._logger.warning(
+            "step=follow_engine.stop_requested reason=%s caller=%s active=%s start_pending=%s "
+            "stop_pending=%s lifecycle_serial=%s poll_count=%s adapter_id=%s composition_id=%s",
+            reason, caller, self._modular_follow_active,
+            self._modular_follow_start_pending, self._modular_follow_stop_pending,
+            self._follow_lifecycle_serial,
+            getattr(self, "_modular_follow_poll_count", 0),
+            id(self._follow_engine_page_adapter) if self._follow_engine_page_adapter is not None else None,
+            id(self._follow_engine_composition) if self._follow_engine_composition is not None else None,
+        )
         self._experiment_composition.follow_probe.stop()
-        if self._modular_follow_active:
+        if self._modular_follow_stop_pending:
+            self._logger.info(
+                "step=follow_engine.stop_coalesced reason=stop_already_pending serial=%s",
+                self._follow_lifecycle_serial,
+            )
+            return
+        if self._modular_follow_active or self._modular_follow_start_pending or self._modular_follow_stop_pending:
             adapter = self._follow_engine_page_adapter
+            composition = self._follow_engine_composition
+            if getattr(self, "_can_async_modular_lifecycle", lambda: False)() and composition is not None:
+                self._modular_follow_active = False
+                self._modular_follow_live_mode = False
+                self._follow_timer.stop()
+                self.start_follow_button.setEnabled(False)
+                self.stop_follow_button.setEnabled(False)
+                self.follow_status_label.setText("模块化跟随：正在后台停止并回收资源")
+
+                def cleanup_modular() -> None:
+                    first_error = None
+                    try:
+                        if adapter is not None:
+                            adapter.stop(reason=reason)
+                    except BaseException as exc:
+                        first_error = exc
+                    try:
+                        composition.stop(reason=reason)
+                    except BaseException as exc:
+                        first_error = first_error or exc
+                    if first_error is not None:
+                        raise first_error
+
+                self._submit_modular_lifecycle("stop", cleanup_modular)
+                return
             try:
                 if adapter is not None:
                     adapter.stop(reason=reason)
             except Exception:
                 self._logger.exception("step=follow_engine.modular_stop_failed")
             finally:
+                self._follow_engine_composition = None
+                if composition is not None:
+                    try:
+                        composition.stop(reason=reason)
+                    except Exception:
+                        self._logger.exception("step=follow_engine.modular_composition_stop_failed")
+                if self._follow_engine_adapter_owned:
+                    self._follow_engine_page_adapter = None
+                    self._follow_engine_adapter_owned = False
                 self._modular_follow_active = False
+                self._modular_follow_live_mode = False
+                self._follow_timer.setInterval(self._follow_timer_default_interval)
                 self._follow_timer.stop()
-                self.start_follow_button.setEnabled(self._dual_motion_tracker is not None)
+                self.start_follow_button.setEnabled(
+                    self._dual_motion_tracker is not None
+                    or bool(getattr(self._last_dual_first_frame_result, "accepted", False))
+                )
                 self.stop_follow_button.setEnabled(False)
                 self.follow_status_label.setText("模块化跟随：已停止")
                 self._logger.info("step=follow_engine.modular_stopped reason=%s", reason)
@@ -2326,7 +2801,10 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._logger.info("step=map_click.cleared reason=%s", reason)
 
     def _on_follow_map_click(self, display_x: float, display_y: float) -> None:
-        if self._follow_runtime is not None and self._follow_live_mode:
+        if (
+            (self._follow_runtime is not None and self._follow_live_mode)
+            or (self._modular_follow_active and self._modular_follow_live_mode)
+        ):
             self._logger.info("step=live_role_follow.map_click_ignored reason=target_is_live_role")
             return
         source_size = self._dual_map_source_size
@@ -2514,7 +2992,7 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         runtime.set_simulated_target(point, now_ms=now_ms)
         try:
             # Do not arm directly from the click callback.  The shared tick
-            # owns the complete boundary: foreground check -> six-second
+            # owns the complete boundary: foreground check -> ten-second
             # handoff delay -> runtime decision -> arm/write.  Arming here
             # used to bypass that delay whenever the first target was clicked.
             if not self._follow_timer.isActive():
@@ -4455,6 +4933,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
             self._live_memory_future = None
 
     def shutdown(self) -> None:
+        self._logger.warning(
+            "step=follow_engine.lifecycle_shutdown_begin active=%s start_pending=%s stop_pending=%s serial=%s",
+            self._modular_follow_active, self._modular_follow_start_pending,
+            self._modular_follow_stop_pending, self._follow_lifecycle_serial,
+        )
         self._closing = True
         self._invalidate_dual_motion_session()
         self.stop_program_move_probe()
@@ -4467,7 +4950,22 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         if self._live_memory_future is not None:
             self._live_memory_future.cancel()
             self._live_memory_future = None
-        self._live_memory_executor.shutdown(wait=False, cancel_futures=True)
+        # A close is a hard resource boundary: do not let Qt and the Host
+        # manager exit while the serialized lifecycle task still owns worker
+        # processes or a controller lease.  The task itself has bounded worker
+        # stop timeouts; wait only for that bounded cleanup, then report a
+        # residual task instead of silently abandoning it.
+        lifecycle_future = self._follow_lifecycle_future
+        if lifecycle_future is not None and not lifecycle_future.done():
+            try:
+                lifecycle_future.result(timeout=4.0)
+            except TimeoutError:
+                self._logger.error("step=follow_engine.lifecycle_shutdown_timeout serial=%s", self._follow_lifecycle_serial)
+            except BaseException:
+                self._logger.exception("step=follow_engine.lifecycle_shutdown_task_failed")
+        self._live_memory_executor.shutdown(wait=True, cancel_futures=True)
+        self._follow_lifecycle_executor.shutdown(wait=True, cancel_futures=True)
+        self._logger.info("step=follow_engine.lifecycle_shutdown_finished")
         if self.capture_monitor_window is not None:
             self.capture_monitor_window.close()
         self.localization_control_dialog.close()

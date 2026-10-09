@@ -179,10 +179,16 @@ class VisualObservation:
     wall_shift: tuple[float, float] | None = None
     wall_quality: float = 0.0
     assignment_score: float = 0.0
+    association_diagnostics: Mapping[str, Any] = field(default_factory=dict)
     local_match_score: float | None = None
     local_match_radius: float | None = None
     source: ObservationSource = ObservationSource.NONE
     timing: StageTiming = field(default_factory=StageTiming)
+    # Optional registration state carried across a worker handover.  The
+    # concrete vision adapter stores its immutable SimilarityTransform2D here;
+    # keeping the contract opaque avoids coupling the generic runtime to the
+    # PoE2 transform implementation while preserving a pickle-safe DTO.
+    transform: Any | None = None
 
     def __post_init__(self) -> None:
         _validate_header(self.generation, self.sequence, self.captured_at_ms, self.map_instance)
@@ -195,6 +201,7 @@ class VisualObservation:
             object.__setattr__(self, "wall_shift", _point(self.wall_shift, "wall_shift"))
         object.__setattr__(self, "wall_quality", _bounded_score(self.wall_quality, "wall_quality"))
         object.__setattr__(self, "assignment_score", _bounded_score(self.assignment_score, "assignment_score"))
+        object.__setattr__(self, "association_diagnostics", _restore_frozen_mapping(self.association_diagnostics))
         if self.local_match_score is not None:
             object.__setattr__(self, "local_match_score", _bounded_score(self.local_match_score, "local_match_score"))
         if self.local_match_radius is not None:
@@ -255,6 +262,9 @@ class OutputIntent:
     vector: tuple[float, float]
     duration_ms: int
     neutral: bool = False
+    control_tick: int = 0
+    target_revision: int = 0
+    visual_sequence: int = -1
 
     def __post_init__(self) -> None:
         role = str(self.role_id).strip()

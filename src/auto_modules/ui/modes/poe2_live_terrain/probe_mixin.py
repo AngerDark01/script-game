@@ -23,6 +23,7 @@ from auto_modules.features.poe2.live_terrain.experimental.multiplayer_follow imp
     RoleId,
     SimulatedFollowRuntime,
 )
+from auto_modules.features.poe2.live_terrain.experimental.follow_contract import DYNAMIC_FOLLOW_CONTRACT
 from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localization import (
     inspect_minimap_contact,
 )
@@ -140,10 +141,10 @@ class Poe2ProbeMixin:
         runtime = SimulatedFollowRuntime(
             wall_map=reference.wall_layer,
             map_identity=map_identity,
-            arrival_radius=8.0,
-            speed_units_per_second=80.0,
+            arrival_radius=DYNAMIC_FOLLOW_CONTRACT.arrival_radius,
+            speed_units_per_second=DYNAMIC_FOLLOW_CONTRACT.speed_units_per_second,
             position_ttl_ms=self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS,
-            downsample_factor=8,
+            downsample_factor=DYNAMIC_FOLLOW_CONTRACT.downsample_factor,
             # The actor footprint is the hard body clearance. Keep the
             # downsample safety margin small so narrow doors are not inflated
             # twice into impossible walls.
@@ -158,11 +159,11 @@ class Poe2ProbeMixin:
             # Two visual samples can straddle a doorway transition. Require a
             # longer contact window before escalating to a memory re-anchor.
             contact_required_samples=4,
-            local_lookahead=24.0,
-            prediction_horizon=0.25,
+            local_lookahead=DYNAMIC_FOLLOW_CONTRACT.local_lookahead,
+            prediction_horizon=DYNAMIC_FOLLOW_CONTRACT.prediction_horizon,
             closed_loop_controller=ClosedLoopMotionController(
-                expected_speed=80.0,
-                arrival_radius=8.0,
+                expected_speed=DYNAMIC_FOLLOW_CONTRACT.speed_units_per_second,
+                arrival_radius=DYNAMIC_FOLLOW_CONTRACT.arrival_radius,
                 max_frame_age_ms=self._FOLLOW_RUNTIME_MAX_FRAME_AGE_MS,
             ),
         )

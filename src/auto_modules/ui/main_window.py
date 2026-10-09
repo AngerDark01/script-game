@@ -232,6 +232,9 @@ class MainWindow(QMainWindow):
                 None,
             ),
             program_output_factory=getattr(poe2_live_terrain, "program_output_factory", None),
+            follow_engine_page_adapter_factory=getattr(
+                poe2_live_terrain, "follow_engine_page_adapter_factory", None
+            ),
             parent=self,
         )
         self.stacked_widget.addWidget(self.poe2_terrain_page)

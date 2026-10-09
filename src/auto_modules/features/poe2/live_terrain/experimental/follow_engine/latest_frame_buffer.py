@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Lock
 from typing import Generic, TypeVar
+import time
 
 
 T = TypeVar("T")
@@ -50,3 +51,16 @@ class LatestFrameBuffer(Generic[T]):
     def clear(self) -> None:
         with self._lock:
             self._latest = None
+
+    def diagnostics(self, *, now_ms: float | None = None) -> dict[str, float | int | None]:
+        with self._lock:
+            latest = self._latest
+            dropped = self._dropped
+        captured = getattr(latest.value, "captured_at_ms", None) if latest is not None else None
+        now = time.monotonic() * 1000.0 if now_ms is None else float(now_ms)
+        return {
+            "queue_depth": 0 if latest is None else 1,
+            "latest_sequence": None if latest is None else latest.sequence,
+            "latest_only_dropped_count": dropped,
+            "queue_age_ms": None if captured is None else max(0.0, now - float(captured)),
+        }

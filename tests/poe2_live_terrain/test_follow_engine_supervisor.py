@@ -84,3 +84,30 @@ def test_supervisor_clears_token_even_when_worker_stop_reports_error():
         assert str(exc) == "worker stop failed"
     assert supervisor.status.state is SupervisorState.STOPPED
     assert supervisor.status.generation is None
+
+
+def test_supervisor_restarts_worker_that_exits_without_publishing_event():
+    class DeadProcess:
+        def is_alive(self):
+            return False
+
+    class SilentDeadWorker(FakeWorker):
+        def __init__(self):
+            super().__init__([])
+            self.process = DeadProcess()
+
+    workers = []
+
+    def factory():
+        worker = SilentDeadWorker()
+        workers.append(worker)
+        return worker
+
+    supervisor = ProcessSupervisor(factory, max_restarts=0, backoff_ms=(0,))
+    token = GenerationClock().begin("map-a")
+    supervisor.start(token)
+    assert supervisor.poll(now_ms=0) is None
+    assert supervisor.status.state is SupervisorState.FAILED
+    assert supervisor.status.last_error == "worker_exited_without_event"
+    assert workers[0].stopped == 1
+    supervisor.stop()

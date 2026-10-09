@@ -37,6 +37,9 @@ from auto_modules.features.poe2.live_terrain.experimental.multiplayer_localizati
     Poe2DualPlayerPositionSource,
 )
 from auto_modules.paths import data_root
+from auto_modules.ui.modes.poe2_live_terrain.follow_engine_page_composition import (
+    build_poe2_follow_engine_page_adapter,
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ class Poe2LiveTerrainComposition:
     multiframe_localization_factory: Any
     dual_localization_factory: Any = None
     program_output_factory: Any = None
+    follow_engine_page_adapter_factory: Any = None
 
 
 class _ThreadLocalPreviewCapture:
@@ -183,6 +187,12 @@ def build_poe2_live_terrain_composition(
             return build_dual_localization(snapshot, config_provider)
         return build_hybrid_localization(snapshot, config_provider)
 
+    def build_follow_engine_page_adapter(**kwargs):
+        return build_poe2_follow_engine_page_adapter(
+            program_output_factory=program_output_factory,
+            **kwargs,
+        )
+
     runtime = Poe2HybridProductRuntime(
         build_product_localization,
         initial_config=profile_store.active() or config_store.load(),
@@ -209,4 +219,5 @@ def build_poe2_live_terrain_composition(
         multiframe_localization_factory=build_multiframe_localization,
         dual_localization_factory=build_dual_localization,
         program_output_factory=program_output_factory,
+        follow_engine_page_adapter_factory=build_follow_engine_page_adapter,
     )

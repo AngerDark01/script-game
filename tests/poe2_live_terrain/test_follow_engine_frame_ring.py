@@ -31,3 +31,22 @@ def test_shared_frame_ring_is_bounded_and_returns_latest_payload():
         assert ring.read_latest(after_sequence=2) is None
     finally:
         ring.close(unlink=True)
+
+
+def test_shared_frame_ring_rejects_wrong_instance_and_reads_exact_sequence():
+    ring = SharedFrameRing(capacity=2, slot_size=32, map_instance="map-a")
+    try:
+        assert ring.publish(SharedFrameRecord(1, 4, 40, "map-a", b"four")) is True
+        assert ring.read(4) is not None
+        assert ring.read(3) is None
+        try:
+            ring.publish(SharedFrameRecord(1, 5, 50, "map-b", b"wrong"))
+        except ValueError as exc:
+            assert "map instance" in str(exc)
+        else:
+            raise AssertionError("wrong map instance was accepted")
+        ring.rebind_session(map_instance="map-b")
+        assert ring.read_latest() is None
+        assert ring.publish(SharedFrameRecord(2, 6, 60, "map-b", b"six")) is True
+    finally:
+        ring.close(unlink=True)
