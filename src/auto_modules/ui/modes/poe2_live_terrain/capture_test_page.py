@@ -1073,9 +1073,11 @@ class Poe2CaptureTestPage(Poe2LocalizationMixin, Poe2PageLifecycleMixin, Poe2Pro
         anchors = experiment.read_anchors(snapshot.metadata.instance_id)
         memory_ms = (time.perf_counter() - memory_started) * 1000.0
         self._logger.info(
-            "step=dual_first_frame.memory_success read_count=%s identities=%s anchors=%s",
+            "step=dual_first_frame.memory_success read_count=%s identities=%s anchors=%s "
+            "memory_diagnostics=%s",
             anchor_provider.read_count, tuple(anchors),
             {identity: anchor.position for identity, anchor in anchors.items()},
+            getattr(source, "last_read_diagnostics", {}),
         )
         configured_profiles = getattr(self.monitor_config, "dual_marker_profiles", ())
         profiles = tuple(MarkerColorProfile.from_dict(item) for item in configured_profiles)

@@ -6,7 +6,7 @@ Make the PoE2 dual-player experiment responsive and stable by registering one st
 
 - First-frame registration is a one-shot data task: one memory-anchor snapshot, one screenshot, one candidate extraction, one registration, one result application.
 - The live worker keeps a latest-only result slot. It measures capture, recognition, candidate extraction, tracking, and total processing time separately.
-- `DualVisualTracker` returns the last trusted per-role/map estimate during a short visual gap. It records prediction age and uncertainty; it requests recovery only after the bounded prediction window or map validity fails.
+- `DualVisualTracker` returns the last trusted per-role/map estimate during a short visual gap. It records prediction age and uncertainty; it requests recovery only after the bounded prediction widfndow or map validity fails.
 - UI preview/evidence rendering remains throttled and cannot block the control frame.
 - No collision-radius, marker-color, or global confidence retuning is included in this change.
 

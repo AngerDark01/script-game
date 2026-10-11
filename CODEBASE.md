@@ -1094,7 +1094,7 @@ features/poe2/live_terrain/experimental/hybrid_localization/composition.py - PoE
 features/poe2/live_terrain/experimental/multiplayer_localization/__init__.py - 双人首帧与运动实验的导出入口。
 features/poe2/live_terrain/experimental/multiplayer_localization/models.py - 双人候选、颜色配置、身份位置和首帧结果的不可变契约。
 features/poe2/live_terrain/experimental/multiplayer_localization/marker_candidates.py - 将 PoE2 颜色观测转成未赋身份的双人候选；先按 bbox IoU/中心距离做轮廓非极大值抑制，再保证不同 profile/identity hint 各保留一个代表，避免同一人物的多轮廓挤掉另一名玩家。
-features/poe2/live_terrain/experimental/multiplayer_localization/memory_anchors.py - 两名人物只读内存坐标到 native 地图锚点的实验适配器。
+features/poe2/live_terrain/experimental/multiplayer_localization/memory_anchors.py - 两名人物只读内存坐标到 native 地图锚点的实验适配器；记录 PID/descriptor/layout/entity scan/component resolve/ReadProcessMemory 调用次数与耗时，按进程和地图失效条件缓存组件名到 slot，异常保留 `dual_memory.read_failed`。
 features/poe2/live_terrain/experimental/multiplayer_localization/dual_first_frame.py - 双人共同形状、方向、镜像和两锚点首帧注册。
 features/poe2/live_terrain/experimental/multiplayer_localization/experiment.py - 一次性内存锚点、截图和注册的 PoE2 实验组合。
 features/poe2/live_terrain/experimental/multiplayer_localization/dual_motion.py - 共享墙体视口位移、独立人物识别、有界纠偏和恢复请求的纯视觉实验状态。
@@ -2444,7 +2444,7 @@ Current typed boundary: `NavigationCore.localize_result()` delegates exactly onc
 3. `_plan_safe_route(start,end)` 逐尺度调用通用 A*，对实际起点→首节点、每对相邻节点、末节点→目标在膨胀碰撞图上执行 corner-safe 线段校验；再用原始墙图计算每条链的最小清距和暴露量，按 `route_length + clearance_weight * exposure` 选择安全候选，输出不包含设备副作用。跟踪器和模拟步进也使用同一膨胀图，避免规划安全而执行阶段擦墙。
 4. `_wall_start_recovery()` 只在观测栅格被判为墙时搜索半径 12 native 内的可行走起点，并要求该起点到真实目标存在安全路线；`update_follower_position()` 在新视觉样本到达时用上一周期 command vector 与 native 位移计算 cosine alignment/夹角，连续三次低于 0.20 会进入左右交替 recovery。
 
-`Poe2CaptureTestPage._localization_interval() -> int` 将配置的 `localization_fps` 转成周期，并以 legacy `sample_interval_ms` 作上限；`_preview_interval()` 单独按 `preview_fps` 计算低优先级预览周期。`run_dual_first_frame_experiment()` 只读取一次双人 native anchors，最多采集三张短间隔截图，对每张调用注册器并按 accepted、pair confidence、shape quality、anchor error 选择候选，避免首张过渡帧决定整次首帧结果。
+`Poe2CaptureTestPage._localization_interval() -> int` 将配置的 `localization_fps` 转成周期，并以 legacy `sample_interval_ms` 作上限；`_preview_interval()` 单独按 `preview_fps` 计算低优先级预览周期。`run_dual_first_frame_experiment()` 只读取一次双人 native anchors，最多采集三张短间隔截图，对每张调用注册器并按 accepted、pair confidence、shape quality、anchor error 选择候选，避免首张过渡帧决定整次首帧结果；`_compute_dual_first_frame()` 同时记录 `memory_diagnostics`，包括进程描述符/布局缓存命中、当前地图实体扫描、组件解析、底层读取次数和异常诊断。
 
 `Poe2DualMotionWorker._capture_one()` 在 worker 线程中完成一帧截图、预处理、颜色候选和 `DualVisualTracker.tick()`；`_offer()` 以单槽替换语义发布图像，并在覆盖前独立取最大 `recovery_revision` 存入待消费槽。`take_latest()` 清图像通知，`take_pending_recovery_revision()` 单独取出并清零恢复版本，故边沿图像被覆盖仍可恢复。`_run()` 对每帧异常只递增 `failed_frames` 并发出 `frame_failed`，成功帧清零连续失败；达到 `max_consecutive_failures` 才发出 `failed`。页面先消费恢复版本并释放输出，再进行内存重锚；只在 Qt 线程绘制。
 

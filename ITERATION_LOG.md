@@ -1,5 +1,21 @@
 # Iteration Log
 
+## 2026-10-10 实验能力抽取设计 — C 结果
+
+实验实现 `65dff05`、成功会话补充 `5607475` 已在读码前提交。三份设计文档已写在 `docs/plans/2026-10-10-poe2-{experiment-module-inventory,layered-engine-design,engine-extraction-roadmap}.md`，分别覆盖现状模块、目标分层契约/包布局、P0–P6迁移验收。复核事实：当前PoE2 UI composition创建`LegacyDynamicFollowRouteController`，不是未装配的map-aware实验控制器；global recovery类存在但本composition未接；内存冷却8000ms。推荐先契约与状态owner再纵向切换，不直接整体搬迁。未改源码；这轮没有源码行为变化，`CODEBASE.md`无需SYNC，新增设计证据记在断点。下步用户审阅方案。
+
+## 2026-10-10 实验能力抽取设计 — A 阅读范围
+
+基线 `65dff05` + `5607475` 已提交。本轮只读正式项目架构与实验跟随实现，输出模块盘点、目标分层/契约、阶段迁移/验收文档；不修改源码。先审 `ARCHITECTURE_GUIDE.md`、`CODEBASE.md`、正式导航/定位/输入/地图目录，再沿 CodeGraph 指向的实验主链阅读；每轮发现即时写入 `docs/POE2_EXPERIMENTAL_ENGINE_EXTRACTION_CHECKPOINT.md`。所有未经源码确认的设计项标“建议”，不宣称现有能力。
+
+### 初轮发现
+
+`ARCHITECTURE_GUIDE.md` 明确 stable responsibility 的实用通用化和依赖方向；CodeGraph命中实验 `FollowEngine`、`OutputScheduler`、`RecoveryPolicy` 以及正式 `NavigationCore`、通用感知。目录显示多项底层能力已存在，不能复制出第二个通用引擎。已回填新断点；下一轮精读装配、视觉/融合/恢复、正式导航与输入边界。
+
+### 次轮发现
+
+已读实验 `composition.py`、`engine.py::_poll_once_unlocked`、`DualObservationProcessor.process`、`FollowControlRuntime.apply_visual`/`tick`相关段、`RecoveryPolicy`、UI装配、正式Torchlight跟随与 `MultiMarkerLocalizer`/A*。发现状态归属集中于Control，UI层实际装配了PoE2服务；Core已有复用能力但语义未完全覆盖Command融合；历史架构快照不作为当前代码路径依据。受限于本轮方案范围，未将这些文件标为`深度完整`；详细边界写入新断点。下一步出三份设计文档，核对依赖和成功行为保护门。
+
 ## 2026-10-09 最新成功体验核验 — C 结果
 
 已核对22:06:14–22:09:22会话（65dff05，代码无新增改动）。用户确认实际成功，日志证明持续视觉融合、局部ROI纠偏和seq1294双帧确认→Control约69native px修正；不是纯预测。详细采样性能及尾部异常已写断点：control stall一次并重建3.509s，最后closeEvent关闭；runtime有一次Host session expired，不能漏报。仅记录成功边界，不修改算法/参数，不把采样日志计数当全帧概率，不宣称全场景验收。未读改源码，无CODEBASE架构同步需求。
@@ -11674,3 +11690,69 @@ E1–E6完成本批代码与文档。新模块diagnostic_events独立承担有�
 按 docs/plans/2026-10-09-follow-evidence-completion.md 执行。先复核 E1 page poll/test double，再阅读诊断 DTO 与输出回执边界；修改后同步 CODEBASE。Serena 项目已激活，initial_instructions 服务返回 inactive（工具配置限制），使用可用 symbol 工具和 CodeGraph。不发送真实输入。
 
 E1–E5 material findings: E1 是测试替身遗漏 + 实际渲染异常阻断状态两件事，不能误报实机崩溃。E2/E3 诊断历史已过父进程，E4 receipt trace 已联通。E5 发现确认仅全图单候选、确认后 confidence=0、ROI 面积/身份绕过三个遗漏，定向修复；对应反例已复现。下一步 SYNC 本批修改（diagnostic_events、contracts、execution_feedback、control、engine、vision、marker_association、page）；目前未验证实机。
+2026-10-11 latest user-run first-frame diagnosis (read-only): logs after 17:00 local report actual 19:16--19:25 sessions. 19:18:44, 19:19:03, 19:20:12, 19:21:22, 19:21:52 had memory_success and capture_success, but result=ambiguous because 3 candidates for 2 roles produced best-vs-second assignment margins 0.0220--0.0241 below configured 0.03; best pair confidence 0.871--0.888 and anchor error≈0. 19:23:19 had 2 candidates and margin 0.0959, accepted. Root cause is third-marker identity ambiguity, not memory/capture/spawn/wall failure. Generation 5 was stopped before completion. No code/input changes.
+2026-10-11 follow-up reasoning: proximity of P1/P2 candidates should be a scoring signal, but failed-frame distances were ~53.04 for the apparent pair and ~52.00/~59.91 for distractor pairs versus memory baseline ~51.65; proximity alone still cannot uniquely disambiguate. Registrar enumerates pairs and two-point transforms can fit each pair with near-zero anchor error; current logs omit candidate confidence/area/color identity and pair-level distances. Need candidate-level evidence before policy change; no runtime edits/input.
+2026-10-12 clarification and source correction: the intended invariant is each frame candidate separately maps via one common transform to its corresponding first memory P1/P2 native anchor. Source does compute per-role anchor_error, but each candidate assignment first gets its own two-point transform, so wrong pairs can self-fit both anchors with near-zero residual; memory agreement is therefore not independent validation. Need independent map/wall/known transform or third-frame confirmation before using anchor residual as identity proof. No runtime edits/input.
+2026-10-12 integrated-thread design review (read-only): latest peer thread confirms first-frame bottlenecks are memory 3.6–4.2s and registration 2.6–11.2s, while capture/candidate extraction are minor. New proposal separates one-time memory anchor read, independent transform prior, role-specific P1/P2 anchor validation, per-frame dual visual correction, and low-frequency role-scoped memory/global fallback. Two-point candidate-fitted transforms cannot serve as independent identity proof. Targets are engineering budgets only; no runtime code/input changes.
+# 2026-10-11 首帧性能核对（只读）
+- 核对最新首帧日志：memory 约 3.6–4.2s，capture 10–41ms，recognition 11–101ms，registration 2.6–11.2s，total 6.5–15.1s；主要瓶颈为内存实体读取和绝对配准搜索。
+- 当前已有阶段总计时，但缺少内存内部阶段、单组 assignment/variant、形状搜索、post-validation、worker 排队计时；本轮未改源码。
+- 提速必须先补齐细粒度计时，再做单变量优化，不能直接降低双角色 ambiguous 身份安全门槛。
+
+# 2026-10-11 19:16–19:25 跟随会话排查（只读）
+- 前两次停止均为 `page_hidden -> hideEvent -> suspend -> stop_follow_experiment`，解释了缩小/切换窗口后退出；不是 worker 崩溃。
+- 第三次运行约 75 秒，Vision/Control/parent poll 健康；P1 视觉失配升级到 memory reanchor，共享 `memory_in_flight` 使仍视觉健康的 P2 也收到 `memory_reanchor_in_flight/hold` 和 neutral，形成 P2 不动。
+- Host 在进入 hold 前仍连接并提交 controller=2 非零报告；本轮未改源码、未发送真实输入。详见 `docs/POE2_FOLLOW_ROLLBACK_CHECKPOINT.md`。
+
+# 2026-10-12 P1失配完整时间轴（只读）
+- P1 最后可信 sequence=1066；19:24:58.822 sequence=1067 仅剩 P2 候选，P1 local ROI `no_match`，进入 prediction_after_visual_miss。P2 此时仍 visual_match。
+- 19:25:00.240 P1 misses=31、age=1502ms，提交 memory recovery。P2 仍 visual_visible=True、misses=0、age=98ms，但共享 `memory_in_flight` 使 P2 进入 `memory_reanchor_in_flight/HOLD`，target_revision=791 冻结，后续全为 neutral。
+- 19:25:00.240 至 stop 19:25:06.407 没有 memory completion/success/failure；Control 最终在19:25:08.543超时强制终止，因此没有恢复后重新对齐阶段。P2停动根因和证据详见 checkpoint。
+
+# 2026-10-12 P1连续失配证据（只读）
+## 2026-10-12 淘汰代码审计 A1（阅读前声明）
+### A1 发现 / A2 目标
+### A2 发现 / A3 目标
+- (verified) 旧 probe follow 恢复桥启动 modular-only 入口后仍检查旧 `_follow_runtime`，接口不一致。页面旧 memory executor 初始化/关闭实际存在，但新 Control 自有恢复链。
+- 已读：probe_mixin 607–855、capture page 旧启动/恢复/关闭主体、follow_engine_adapter 全文、ui_adapter 全文；engine 目标桥/relay 关键函数。未读文件不标完整。
+- A3：查看 experimental 组合/应用/follow/probes 的实际引用；独立功能和共享算法保留，纯挂壳和旧桥列清理项。
+
+### A3 发现
+- (verified) `experimental/probes/controllers.py` 的三个 probe 仍被页面按钮和地图点击调用；不是淘汰代码。`ExperimentRuntime`/`Poe2ExperimentComposition` 同样被这些实验使用。
+- (verified) `LegacyDynamicFollowRouteController` 是正式 FollowEngine composition 的 route adapter，名称不能作为删除依据。
+- (verified) `FollowEnginePageAdapter._refresh_live_targets` 正式配置会短路，但仍服务不具备 live policy 的旧适配器；暂列 U，不直接删除。
+- 淘汰审计的首批 D0/D1/K/U 清单已写入 `docs/POE2_LEGACY_CODE_AUDIT_CHECKPOINT.md`；本轮没有删除源码。
+- 下一步：用户确认是否保留地图移动/双人同目标实验后，再执行 D0 删除或继续收口 D1；在此之前不改运行链路。
+- (verified) 正式 composition→LegacyDynamicFollowRouteController→SimulatedFollowRuntime.tick 是活跃依赖；历史算法不可删除。旧页面 start return 后分支确定不可达，其他 helper 尚需逐调用证明。
+- 覆盖：route_controller 旧适配器完整；follow_engine_page_composition 组合主体完整；capture_test_page/dual_motion_mixin partial，截断内容尚未补齐。
+- A2：读取旧页面启动、恢复、生命周期，追踪 timer/点击/worker 回调和新 engine relay，识别仍可触发的旧执行行为。
+- 目标：capture_test_page、页面 composition、FollowEngine composition 与 legacy route adapter；先建立正式入口和仍复用策略边界，不删除运行代码。
+- 独立断点：docs/POE2_LEGACY_CODE_AUDIT_CHECKPOINT.md。后续按轮记录已读范围与可达性，不以名字直接裁定淘汰。
+
+- sequence=1067起候选数由双候选变为单一P2候选，P1 local ROI返回no_match；后续仍是P2单候选或无候选。采集/处理正常，wall_quality约0.99，无capture失败或大色块过滤。
+- 当前日志没有保存该时段原始小地图/颜色掩码路径，仓库也没有找到19:24:58–19:25:06对应截图，因此只能确定失配发生在候选提取/关联层，不能从现有证据判定遮挡、颜色变化或合并。P1未恢复，memory提交后会话结束前无完成事件。
+
+# 2026-10-12 内存读取与首帧方案澄清（只读）
+- 追踪 `read_once`/`read_many` 到外部 `windows_capture.py`：首次 cache miss 包含可执行文件 SHA-256、模块/布局解析和 guard 读取；每次仍扫描实体向量、逐实体读 metadata，并通过多次 `ReadProcessMemory` 解析组件和 Render 地址。PID/descriptor/layout 有部分缓存，但 reader、entity、Render 地址没有缓存。精确热点尚未有内部计时，本轮未改代码。
+- 按用户澄清修订首帧：内存 P1/P2 是 native 真值；局部大地图与监控帧先独立求 transform，再逐角色用颜色/面积/身份/native 距离匹配。候选相对距离只作辅助；无法唯一确认时给出 pending/初始 seed，交给后续帧纠偏，不降低 ambiguous 安全门槛。
+- 2026-10-12 初始化边界修订（只读）：通用初始化只覆盖整个 PoE2 进程生命周期（PID/创建时间/句柄、build hash、模块基址、通用 GameState 入口、版本偏移/指针路径/读取能力和常量），不获取地图实例、地图数据或 P1/P2 身份位置。每次进入异界地图/首帧都必须重新读取当前 area/state/地图数据，并重新发现 P1/P2 metadata、entity 和 Render 位置；不能把地图/实体地址缓存成跨地图通用参数。
+- 2026-10-12 首帧定位实施方案（只读）：新增 `docs/plans/2026-10-12-poe2-dual-first-frame-redesign.md`，拆分 P0 内部计时、P1 进程级通用 context、P2 当前地图首帧读取、P3 独立局部 transform、P4 memory-anchor 主导匹配、P5 模块化入口接入、P6 生命周期/性能回归；明确不改运动策略、路径规划、输出参数和 Vision/Control/Output owner。尚未修改运行代码。
+
+- 2026-10-12 运行实例术语澄清（只读）：`start_follow_experiment()` 清理的“旧”首先是上一次仍存活的移动探针、双人目标 runtime 和 follow adapter/composition；它们可能持有 timer、输出 lease、tracker 或 worker。该词不等于旧算法版本；页面仍保留 legacy 兼容组件，需和历史运行实例分开记录。
+
+## [SYNC] 2026-10-12 首帧定位性能与异常日志修复
+
+### A. SYNC 范围声明
+**触发任务：** 按已确认方案修复首帧内存读取和定位性能，并保留完整异常日志。
+**直接变更文件：** `player_position.py`、`memory_anchors.py`、`dual_first_frame.py`、`capture_test_page.py` 及对应 focused tests。
+**预计连带影响：** 进程级内存上下文、当前地图首帧读取、首帧注册 DTO/状态、页面首帧日志和现有模块化 composition；不改变路径、局部避障、脉冲、手柄、Vision/Control/Output owner。
+
+### C. SYNC 结果
+**连带重读文件：** `memory_anchors.py`、`capture_test_page.py`、`experiment.py`、`dual_first_frame.py`、`tests/poe2_live_terrain/test_multiplayer_first_frame.py`、`CODEBASE.md`。
+**代码改动：** `Poe2DualPlayerPositionSource` 现在对一次当前地图读取记录 PID 查找、descriptor/layout 缓存命中、module/layout、entity scan、metadata/component 数量、底层 `ReadProcessMemory` 代理调用次数/字节数和总耗时；`Poe2DualMemoryAnchorProvider` 对成功和异常分别写 `dual_memory.read_success/read_failed`，异常继续向上抛出，不再静默丢失。页面 `dual_first_frame.memory_success` 同时输出这些诊断字段。
+**验证：** `tests/poe2_live_terrain/test_multiplayer_first_frame.py` 20 passed；首帧/跟随组合集合 46 passed。尚未进行真实 PoE2/Host 测试，因此尚未声称速度已提升；下一步用一次真实首帧日志比较内部阶段耗时，再决定 reader/实体缓存优化。
+**新增风险边界：** 当前实现先补齐可观测性，仍未把 `ProcessReader` 句柄和当前地图 entity/Render 地址做跨调用缓存；这些缓存必须在确认进程/地图/实体失效条件后再实现。
+
+### C. SYNC 增量结果
+**实现：** `resolve_component_addresses()` 增加可选的组件名到 slot 缓存；双角色 source 按 PID 清理该缓存，地图实例失配时也清理，动态 entity/component 指针仍每次当前地图首帧读取。页面成功日志保留完整 `memory_diagnostics`，内存异常通过 `dual_memory.read_failed` 记录后继续抛出。
+**验证：** 首帧集合 20 passed，composition 集合 28 passed，`compileall` 和 `git diff --check` 继续执行；真实速度尚未测量。

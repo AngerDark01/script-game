@@ -1445,3 +1445,206 @@ K = σ_prediction² / (σ_prediction² + σ_observation²)
 - `(implemented)` `MarkerAssociator` now rejects candidate areas above a conservative 48 px² soft ceiling (area=0 remains unknown/compatible with synthetic and legacy candidates) before role assignment, and exposes filtered candidate IDs in diagnostics. This is a second-line guard; profile `min_area/max_area` filtering remains unchanged.
 - `(verified-offline)` Marker association, vision, control and page focused set: `31 passed`; no game/Host/input.
 - `(risk)` The 48 px² value is evidence-based from historical accepted samples but remains a tunable safety parameter; real visual scale changes must be checked before lowering it further.
+## 2026-10-11 17:00后首帧失败只读诊断
+
+- 实际 `poe2_live_terrain.log` 中对应运行时间为 19:16--19:25（日志时区）；本轮未改代码、未发输入。
+- 19:16:26、19:17:36 两次首帧 `status=accepted`，分别为 3 candidates / score 0.8175 和 3 candidates / score 0.8997。
+- 19:18:44、19:19:03、19:20:12、19:21:22、19:21:52 的首帧结果为 `status=ambiguous`，均不是内存读取或截图失败；memory_success 和 capture_success 均已出现。
+- 失败共同原因是 `two marker-to-memory assignments are too close`。19:18/19:19/19:20 使用相同 3 candidates `(82,125),(80,178),(130,145)`，最佳与次佳 assignment margin 约 0.02204；19:21/19:22 candidates `(85,159),(77,144),(127,133)`，margin 约 0.0241/0.0240；配置 `assignment_margin=0.03`，因此按设计被拒绝以避免把第三个干扰 marker 当成 P1/P2。
+- 候选数量为 3 而角色数为 2，第三 marker 使多个角色-内存映射均能得到高分；不是 wall_quality、进程启动、内存断开或 transform 数值异常。最佳 pair confidence 仍约 0.871--0.888，anchor error≈0，说明几何拟合本身好，但身份分离度不足。
+- 19:23:19 的下一次尝试只有 2 candidates `(72,159),(89,143)`，assignment margin 0.0959，结果 accepted；说明候选干扰消失后首帧能正常通过。
+- 19:19:21 generation=5 在停止流程中被启动但没有出现 `memory_success/capture_success/result`；随后 19:19:24 页面关闭退休 worker，不能算新的定位算法失败。
+- 当前根因结论：首帧注册的拒绝门正确拦截了“高拟合但身份不确定”的第三 marker 干扰；用户看到的失败表现来自单帧候选集合/角色身份可分性不足与固定 margin 门限，而非首帧截图、内存或多进程启动故障。下一步只读需要确认第三候选的颜色/面积/身份特征和 first-frame 重试策略，暂不放宽 `assignment_margin`。
+
+### 对“优先选择 P1/P2 相互更近候选”的推导
+
+- 该方向应纳入评分，但失败帧中不能仅凭屏幕欧氏距离解决：候选 `(82,125),(80,178)` 的间距约 53.04；与第三候选 `(130,145)` 组成的两组间距约 52.00/59.91，至少第一组三点组合仍与真实内存锚点间距约 51.65 接近。因此现有日志不能证明“最近 pair”唯一指向前两点。
+- `DualFirstFrameRegistrar` 当前明确不使用 marker color 推断身份，而是枚举所有 marker→memory assignment；两点相似变换可对任意非退化 pair 精确拟合两个 anchor，造成多个 assignment anchor_error≈0。于是 geometry score 和 pair proximity 在该帧都不足以单独排除第三点。
+- 更可靠的候选顺序应是组合证据：候选 P1/P2 的 pair 距离与内存 pair 距离在允许尺度范围内一致、两点相对于地图形状/墙体的整体 registration 质量、候选颜色/identity/profile、候选置信度/面积，以及连续新帧的稳定性；任一单项不能直接绕过 ambiguity gate。
+- 当前 first-frame 日志未输出 candidate confidence、面积、颜色 identity 或每个 pair 的距离/综合分数，只输出 positions 和最终 assignment_scores，因此不能仅凭日志断言 `(82,125),(80,178)` 就是正确 pair。需要下一次诊断先补齐候选级字段，再决定评分设计。
+
+### 用户澄清后的修正：真正约束是“分别对应内存 P1/P2 锚点”
+
+- 用户的定义是正确的：第一次内存读取给出两个固定 native 锚点；首帧的 P1/P2 候选应分别经过同一个 screen→native 变换，分别落到对应的两个 memory position。判据不是 P1/P2 在屏幕上彼此接近。
+- 当前注册器表面上已经计算了这个判据：`_evaluate_assignment()` 对每个 assignment 计算 `mapped_position=transform(candidate)`，再分别与 `anchors[identity].position` 求 `anchor_error`；只有两个误差都在上限内才保留。
+- 但当前流程的关键缺陷是：每一个候选 pair/assignment 都先用自己的两点与两条 memory anchor 生成/搜索一套 registration transform（`_joint_similarity_estimates()` → `_register_near_joint_estimate()` 或 midpoint path）。在两点相似变换自由度足够的情况下，错误 pair 也可以为自己拟合出一个 transform，使两个 `anchor_error≈0`。因此“分别对上内存地址”在当前实现里不是独立验证，而是部分被拟合过程保证了。
+- 这解释了 19:18 等日志：多个 assignment 都有 `anchor_error≈0`，最终只靠 shape/pair/profile 等次级分数排序，margin 才降到 0.022。问题不是内存地址没有参与，而是内存地址被同时用于拟合和验收，缺少一个独立的预测位置/固定变换约束。
+- 正确的首帧链路应先得到独立的 registration（墙体/大地图形状、首帧既有 transform 或其他不依赖该候选 pair 的证据），再把每个候选映射到 native，按“P1→P1 memory anchor、P2→P2 memory anchor”的总误差选择 pair；候选 pair 只能参与验证，不能同时决定唯一变换。若必须用候选 pair 求初始变换，则必须加入第三方几何/墙体证据或下一帧一致性，不能把零 residual 当作身份确认。
+
+## 2026-10-11 19:16–19:25 跟随会话排查（只读）
+
+- `(confirmed)` 日志没有 17:xx 时间段，实际可定位的测试为 19:16:20–19:25:08；用户所说的 17 点可能是时区/记录时间偏移。三次跟随启动分别约 19 秒、2.6 秒、75 秒。
+- `(confirmed)` 前两次停止调用链完全是 `test_page.suspend(reason=page_hidden) -> hideEvent -> stop_follow_experiment -> FollowEngine stop`。它们产生了视觉和控制事件且无 worker stall/rebuild；不是算法自动停止。当前页面把隐藏事件当成停止条件，因此缩小/切换导致跟随退出已被日志证明，但 terrain 日志还不能区分最小化、页面切换或其他 Qt hide 行为。
+- `(confirmed)` 第三次从 19:23:51.530 运行至 19:25:06.407，Vision/Control/parent poll 持续，`worker_stall=0`、`rebuild=0`，最终由 `stop_follow_experiment -> main` 请求停止，随后 closeEvent/shutdown 重复合并 stop；不像自动崩溃。
+- `(confirmed)` 第三次后段 P1 (`StrDexFourb`) 在 sequence 1066 后连续视觉失配，misses 1→38、visual_age 111→2164ms，状态 `visual_match -> prediction_after_visual_miss -> memory_reanchor_pending -> memory_reanchoring`；P2 (`DexFourb`) 仍 `visual_visible=True`、misses=0，且自身位置持续有新视觉观测。
+- `(root-cause)` P2 不动不是 P2 视觉丢失或 Control worker 崩溃：P1 达到 memory threshold 后，共享的 `memory_recovery.in_flight` 被传给每个角色的 `RecoveryObservation`。`RecoveryPolicy.decide()` 对任何角色命中该标志都会返回 `MEMORY_REANCHORING/HOLD`，所以 P2 即使视觉健康也得到 `neutral=True`；19:25:00.284 明确同时给 P1/P2 `memory_reanchor_in_flight` 和 hold。该共享 hold 把 leader 的恢复状态错误扩散到 follower，是“P2 后续不动”的根因边界。
+- `(confirmed)` P2 在 P1 失配前仍输出非零脉冲；19:24:58.855–19:24:59.159 等 tick 的 P2 仍 `visual_match` 且有方向向量。19:24:58 前 Host controller=2 仍有大量 `backendConnected=True` 非零报告；terrain 日志无 `heartbeat_failed/session_expired`，当前证据不支持虚拟手柄断联是本次 P2 停止原因。
+- `(evidence-gap)` Host 日志在 19:24:58 后缺少与 terrain 19:25:00–19:25:06 的 controller=2 回执时间轴；需要补充 output scheduler/receipt 事件才能判断 memory hold 期间是持续发送零心跳、输出 actor 暂停，还是 Host 日志采样缺失。不能把 `neutral=True` 直接等同于游戏收到零轴。
+- `(next exact)` 若进入修复，先隔离 recovery scope：memory/local/global recovery 应按失配 role 记录/决策；健康 follower 不得因 leader memory in-flight 被 HOLD，仍按最后可信 target/预测继续输出。另行审查 page hidden 策略，区分“UI 隐藏”与用户明确停止；本轮不改代码。
+
+## 2026-10-12 P1 失配到会话结束的逐段追踪（只读）
+
+- `(timeline)` P1 最后一次可信视觉为 sequence 1066。19:24:58.822 收到 sequence 1067：仅有一个候选，候选被归给 P2，P1 gate 45.56、候选距预测 2.24；P1 的 local ROI 在 19:24:58.854 以 7.62ms 返回 `no_match`。19:24:58.855 P1 进入 `prediction_after_visual_miss`，misses=1，accepted_visual_sequence 仍为1066；P2 同一 tick 仍 visual_match、misses=0。
+- `(progression)` P1 没有重新接受视觉：后续 partial/none 帧仍只有 P2 候选或无候选。到 19:24:59.869，P1 misses=23、visual_age=1132ms；19:25:00.242 达到 `memory_trigger_ms=1500` / misses=31，提交一次 memory recovery，状态变为 `memory_reanchor_pending`。
+- `(critical)` memory recovery 提交后，P2 仍有视觉：19:25:00.242 P2 `visual_visible=True`、accepted sequence=1089、misses=0、age=98ms，位置约 `(1001.65,825.14)`；但因为共享 `memory_in_flight=True`，P2 被 RecoveryPolicy 改成 `memory_reanchor_in_flight/HOLD`，输出改为 neutral。此时 P2 目标仍是 P1 最后可信位置 `(992.394,835.635)`，target_revision=791，距离约14.0，超过12的 arrival 半径，不能解释为正常到达保持。
+- `(continued hold)` 19:25:00.284、00.919、01.426、02.571、03.665、04.788、05.978 的 control evidence 都同时记录 P1/P2 `memory_reanchor_in_flight`；P2 misses 仍为0或很低，visual age 多数小于120ms，但每次 intent 都是 `vector=(0,0), neutral=True`，target_revision 一直冻结在791。故 P2 是被恢复状态强制 hold，而不是自身视觉/路径判断得出停止。
+- `(memory outcome)` 从 19:25:00.240 提交 memory 到 19:25:06.407 用户/主流程请求 stop，terrain 日志没有 `memory completed/succeeded/failed` 或 `memory_recovered` 事件。停止时 Vision 先正常退出，Control 在 2秒超时后于19:25:08.543被强制终止。因此本次 memory recovery 没有在会话内完成，也没有发生 P1/P2 的恢复后重新对齐。
+- `(visual after trigger)` P2 的新帧仍继续产生：19:25:00.841、01.890、02.398、03.399 是单 P2 候选，02.337/03.941/04.942/05.975 还有无候选帧；但这些视觉观测没有解除共享 memory hold。P1 一直没有新的 accepted sequence，最终 misses=57、visual_age=7208ms。
+- `(output evidence)` P2 在 memory 提交前 19:24:58 附近仍有非零 Host controller=2 报告；提交后 terrain output receipt 均为 neutral，`acquired=True`、`heartbeat_failures=0`、`session_expired=False`。这证明输出层在按 Control 指令发送中性心跳，但不能单独证明游戏角色实际是否移动。
+- `(recovery conclusion)` 本次没有“恢复成功后又停”的阶段；只有“P1 失配→预测→memory 提交→共享 hold→会话结束前 memory 未完成”。如果用户看到 P2 停止，时间边界应定位在19:25:00.242之后，而不是首个 P1 miss 的19:24:58.855。
+
+## 2026-10-12 P1 连续失配原因与截图证据（只读）
+
+- `(confirmed)` P1 首次失配的直接视觉证据是 sequence=1067：候选数从前一帧的双候选变为1，唯一候选被识别为 P2；P1 local ROI 7.62ms 返回 `no_match`。之后 sequence=1084、1099、1116、1124、1140 等仍是单一 P2 候选，期间也出现无候选帧，P1 没有新的 accepted sequence。
+- `(confirmed)` 这些帧的截图采集和处理本身正常：capture 约3–6ms、候选处理约20–67ms、wall_quality约0.99；没有 `capture_failed`、worker stall、进程退出或大色块过滤记录。P2 候选面积约13px²，未被大面积干扰过滤；日志也没有显示 P1 被另一个大色块吞并。
+- `(root-cause boundary)` 因此能确定的是“P1 在视觉候选阶段连续没有被提取/关联，而不是后面的路线或手柄造成丢失”。但当前日志只保存候选数量、位置、面积和筛选结果，没有保存 sequence=1067 起的原始小地图截图、颜色掩码或 ROI 图，无法从现有证据确定是 P1 被遮挡、颜色变化、与 P2 合并，还是候选提取阈值未命中。
+- `(screenshot evidence)` 在仓库 `data` 下没有找到与 2026-10-11 19:24:58–19:25:06 对应的 PNG/JPG 归档，也没有日志给出该段原始帧路径。因此目前没有可直接打开的“当时截图”；只能用视觉日志重建：P2 单候选持续存在，P1 候选持续缺失。
+- `(recovery)` P1 后续没有恢复。memory 于19:25:00.240提交，直到19:25:06.407停止前没有 completion/success/failure；Control 于19:25:08.543被强制终止。P1 未产生新的 accepted visual sequence，P2 也未解除因共享 recovery 造成的 hold。
+- `(next exact)` 要判定 P1 的物理原因，下一次需在每个“单角色/无候选”帧保存原始300×300小地图、P1/P2颜色掩码、候选连通域和角色ROI，并把文件路径写入 vision evidence；否则只能继续定位到“候选提取/关联层”，不能声称是游戏画面遮挡或颜色变化。
+
+## 2026-10-12 当前源码真实执行链审查（只读）
+
+- `(source-trace)` 实际链路不是固定八步，而是：页面启动模块化会话 → Vision 子进程采集新帧 → 帧校验/解码 → 墙体提取与墙体位移 → 更新旋转缩放平移变换 → 由内存位置和变换生成两个角色的屏幕预测点 → 提取颜色候选 → 候选按置信度最多保留6个并过滤面积>48 → 按自适应距离范围、颜色提示、两角色间距枚举对应关系 → 将屏幕候选转换为 native 位置并生成双角色观察 → 写入共享帧环/发送观察 → Control 接收观察 → 先轮询已提交的内存/全局恢复结果 → 积分已执行手柄脉冲形成预测位置 → 判断每个角色本帧是否有效 → 需要时轮流做一个角色的局部搜索 → 按恢复策略决定继续/预测/内存恢复 → 规划路线 → 对预测到达做纠偏脉冲 → 生成输出意图 → 输出调度器发送手柄并记录回执 → 下一帧继续。
+- `(association)` 当前候选选择的主要依据确实是预测点距离；距离门限会按速度、帧延迟、墙体位移从45扩大到最多180。颜色提示主要用于排除身份不符，若颜色导致没有结果，会退回几何匹配。两角色会增加彼此距离误差，但权重只有0.75，属于辅助项。
+- `(association-gap)` 当前没有完整使用人物形状特征。已经使用候选面积和颜色提示，但没有在对应阶段明确使用宽高比、紧凑度、轮廓形状、像素分布等特征。因此“黄色宝箱文字产生小候选”目前只能靠面积/置信度/距离间接排除，不能按人物形状直接排除。
+- `(single-candidate)` 只有一个候选且离预测点很远时，不会立即替换位置，而是要求下一帧重复确认；候选靠近预测点则可直接对应。双候选时会在距离门限内枚举对应关系，选总距离最小的组合。
+- `(memory)` 内存恢复结果一旦 `poll()` 返回成功，当前 `_apply_recovery_positions()` 会直接把换算后的 native 坐标写入角色状态、清零 misses、更新预测起点，并刷新跟随目标；这一步本身不要求视觉再次确认，符合“内存硬恢复”的方向。当前问题在恢复结果返回之前：共享 `memory_in_flight` 会让所有角色进入 HOLD；此外恢复结果没有按角色独立维护完成状态。
+- `(visual-after-memory)` 内存写入成功后，下一帧仍会经过普通视觉融合；普通视觉候选要通过 innovation gate 才能改写位置，错误候选会被拒绝。因此当前实现是“内存直接写入，但后续视觉仍可能被融合门限拒绝”，而不是内存位置永远锁定。
+- `(target)` 只有被接受的 P1 位置才会刷新 P2 的 target revision；P1 失配期间 target 会冻结在最后可信位置。P2 自身视觉有效时仍会正常规划，但当前共享恢复状态会在路线前把 P2 变成 hold。
+- `(output)` 输出层不会自己判断 P1/P2 是否应该停止，只执行 Control 给的向量。P2 的 neutral 是 Control 恢复决策传下来的结果，不是手柄层主动停止。
+- `(evidence-gap)` 当前 Vision 只把原始帧短暂放入共享帧环，没有在“单角色/无候选”时自动落盘原图、遮罩、候选轮廓和ROI；所以源码链路能解释“在哪一步丢了”，但不能回答黄色宝箱是否实际制造了干扰候选。
+
+## 2026-10-12 “旧实例”定义核对（只读）
+
+- `(source-confirmed)` `start_follow_experiment()` 开始时调用的三个 stop 不是三个同时运行的跟随算法，而是页面上三类相互独立的实验入口清理：`stop_program_move_probe()` 清理点击地图后让单个角色移动的程序移动实验；`stop_dual_target_experiment()` 清理点击一个目标后让双角色去同一目标的旧实验；`stop_follow_experiment()` 清理上一轮跟随会话。
+- `(source-confirmed)` `_start_modular_follow_experiment()` 还会检查 `_follow_runtime/_follow_program_output`，并停止旧的 Qt `Poe2DualMotionWorker`/timer。这个 worker 是迁移前的页面截图、预览和旧跟踪线程，不是当前模块化 Vision/Control 子进程。
+- `(boundary)` “旧”指旧入口/旧页面运行时/旧 Qt worker 和它们的定时器、输出 lease、队列状态，不是指 Control 中复用的路径、脉冲、到达判断等运动策略；这些策略仍被新 Control adapter 使用。
+- `(reason)` 启动时清理是防止用户先运行过其他实验、重复点击开始、上一次停止尚未完成或旧输出 lease 未释放时出现两个模块同时抓图/写同一个手柄。若对应对象没有 active timer、runtime、worker 或 pending lifecycle，stop 方法只是记录并返回，不会凭空启动旧算法。
+- `(risk)` 旧类和兼容分支仍然存在于源码中；当前正式按钮不会走旧 follow fallback，但启动入口仍主动调用这些清理函数，说明架构物理边界尚未完全收口。需要以后把“停止旧实验”和“启动新模块化跟随”拆成明确的 ownership manager，减少重复 stop 和歧义日志。
+
+## 2026-10-12 融合线程最新结论后的新方案（只读设计）
+
+### 现有方案为什么同时不够准、不够快
+
+- 最新性能核对显示：内存双锚点读取约 3.6–4.2s，截图 10–41ms，候选识别 11–101ms，绝对配准 2.6–11.2s，首帧总耗时 6.5–15.1s。瓶颈不是图色候选提取，而是内存读取内部扫描和候选 assignment 驱动的绝对配准搜索。
+- 当前双首帧注册对每个候选 pair 分别拟合 transform，再用同一 memory anchor 验证；候选为 3 时会产生 6 个 assignment、最多 12 个 variant。错误 pair 可自拟合，精度安全门依赖昂贵的 shape score/margin，速度和身份确定性都不稳定。
+- 新架构的契约先行方向正确，但定位链必须把“独立 transform”和“候选验证”拆开，不能继续把所有工作塞进一个同步注册器。
+
+### 新的三层定位方案
+
+#### A. 快速首帧路径（目标 0.3–1.0s，不牺牲身份）
+
+1. 只做一次内存读取，得到固定的 `P1_memory/P2_memory`、map instance 和读取时间；内存 reader 内部缓存 PID、模块基址、布局和实体地址，后续首帧重试不重复扫描。
+2. 同时截取一张 minimap frame，候选提取只做一次。
+3. 优先使用独立的 transform prior：同 map instance 的最近一次有效 transform、当前大地图/墙体注册缓存，或由墙体相位/粗形状得到的低分辨率 transform。该 prior 不能由当前 P1/P2 候选拟合得到。
+4. 将两个 memory native anchor 通过该 transform 的逆变换投影到 screen，分别在 P1/P2 预测位置附近选候选。验收条件是 `candidate_P1 → P1_memory` 与 `candidate_P2 → P2_memory` 同时通过，且 identity/profile 不冲突；不使用“彼此距离最近”作为主判据。
+5. 若出现第三候选，按各自到 projected P1/P2 的距离、颜色/identity、面积和候选置信度做角色级筛选，而不是枚举全部 pair。
+
+#### B. 独立纠偏路径（目标每帧 20–60ms）
+
+- Vision 每帧同时输出 P1/P2 候选；Control 用当前 transform 把候选映射到 native，再和每个角色的预测/执行积分位置比较。可信视觉直接纠偏，视觉偏差大时保留 candidate 作为 pending correction，不能让 local ROI 绕过 Fusion Owner。
+- local ROI 使用角色专属 search 和首帧 transform，只在该角色视觉 miss 或 innovation reject 时运行；结果必须通过角色 identity、与同帧候选/预测的距离、置信度和连续两帧一致性，才可提交。
+- P1 的 live target 只能由 Fusion Owner 提交的可信 P1 结果刷新；P2 使用该 target 继续跟随。P1 的 memory recovery in-flight 不能把 P2 的 recovery state 改成 HOLD。
+
+#### C. 慢速兜底路径（低频、可观测）
+
+- 快速 prior、全帧视觉和 local ROI 均无法确认时，才提交一次 memory reanchor；按角色触发，single-flight、cooldown 和 generation 校验保留。
+- memory 结果只校正 native state，不重新触发昂贵的全图首帧 registration；下一张新帧用固定/更新 transform 验证两个角色。
+- 只有 map instance 改变、transform 失效或连续多帧无法恢复时，才进入全局 shape registration。全局注册独立于当前候选 pair，并且必须通过下一帧确认后提交。
+
+### 首帧正确性判据
+
+```text
+固定/独立 transform
+→ P1 screen candidate 映射到 P1_memory
+→ P2 screen candidate 映射到 P2_memory
+→ 两个角色误差、身份、面积、置信度均通过
+→ 下一帧仍保持同一角色映射
+→ 提交 seed
+```
+
+如果没有独立 transform，系统应返回 `pending_confirmation` 并等待下一帧或粗地图注册；不能用两点重新拟合 transform 后把零 anchor residual 当作身份证明。
+
+### 性能预算和实施顺序
+
+| 阶段 | 当前实测 | 新目标 | 优化边界 |
+|---|---:|---:|---|
+| 内存首次读取 | 3.6–4.2s | 仅首次 1 次；重试 0–50ms | 缓存 reader/PID/layout/entity 地址 |
+| 截图 | 10–41ms | ≤50ms | 保持现有 capture |
+| 候选提取 | 11–101ms | p95 ≤60ms | 单次 decode/extract，角色级筛选 |
+| 快速首帧匹配 | 当前无独立阶段 | p95 ≤200ms | prior 投影 + 两角色误差验证 |
+| 慢速全局注册 | 2.6–11.2s | 仅兜底，限频 | 独立 transform、候选不枚举全组合 |
+| 首帧总耗时 | 6.5–15.1s | 首次 ≤5s；有缓存 ≤1s | memory 与 registration 不重复执行 |
+
+这些是工程目标，不是已有实测结果；应先补充内部计时，再逐项验证。
+
+### 必须保留的旧积木和边界
+
+- 旧 `SimulatedFollowRuntime`/路径、局部避障、动态 arrival/resume/horizon、脉冲和手柄参数继续由 Control adapter 使用；本方案只改变首帧编排、定位融合和恢复调度。
+- Vision、Control、Output 的状态 owner 不改变；不把 UI poll 重新变成 transport owner，不以增加 Python 多进程数量换取速度。
+- 先实现 A/B/C 的纯数据契约和离线 replay，再做真实 session；验收必须关联 `memory anchor → visual candidate → fused position → target revision → intent → receipt`。没有 Host/game consumption 证据前，不宣称实机准确度。
+
+## 2026-10-12 内存读取慢的源码级根因边界（只读）
+
+- `(confirmed-source)` `memory_ms` 的计时只包住 `experiment.read_anchors()`，而该调用进入 `Poe2DualMemoryAnchorProvider.read_once()` → `Poe2DualPlayerPositionSource.read_many()`；坐标转换本身只是两个浮点缩放/旋转，不能解释 3.6–4.2 秒。
+- `(confirmed-source)` 首次 source cache miss 会在 `resolve_poe2_descriptor()` 内打开另一个 `ProcessReader`，执行 `reader.identity()`（查询进程路径、创建时间并对整个游戏可执行文件做 SHA-256）、模块枚举、布局解析、保护性 guard 读取；随后 `read_many()` 又新建一个 `ProcessReader`。因此“第一次内存读取”不是单纯读取两个坐标。
+- `(confirmed-source)` 每次 `read_many()` 都会重新调用 `find_process_id()`、打开/关闭进程句柄、枚举模块基址，并扫描 area 的 entity vector。实体逐个执行 pointer/details/UTF-16 metadata 多次 `ReadProcessMemory`；对每个角色还调用 `resolve_component_addresses()`，再次遍历组件名表并逐名读取字符串、slot 和组件指针，最后读取 Render position。当前只缓存 PID、descriptor、layout，不缓存 reader、目标 entity 或 Render 地址。
+- `(likely-hot-path; unmeasured)` `ProcessReader.read()` 每次都创建 ctypes buffer 并发起一次 `ReadProcessMemory`。当实体表中角色靠后、组件名表较大或目标 entity 地址变化时，调用次数会迅速放大。现有日志没有内部阶段/调用次数，所以不能把 3.6–4.2 秒全部归因于某一个阶段；但代码已足以排除“内存读取只是两个地址”的假设。
+- `(confirmed-source)` 绝对配准的 2.6–11.2 秒来自候选驱动的几何搜索：3 个候选、2 个角色会生成 6 个有序 assignment，最多 12 个 variant；每个 direct/midpoint 分支都可能调用 OpenCV/NumPy 形状搜索。该阶段与 `memory_ms` 分开计时，不能与内存耗时混为一谈。
+- `(root-cause boundary)` 当前能确认的根因是“首帧把昂贵的 descriptor/实体扫描和候选枚举放在同步一次性路径上”，而不是 Python 多进程或坐标换算本身。要把内存耗时进一步定责，必须在 `find_pid`、descriptor、reader/layout、entity scan、metadata/component resolve、world read 各边界增加只读计时与读次数；本轮不改运行代码。
+
+### 按用户澄清修订的首帧链路
+
+首帧应以内存第一次得到的 P1/P2 native 位置为真值；大地图只负责把当前局部地图与监控帧求出一个独立的旋转/缩放/平移 transform。transform 固定后，才把候选分别映射到 P1/P2 memory anchor，综合颜色/身份、颜色面积、像素置信度和 native 距离完成角色对应。候选之间的相对距离只能作为辅助证据，不能作为主身份判据。
+
+如果独立 transform 尚未建立，不能用当前候选对重新拟合出零残差再宣称匹配成功；应返回低置信度 `pending_confirmation`，或用内存 anchor 直接生成初始 seed，交给后续新帧纠偏。两候选接近时以内存位置优先；无法唯一判断也不能阻断整个跟随链路。
+
+实施前必须先验证两件事：一是缓存 reader/descriptor/layout/目标实体和 Render 地址后，重复内存读是否落入快速预算；二是局部地图求 transform 是否独立于 P1/P2 candidate assignment。未完成这两项证据前，不降低 ambiguous 门槛、不改运动策略、不声称新首帧已实现。
+
+## 2026-10-12 初始化参数与首帧边界修订（只读）
+
+用户进一步澄清：前一版把地图/实体解析归入通用初始化是不正确的。初始化贯穿整个 PoE2 进程生命周期，只准备跨所有异界地图通用的读取能力和静态参数；不在这里获取当前地图实例，也不获取当前地图里的 P1/P2 身份和位置。
+
+### 进程级通用初始化（整个游戏进程只做一次）
+
+- PID、进程创建时间、进程句柄/`ProcessReader`；
+- 可执行文件身份和 build hash；
+- 模块基址；
+- 当前 build 对应的 GameState 全局入口/slot RVA；
+- 经过版本验证的结构偏移、指针路径、字段布局和读取宽度；
+- 通用坐标换算常量、地址合法性规则、读取 API 能力；
+- 可复用的读缓冲、计时和错误分类配置。
+
+这些参数对不同异界地图通用。进程重启、PID/创建时间变化或 build hash 不匹配时，才重新做进程级初始化。
+
+### 每次进入地图/点击首帧时执行
+
+首帧必须重新读取当前地图动态状态：
+
+1. 从已初始化的 GameState 入口解析当前地图实例、area/state 和地图数据地址；
+2. 获取当前地图的大地图数据并完成转化；
+3. 在当前地图实体表中重新发现 P1/P2，读取它们当次的 metadata/身份和 Render 位置；
+4. 将本次内存 P1/P2 位置转换为 native anchors；
+5. 用当前地图局部数据与监控帧独立求旋转、缩放、平移；
+6. 再用本次内存 anchor 对监控帧中的 P1/P2 候选做角色匹配并生成 seed。
+
+地图实例变化、角色重进地图、实体重建或新一轮首帧，都必须重新获取 P1/P2 身份和位置，不能沿用上一张地图的 entity 地址或角色位置。地图中的这些地址和数据不是通用初始化参数。
+
+因此“首帧快速读取”的含义是：复用进程级通用参数，从当前地图重新读取必要的地图与角色动态数据；不是把某张地图的 area、entity、Render 地址永久缓存到整个游戏进程。当前 3.6–4.2 秒混合了进程级解析、当前地图实体发现和动态读取，后续必须按这个边界补齐计时和优化。
+
+## 2026-10-12 首帧定位实施方案已形成（尚未实现）
+
+详细方案见 `docs/plans/2026-10-12-poe2-dual-first-frame-redesign.md`。范围限定为进程级通用内存上下文、每地图首帧动态读取、独立局部 transform、以内存 anchor 为主的 P1/P2 匹配和 pending/确认状态；不改变跟随运动、路径规划、局部避障、脉冲、手柄和 Control/Output 生命周期。进入实现前必须先完成 P0 内部计时和缓存失效契约确认。
+
+## 2026-10-12 候选提取与内存恢复视觉边界（只读审查）
+
+- 当前 detector 使用 HSV profile mask→`cv2.findContours(RETR_EXTERNAL)`→轮廓面积/宽高/边界过滤→轮廓矩计算中心；置信度由面积和 `area/(width*height)` 紧凑度组成，颜色证据主要是 profile/index/identity_hint 与中位 hue。
+- 当前缺口：`area` 是轮廓面积，不是掩码像素计数；没有把宽高比、填充率、solidity、细长文字/点状人物特征纳入关联主评分；小的黄色文字候选可能通过当前 8–55 面积与 14px 尺寸条件。关联的主要代价仍是预测距离，形状只在 compactness 中弱体现。
+- 内存恢复会直接写入 native 位置并清零 misses，不经过普通 innovation gate；但没有独立的“恢复后第一帧”标记，也没有把内存位置投影到屏幕后作为该帧候选的最高优先级。因此下一帧仍可能被普通候选关联规则拒绝或选错。
+- 用户要求的目标行为已明确：内存 native→固定 transform→屏幕投影；恢复后第一帧在候选存在时优先选择距该投影最近且形状/面积合理的候选，并把该候选写回真实位置；无合理候选时保留内存真值继续预测，不得因视觉未确认拒绝内存恢复。
+
+## 2026-10-12 “旧实例”术语边界澄清（只读审查）
+
+- `start_follow_experiment()` 中的“旧移动/旧双人目标/旧跟随”首先指上一次仍存活的运行实例：`program_move_probe`、`_dual_target_runtime` 及当前模块化 follow adapter/composition。清理它们是为了避免旧 timer、输出 lease、tracker 或 worker 与新会话同时写入。
+- “旧”不等于旧版算法；当前正式按钮已禁止页面旧 `SimulatedFollowRuntime` fallback，但页面仍保留 legacy dual-motion worker、兼容接口和旧算法 adapter，后续必须继续区分“历史运行实例”和“历史兼容代码”。
+- 结论：说明文档中不得再笼统写“停掉旧逻辑”；应明确写成“回收上一次运行实例”，并单独列出仍保留的 legacy 兼容组件及其是否可能被当前入口触发。

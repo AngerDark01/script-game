@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import struct
 import sys
 import time
@@ -41,6 +42,24 @@ from windows_capture import (  # type: ignore[import-not-found]  # noqa: E402
 # and more map samples establish that the entity vector is stable.
 ENTITY_VECTOR_OFFSET = 0x5B8
 MAX_ENTITY_COUNT = 64
+_LOGGER = logging.getLogger(__name__)
+
+
+class _CountingReader:
+    """Proxy a process reader while preserving the exact read contract."""
+
+    def __init__(self, reader: Any) -> None:
+        self._reader = reader
+        self.read_calls = 0
+        self.read_bytes = 0
+
+    def read(self, pointer: int, size: int) -> bytes:
+        self.read_calls += 1
+        self.read_bytes += int(size)
+        return self._reader.read(pointer, size)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._reader, name)
 
 
 @dataclass(frozen=True)
@@ -118,6 +137,8 @@ class Poe2DualPlayerPositionSource:
         self._cached_layout_pid: int | None = None
         self._cached_layout_slot: int | None = None
         self._cached_layout: Mapping[str, Any] | None = None
+        self._component_name_cache: dict[int, dict[str, int]] = {}
+        self.last_read_diagnostics: dict[str, Any] = {}
         if self.max_players != 2:
             raise ValueError("the experimental adapter currently supports exactly two players")
 
@@ -135,22 +156,37 @@ class Poe2DualPlayerPositionSource:
             if api is not None
             else resolve_poe2_layout
         )
+        started = time.perf_counter()
+        stage_started = started
         pid = find_pid()
+        find_pid_ms = (time.perf_counter() - stage_started) * 1000.0
+        descriptor_cache_hit = self._cached_pid == pid and self._cached_descriptor is not None
         if self._cached_pid != pid or self._cached_descriptor is None:
+            stage_started = time.perf_counter()
             descriptor = resolve_descriptor(pid, stage="dual-player-position")
+            descriptor_ms = (time.perf_counter() - stage_started) * 1000.0
             self._cached_pid = int(pid)
             self._cached_descriptor = dict(descriptor)
+            self._component_name_cache.clear()
         else:
             descriptor = self._cached_descriptor
+            descriptor_ms = 0.0
         resolved_slot = int(descriptor["resolved_global_slot_rva"], 16)
         captured_at = datetime.now(timezone.utc).isoformat()
-        with reader_type(pid) as reader:
+        reader_started = time.perf_counter()
+        with reader_type(pid) as raw_reader:
+            reader = _CountingReader(raw_reader)
             module_base = reader.module_base()
+            module_ms = (time.perf_counter() - reader_started) * 1000.0
             layout = None
-            if (
+            layout_cache_hit = (
                 self._cached_layout_pid == int(pid)
                 and self._cached_layout_slot == resolved_slot
                 and self._cached_layout is not None
+            )
+            layout_started = time.perf_counter()
+            if (
+                layout_cache_hit
             ):
                 layout = self._cached_layout
             if layout is None:
@@ -158,13 +194,17 @@ class Poe2DualPlayerPositionSource:
                 self._cached_layout_pid = int(pid)
                 self._cached_layout_slot = resolved_slot
                 self._cached_layout = dict(layout)
+            layout_ms = (time.perf_counter() - layout_started) * 1000.0
             area_instance = f"{layout['area_code']}:{layout['area_hash']:08X}"
             if expected_instance_id and area_instance != expected_instance_id:
                 # A map transition invalidates all pointer-derived cache state.
                 self._cached_layout = None
                 self._cached_layout_pid = None
                 self._cached_layout_slot = None
+                self._component_name_cache.clear()
+                layout_started = time.perf_counter()
                 layout = resolve_layout(reader, module_base, resolved_slot)
+                layout_ms += (time.perf_counter() - layout_started) * 1000.0
                 self._cached_layout_pid = int(pid)
                 self._cached_layout_slot = resolved_slot
                 self._cached_layout = dict(layout)
@@ -174,10 +214,16 @@ class Poe2DualPlayerPositionSource:
                     f"area instance changed during dual-player read: expected {expected_instance_id}, got {area_instance}"
                 )
             area = int(layout["area"])
+            entity_scan_started = time.perf_counter()
             begin, end = _read_vector(reader, area + ENTITY_VECTOR_OFFSET)
             samples: list[Poe2EntityPositionSample] = []
             used: set[str] = set()
-            for index in range((end - begin) // 8):
+            entity_count = (end - begin) // 8
+            scanned_entities = 0
+            metadata_candidates = 0
+            component_resolves = 0
+            for index in range(entity_count):
+                scanned_entities += 1
                 entity = _read_pointer(reader, begin + index * 8)
                 if not _pointer(entity):
                     continue
@@ -190,7 +236,14 @@ class Poe2DualPlayerPositionSource:
                 )
                 if not metadata or not metadata.startswith("Metadata/Characters/"):
                     continue
-                components = resolve_component_addresses(reader, entity, details)
+                metadata_candidates += 1
+                component_resolves += 1
+                components = resolve_component_addresses(
+                    reader,
+                    entity,
+                    details,
+                    component_name_cache=self._component_name_cache,
+                )
                 render = components.get("Render")
                 if not render:
                     continue
@@ -208,6 +261,28 @@ class Poe2DualPlayerPositionSource:
                 )
                 if len(samples) == self.max_players:
                     break
+            entity_scan_ms = (time.perf_counter() - entity_scan_started) * 1000.0
+            self.last_read_diagnostics = {
+                "pid": int(pid),
+                "expected_instance_id": expected_instance_id,
+                "area_instance": area_instance,
+                "find_pid_ms": find_pid_ms,
+                "descriptor_ms": descriptor_ms,
+                "descriptor_cache_hit": descriptor_cache_hit,
+                "module_ms": module_ms,
+                "layout_ms": layout_ms,
+                "layout_cache_hit": layout_cache_hit,
+                "entity_scan_ms": entity_scan_ms,
+                "entity_count": entity_count,
+                "scanned_entities": scanned_entities,
+                "metadata_candidates": metadata_candidates,
+                "component_resolves": component_resolves,
+                "read_calls": reader.read_calls,
+                "read_bytes": reader.read_bytes,
+                "total_ms": (time.perf_counter() - started) * 1000.0,
+                "sample_count": len(samples),
+            }
+            _LOGGER.info("step=dual_memory.read_timing diagnostics=%s", self.last_read_diagnostics)
         if len(samples) != self.max_players:
             raise PlayerPositionError(
                 f"expected {self.max_players} player entities, found {len(samples)}"
@@ -236,7 +311,22 @@ class Poe2DualMemoryAnchorProvider:
 
     def read_once(self, expected_instance_id: str) -> Mapping[str, PositionAnchor]:
         self.read_count += 1
-        samples = self.source.read_many(expected_instance_id)
+        try:
+            samples = self.source.read_many(expected_instance_id)
+        except Exception:
+            _LOGGER.exception(
+                "step=dual_memory.read_failed read_count=%s expected_instance_id=%s diagnostics=%s",
+                self.read_count,
+                expected_instance_id,
+                getattr(self.source, "last_read_diagnostics", {}),
+            )
+            raise
+        _LOGGER.info(
+            "step=dual_memory.read_success read_count=%s samples=%s diagnostics=%s",
+            self.read_count,
+            len(samples),
+            getattr(self.source, "last_read_diagnostics", {}),
+        )
         return {
             sample.identity: PositionAnchor(
                 position=self.orientation.transform_point(sample.grid, self.native_shape),

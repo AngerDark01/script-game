@@ -92,8 +92,14 @@ def _read_vector(reader: Any, address: int) -> tuple[int, int]:
     return begin, end
 
 
-def resolve_component_addresses(reader: Any, player: int, details: int) -> dict[str, int]:
-    """Resolve runtime component names without caching mutable game addresses."""
+def resolve_component_addresses(
+    reader: Any,
+    player: int,
+    details: int,
+    *,
+    component_name_cache: dict[int, dict[str, int]] | None = None,
+) -> dict[str, int]:
+    """Resolve component addresses while optionally reusing static name slots."""
     lookup = _read_pointer(reader, details + COMPONENT_LOOKUP_OFFSET)
     if not _plausible_pointer(lookup):
         raise PlayerPositionError("component lookup is unavailable")
@@ -103,16 +109,22 @@ def resolve_component_addresses(reader: Any, player: int, details: int) -> dict[
     if component_count > 512 or (names_end - names_begin) // COMPONENT_ENTRY_STRIDE > 512:
         raise PlayerPositionError("component table is implausibly large")
 
+    static_slots = None if component_name_cache is None else component_name_cache.get(int(lookup))
+    if static_slots is None:
+        static_slots = {}
+        for offset in range(0, names_end - names_begin, COMPONENT_ENTRY_STRIDE):
+            entry = names_begin + offset
+            name_pointer = _read_pointer(reader, entry)
+            name = _read_utf8(reader, name_pointer)
+            if not name:
+                continue
+            slot = _read_i32(reader, entry + 8)
+            if 0 <= slot < component_count:
+                static_slots[name] = slot
+        if component_name_cache is not None:
+            component_name_cache[int(lookup)] = dict(static_slots)
     result: dict[str, int] = {}
-    for offset in range(0, names_end - names_begin, COMPONENT_ENTRY_STRIDE):
-        entry = names_begin + offset
-        name_pointer = _read_pointer(reader, entry)
-        name = _read_utf8(reader, name_pointer)
-        if not name:
-            continue
-        slot = _read_i32(reader, entry + 8)
-        if not 0 <= slot < component_count:
-            continue
+    for name, slot in static_slots.items():
         component = _read_pointer(reader, components_begin + slot * 8)
         if _plausible_pointer(component):
             result[name] = component
